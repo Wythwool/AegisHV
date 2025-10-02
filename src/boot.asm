@@ -126,29 +126,27 @@ long_mode_entry:
     hlt
     jmp .halt
 
-; ---------- COM1 -----------
-; very small serial init/print, blocking is fine here
 com1_init:
     mov dx, COM1+1
     xor al, al
-    out dx, al        ; disable interrupts
+    out dx, al
     mov dx, COM1+3
     mov al, 0x80
-    out dx, al        ; DLAB on
+    out dx, al
     mov dx, COM1
-    mov al, 0x01      ; 115200/1 = 115200 baud (divisor 1)
+    mov al, 0x01
     out dx, al
     mov dx, COM1+1
     xor al, al
     out dx, al
     mov dx, COM1+3
-    mov al, 0x03      ; 8N1, DLAB off
+    mov al, 0x03
     out dx, al
     mov dx, COM1+2
-    mov al, 0xC7      ; enable FIFO
+    mov al, 0xC7
     out dx, al
     mov dx, COM1+4
-    mov al, 0x0B      ; DTR/RTS/OUT2
+    mov al, 0x0B
     out dx, al
     lea rdi, [rel msg_serial]
     call puts
