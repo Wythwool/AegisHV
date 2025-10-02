@@ -40,9 +40,9 @@ start:
     mov cr4, eax
 
     ; enable LME via EFER
-    mov ecx, 0xC0000080        ; IA32_EFER
+    mov ecx, 0xC0000080
     rdmsr
-    or eax, (1<<8)             ; LME
+    or eax, (1<<8)
     wrmsr
 
     ; build a trivial 1:1 PML4/PDPT/PD for long mode (first 1GiB via 2MiB pages)
