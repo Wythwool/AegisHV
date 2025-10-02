@@ -1,6 +1,5 @@
 BITS 32
 SECTION .multiboot2 align=8
-; Minimal Multiboot2 header (GRUB will hand us control in 32-bit protected mode)
 align 8
 multiboot2_header:
     dd 0xE85250D6
