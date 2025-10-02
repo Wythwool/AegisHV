@@ -3,13 +3,13 @@ SECTION .multiboot2 align=8
 ; Minimal Multiboot2 header (GRUB will hand us control in 32-bit protected mode)
 align 8
 multiboot2_header:
-    dd 0xE85250D6          ; magic
-    dd 0                   ; architecture (i386)
-    dd multiboot2_end - multiboot2_header  ; header length
-    dd 0                   ; checksum (patched below)
-; information request tag (none, GRUB default)
+    dd 0xE85250D6
+    dd 0 ; architecture (i386)
+    dd multiboot2_end - multiboot2_header ; header length
+    dd 0
+
 align 8
-    dw 0                   ; end tag type
+    dw 0
     dw 0
     dd 8
 multiboot2_end:
