@@ -49,9 +49,3 @@ cd ../userspace/aegisd
 cargo run -- --events ../../events.jsonl --listen 0.0.0.0:9108
 # curl localhost:9108/metrics
 ```
-
-### Status
-- Microvisor: bring‑up stubs with clearly marked TODOs for real hardware init.
-- Dev harness: usable for **policy** and **telemetry** work today.
-
----
