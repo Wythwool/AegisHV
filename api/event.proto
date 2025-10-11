@@ -1,0 +1,36 @@
+syntax = "proto3";
+
+package aegis;
+
+message Event {
+  uint64 ts_ns = 1;
+  oneof kind {
+    ExecTrap exec_trap = 2;
+    Syscall  syscall = 3;
+    PMUSample pmu = 4;
+    RingDrop drop = 5;
+  }
+}
+
+message ExecTrap {
+  uint64 rip = 1;
+  uint64 cr3 = 2;
+  string symbol = 3;
+}
+
+message Syscall {
+  uint32 nr = 1;
+  string path = 2;
+  uint64 rip = 3;
+  uint64 callsite_hash = 4;
+}
+
+message PMUSample {
+  uint64 ip = 1;
+  uint64 br_misses = 2;
+  uint64 cycles = 3;
+}
+
+message RingDrop {
+  uint64 lost = 1;
+}
