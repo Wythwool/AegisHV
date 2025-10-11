@@ -1,0 +1,23 @@
+# W^X and syscall policies
+w_x_policy:
+  default_writable: false
+  default_executable: false
+  exec_trap_pages:
+    - 0xffff800000100000   # sample kernel text page to trap
+    - 0x0000000040000000   # sample userspace .text
+
+syscall_policy:
+  mode: enforce
+  allow_paths:
+    - "/usr/bin/ssh"
+    - "/usr/sbin/nginx"
+    - "/bin/bash"
+  deny_paths:
+    - "/tmp/*"
+    - "/dev/shm/*"
+  callsite_hash_allow:
+    - 0x2a5ea4f3c01d2b77
+
+pmu_policy:
+  sample_rate_hz: 997
+  branch_miss_threshold: 100000
