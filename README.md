@@ -24,16 +24,16 @@ Event pipeline: JSONL + Prometheus exporter.
 
 ## Layout
 ```
-hv/             # type‑1 microvisor scaffolding (C, freestanding)
-  x86/          # VMX + EPT + VMEXIT skeletons
-  arm64/        # EL2 + Stage‑2 translation skeletons
-  common/       # ring buffer, simple logger
-devharness/     # KVM‑based backend (Rust) for policy + telemetry dev
-drivers/linux/  # /dev/aegishv char device (ring buffer)
-userspace/aegisd# Prometheus exporter + JSON sink (Rust, axum)
-api/            # event.proto + JSON schema
-docs/           # DESIGN, BUILD, THREAT_MODEL, METRICS, ROADMAP
-configs/        # policies.yaml — W^X + syscall guards
+hv/ # type‑1 microvisor scaffolding (C, freestanding)
+  x86/ # VMX + EPT + VMEXIT skeletons
+  arm64/ # EL2 + Stage‑2 translation skeletons
+  common/ # ring buffer, simple logger
+devharness/ # KVM‑based backend (Rust) for policy + telemetry dev
+drivers/linux/ # /dev/aegishv char device (ring buffer)
+userspace/aegisd # Prometheus exporter + JSON sink (Rust, axum)
+api/ # event.proto + JSON schema
+docs/ # DESIGN, BUILD, THREAT_MODEL, METRICS, ROADMAP
+configs/ # policies.yaml — W^X + syscall guards
 ```
 ## Quick start (Dev Harness)
 ```bash
