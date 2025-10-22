@@ -1,0 +1,76 @@
+{
+  "$id": "https://aegishv/schema/event.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "version",
+    "ts",
+    "vm",
+    "vcpu",
+    "reason",
+    "arch"
+  ],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "const": 1
+    },
+    "ts": {
+      "type": "string"
+    },
+    "arch": {
+      "type": "string",
+      "enum": [
+        "x86_64",
+        "aarch64",
+        "unknown"
+      ]
+    },
+    "vm": {
+      "type": "string"
+    },
+    "vcpu": {
+      "type": "integer"
+    },
+    "reason": {
+      "type": "string"
+    },
+    "rip": {
+      "type": "string"
+    },
+    "gpa": {
+      "type": "string"
+    },
+    "ept": {
+      "type": "object",
+      "properties": {
+        "read": {
+          "type": "boolean"
+        },
+        "write": {
+          "type": "boolean"
+        },
+        "exec": {
+          "type": "boolean"
+        },
+        "qual": {
+          "type": "string"
+        }
+      }
+    },
+    "severity": {
+      "type": "string",
+      "enum": [
+        "info",
+        "low",
+        "medium",
+        "high",
+        "critical"
+      ]
+    },
+    "message": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false
+}

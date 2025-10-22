@@ -1,0 +1,5 @@
+qemu-system-x86-1234 [001] d..2 123.456: kvm_exit: reason EPT_VIOLATION rip 0x7f1234abcd gpa 0x1000 error_code 0x5
+qemu-system-x86-1234 [001] d..2 123.466: kvm_exit: reason EPT_VIOLATION rip 0x7f1234bbcd gpa 0x1000 error_code 0x2
+qemu-system-x86-1234 [001] d..2 123.476: kvm_exit: reason IO_INSTRUCTION rip 0x7f1234cccd info 0x0
+qemu-system-x86-1234 [001] d..2 123.486: kvm_exit: reason EPT_MISCONFIG rip 0x7f1234cccd info 0x0
+qemu-system-aarch64-5678 [002] d..2 124.000: kvm_exit: reason HVC_INSN pc 0xffff00001234 far 0x2000 esr 0x0

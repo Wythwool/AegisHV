@@ -1,0 +1,12 @@
+# Thresholds and allowlists
+[general]
+wx_window_ms = 5000    # time window to flag write->exec on the same page
+quiet = false
+
+[allow]
+# VM names to ignore or relax
+names = ["builder", "ci-runner"]
+
+[pmu]
+enable = true          # perf cycles for vCPU threads
+sample_ms = 1000
