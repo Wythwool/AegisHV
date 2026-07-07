@@ -12,6 +12,13 @@ fn fixture_path(name: &str) -> String {
     )
 }
 
+fn linux_vmi_fixture_path(name: &str) -> String {
+    format!(
+        "{}/tests/fixtures/vmi/linux/{name}",
+        env!("CARGO_MANIFEST_DIR")
+    )
+}
+
 fn valid_profile_text() -> &'static str {
     r#"
 aegishv-linux-profile-v1
@@ -55,6 +62,38 @@ fn loads_valid_synthetic_linux_x86_64_profile_fixture() {
         profile.registry_identity().kernel_or_build,
         "6.8.0-aegishv-synthetic#synthetic-test-build"
     );
+}
+
+#[test]
+fn loads_synthetic_linux_hook_and_bpf_profile_fixture() {
+    let profile = load_linux_profile(linux_vmi_fixture_path("synthetic_hooks_bpf.profile"))
+        .expect("load hook and bpf fixture");
+
+    assert_eq!(
+        profile.linux_identity().variant.as_deref(),
+        Some("hooks-bpf")
+    );
+    for symbol in ["ftrace_ops_list", "kprobe_table", "bpf_prog_list"] {
+        assert!(
+            profile.symbols().contains_key(symbol),
+            "missing synthetic symbol {symbol}"
+        );
+    }
+    for (struct_name, field_name) in [
+        ("ftrace_ops", "func"),
+        ("kprobe", "pre_handler"),
+        ("bpf_prog", "bpf_func"),
+        ("bpf_prog_aux", "name"),
+    ] {
+        let key = LinuxStructFieldKey {
+            struct_name: struct_name.to_string(),
+            field_name: field_name.to_string(),
+        };
+        assert!(
+            profile.struct_offsets().contains_key(&key),
+            "missing synthetic offset {struct_name}.{field_name}"
+        );
+    }
 }
 
 #[test]

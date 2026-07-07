@@ -27,6 +27,7 @@ This tree is a hardened host-side KVM sensor and a cleaner platform for the next
 - PMU target rediscovery fallback with unavailable hardware counters represented as `null`, not fake zeroes.
 - CI/release wiring, systemd unit, Docker build smoke, docs, and packaging scripts.
 - VMI/trap/type-1 interface boundaries in `src/vmi.rs` and `src/hypervisor.rs`.
+- Synthetic/offline Linux x86_64 VMI helpers for profile parsing, KASLR anchors, task/module walking, syscall table and LSTAR checks, IDT/GDT/control-register checks, text hashing, ftrace/kprobe/BPF inventory, and an off-hot-path detector runner.
 
 ## Still not implemented as runtime code
 
@@ -36,8 +37,8 @@ This tree is a hardened host-side KVM sensor and a cleaner platform for the next
 - Guest physical memory reader.
 - Guest virtual-to-physical translation.
 - vCPU register reader from a real backend.
-- Linux/Windows guest OS profiles and symbol resolution.
-- Syscall-path integrity checks are not implemented.
+- Real Linux/Windows guest OS profile extraction and live profile distribution.
+- Runtime syscall-path integrity monitoring is not implemented.
 - Direct EPT/NPT/Stage-2 permission flips, TLB invalidation, huge-page split, and single-step/retrap lifecycle are not implemented.
 - Libvirt API integration with lifecycle events is not implemented.
 - True PMU grouped-counter/ring-buffer sampling with PEBS/IBS/SPE semantics is not implemented.
