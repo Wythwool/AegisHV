@@ -17,6 +17,8 @@ Detector engine tests are normal locked Rust tests:
 - `detectors_inventory_memory_tests` covers hidden process/module comparison, executable anonymous memory, RWX mappings, JIT allow rules, and malformed ranges.
 - `detectors_state_incident_tests` covers dedupe, incident correlation, versioned state round trips, and corrupt-state sensor events.
 
+PMU sampling model tests are normal locked Rust tests in the main crate. They cover grouped counter deltas, unavailable counters, stale target rejection, bounded ring loss accounting, PEBS/IBS/SPE capability flags, and offline CPI baseline anomaly checks. They do not open live `perf_event` groups.
+
 Trap engine tests are normal locked Rust tests:
 
 - `trap_stage2_model_tests` covers permission bits, backend limits, synthetic table lookup, overlap rejection, permission updates, and one-level splits.

@@ -25,6 +25,7 @@ This tree is a hardened host-side KVM sensor and a cleaner platform for the next
 - Replay EOF unit tests, including the queue-full EOF case.
 - Prometheus text metrics + JSON health/readiness endpoints.
 - PMU target rediscovery fallback with unavailable hardware counters represented as `null`, not fake zeroes.
+- PMU sampling models for grouped counter deltas, stable target validation, bounded ring loss accounting, PEBS/IBS/SPE capability flags, and offline CPI baseline anomaly checks.
 - CI/release wiring, systemd unit, Docker build smoke, docs, and packaging scripts.
 - VMI/trap/type-1 interface boundaries in `src/vmi.rs` and `src/hypervisor.rs`.
 - Synthetic/offline Linux x86_64 VMI helpers for profile parsing, KASLR anchors, task/module walking, syscall table and LSTAR checks, IDT/GDT/control-register checks, text hashing, ftrace/kprobe/BPF inventory, and an off-hot-path detector runner.

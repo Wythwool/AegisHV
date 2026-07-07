@@ -12,6 +12,7 @@ pub mod hidden_process;
 pub mod jit;
 pub mod kernel_text;
 pub mod memory;
+pub mod pmu_anomaly;
 pub mod state;
 pub mod syscall_hooks;
 pub mod wx;
@@ -27,6 +28,7 @@ pub enum DetectionKind {
     ExecutableAnonymousMemory,
     RwxMapping,
     WxCorrelation,
+    PmuAnomaly,
 }
 
 impl DetectionKind {
@@ -39,6 +41,7 @@ impl DetectionKind {
             Self::ExecutableAnonymousMemory => "executable_anonymous_memory",
             Self::RwxMapping => "rwx_mapping",
             Self::WxCorrelation => "wx_correlation",
+            Self::PmuAnomaly => "pmu_anomaly",
         }
     }
 
@@ -51,6 +54,7 @@ impl DetectionKind {
             "executable_anonymous_memory" => Self::ExecutableAnonymousMemory,
             "rwx_mapping" => Self::RwxMapping,
             "wx_correlation" => Self::WxCorrelation,
+            "pmu_anomaly" => Self::PmuAnomaly,
             _ => return None,
         })
     }

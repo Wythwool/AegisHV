@@ -14,6 +14,12 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+pub use crate::pmu_sampling::{
+    AmdIbsCapability, ArmSpeCapability, GroupedPerfDelta, GroupedPerfSnapshot, IntelPebsCapability,
+    PerfCounterSet, PerfRingBufferModel, PerfSample, PerfSampleKind, PmuCapabilitySet,
+    PmuSamplingError, StablePmuTarget,
+};
+
 #[derive(Clone)]
 struct ThreadTarget {
     pid: i32,

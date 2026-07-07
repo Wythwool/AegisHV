@@ -18,6 +18,7 @@ pub mod metrics;
 pub mod parser;
 pub mod pattern;
 pub mod pmu;
+pub mod pmu_sampling;
 pub mod policy;
 pub mod trace_format;
 pub mod tracefs;
