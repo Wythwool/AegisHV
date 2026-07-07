@@ -15,9 +15,60 @@ fn workspace_lists_no_std_type1_crates() {
         "crates/aegishv-event-abi",
         "crates/aegishv-arch-x86",
         "crates/aegishv-arch-arm64",
+        "crates/aegishv-devices",
     ] {
         assert!(cargo.contains(member), "workspace is missing {member}");
     }
+}
+
+#[test]
+fn device_isolation_docs_keep_runtime_scope_explicit() {
+    let smmu = read_repo_file("docs/adr/0006-arm-smmu-strategy.md");
+    let location = read_repo_file("docs/adr/0007-device-model-location.md");
+    let network = read_repo_file("docs/NETWORK_ISOLATION.md");
+    let testing = read_repo_file("docs/TESTING.md");
+    let status = read_repo_file("docs/STATUS.md");
+    let index = read_repo_file("docs/adr/README.md");
+
+    for required in [
+        "Stream ID",
+        "fail closed",
+        "does not program SMMU hardware",
+        "protected guest memory is not inspected",
+    ] {
+        assert!(smmu.contains(required), "SMMU ADR is missing: {required}");
+    }
+
+    for required in [
+        "aegishv-devices",
+        "not a live service VM",
+        "Read-only block devices reject writes",
+        "live MMIO exits",
+    ] {
+        assert!(
+            location.contains(required),
+            "device location ADR is missing: {required}"
+        );
+    }
+
+    for required in [
+        "Bridge And Tap Limits",
+        "SR-IOV And Passthrough Limits",
+        "assignment must fail closed",
+        "does not program VT-d, AMD-Vi, or SMMU hardware",
+        "Do not describe the current tree as having live network isolation",
+    ] {
+        assert!(
+            network.contains(required),
+            "network isolation doc is missing: {required}"
+        );
+    }
+
+    assert!(testing.contains("cargo test --locked -p aegishv-devices --all-features"));
+    assert!(testing.contains("They do not execute MMIO exits"));
+    assert!(status.contains("Live device assignment"));
+    assert!(index.contains("ADR-0006"));
+    assert!(index.contains("ADR-0007"));
 }
 
 #[test]

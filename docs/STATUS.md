@@ -32,6 +32,7 @@ This tree is a hardened host-side KVM sensor and a cleaner platform for the next
 - Detector engine library layer with a generic detector trait, scheduler, severity/confidence scoring, budget accounting, kernel text and syscall-hook normalizers, hidden process/module inventory comparison, executable anonymous and RWX mapping checks, JIT allow rules, W^X detection bridging, dedupe, incident objects, and versioned detector state parsing.
 - Synthetic trap-engine library layer with architecture-neutral Stage-2 permissions, a synthetic permission table, trap controller states, invalidation planning, single-step strategy selection, storm control, JIT temporary-window policy, trap event metadata, and backend capability negotiation.
 - `no_std` workspace crates for type-1 boundary models: core IDs, memory-map validation, physical page allocation, crash records, per-CPU state, event and command ABI rings, VM lifecycle, vCPU scheduling, x86 serial logging, x86 page-table plans, and AP startup plan validation.
+- Device isolation model code for physical page ownership, huge-page split/merge planning, DMA domains, PCI inventory, ACPI DMAR/IVRS parsing, virtio-mmio state, bounded console queues, read-only block images, and virtio-net quarantine decisions.
 - Intel VMX lab models for feature detection, VMXON/VMCS region checks, VMCS lifecycle, VMX control adjustment, explicit exit handlers, EPT mapping plans, VPID/INVEPT invalidation plans, execute/write traps, Monitor Trap Flag fallback behavior, and minimal Linux lab coverage validation.
 - AMD SVM lab models for feature detection, EFER.SVME value handling, VMCB layout checks, VMRUN/VMLOAD/VMSAVE/INVLPGA instruction facades, explicit intercept handlers, NPT map plans, nested page fault routing, ASID management, execute/write traps, and tiny guest lab validation.
 - ARM64 EL2 lab models for capability decoding, vector table validation, 4K Stage-2 map plans, VTCR/VTTBR construction, ESR/FAR/HPFAR abort decode, TLBI planning, HVC/SMC/WFI/WFE traps, execute/write traps, GIC virtualization planning, virtual timer state, and toy guest coverage validation.
@@ -45,6 +46,7 @@ This tree is a hardened host-side KVM sensor and a cleaner platform for the next
 - ARM64 EL2 runtime and vectors.
 - Bare-metal execution of the ARM64 EL2 lab models is not implemented.
 - Bootable type-1 image, Limine config, linker script, APIC startup, real trampoline code, and QEMU boot evidence are not implemented.
+- Live device assignment, SMMU/VT-d/AMD-Vi programming, virtual switch enforcement, and SR-IOV quarantine are not implemented.
 - Guest physical memory reader.
 - Guest virtual-to-physical translation.
 - vCPU register reader from a real backend.

@@ -21,3 +21,5 @@ Each ADR uses these sections:
 | [ADR-0003](0003-x86-ap-startup.md) | Accepted | x86 application processor startup |
 | [ADR-0004](0004-arm64-el2-boot.md) | Accepted | ARM64 EL2 boot boundary |
 | [ADR-0005](0005-arm64-gic-virtualization.md) | Accepted | ARM64 GIC virtualization strategy |
+| [ADR-0006](0006-arm-smmu-strategy.md) | Accepted | ARM SMMU isolation strategy |
+| [ADR-0007](0007-device-model-location.md) | Accepted | Device model location |

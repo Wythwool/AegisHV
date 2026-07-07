@@ -30,6 +30,7 @@
 - Event output redaction policy in `docs/EVENT_REDACTION.md`; runtime redaction is not implemented.
 - AMD SEV, SEV-ES, and SEV-SNP are treated as confidentiality and integrity boundaries. The SVM lab model must report degraded or unsupported visibility when encrypted guest state prevents inspection; it must not claim a bypass.
 - ARM64 pKVM, Arm CCA, and protected guest modes are treated as confidentiality and integrity boundaries. The EL2 lab model must report degraded or unsupported visibility when protected guest memory prevents inspection; it must not claim introspection for protected memory.
+- Device assignment requires a proven DMA isolation path. Missing VT-d, AMD-Vi, SMMU, interrupt remapping, or fault reporting must refuse assignment rather than falling back to trust.
 
 ## Still missing for a regulated deployment
 
@@ -39,6 +40,7 @@
 - Runtime event redaction controls.
 - Live encrypted-guest handling policy for SEV, SEV-ES, SEV-SNP, TDX, and similar protections.
 - Live protected-guest handling policy for pKVM, Arm CCA, and vendor ARM64 protected guest modes.
+- Live virtual switch, SR-IOV, and passthrough enforcement are not implemented.
 - Full secret-management story.
 - Reproducible build verification beyond CI.
 - Third-party dependency license review beyond cargo-deny's configured checks.

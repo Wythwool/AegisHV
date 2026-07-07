@@ -39,7 +39,15 @@ The type-1 boundary workspace crates are library models. They are included in th
 cargo test --locked -p aegishv-hypervisor-core -p aegishv-event-abi -p aegishv-arch-x86
 ```
 
-They cover memory-map validation, physical page allocation, crash records, event and command rings, VM lifecycle, vCPU scheduling, early serial logging, x86 page-table plans, and AP startup plan validation. These tests do not boot a hypervisor.
+They cover memory-map validation, physical page allocation, page ownership, huge-page split/merge planning, DMA domains, PCI inventory, crash records, event and command rings, VM lifecycle, vCPU scheduling, early serial logging, x86 page-table plans, ACPI DMAR/IVRS fixture parsing, and AP startup plan validation. These tests do not boot a hypervisor.
+
+Device model tests are also normal locked Rust tests:
+
+```bash
+cargo test --locked -p aegishv-devices --all-features
+```
+
+They cover virtio-mmio feature negotiation and queue validation, bounded virtio-console queues, read-only virtio-blk bounds checks, write refusal, and virtio-net quarantine decisions. They do not execute MMIO exits or run a service VM.
 
 `scripts/type1-qemu-smoke.sh` is opt-in lab plumbing for a boot image once one exists. The repository does not currently ship `./target/type1/aegishv-type1.elf`.
 

@@ -37,6 +37,7 @@ The current implementation intentionally provides contracts and a no-backend bou
 - ARM64 backend: EL2 entry, vectors, HCR_EL2, VTCR_EL2, VTTBR_EL2, Stage-2 tables, GIC virtualization.
 - ARM64 GIC plan: prefer GICv3 when present, keep GICv2 as a compatibility target, save VGIC list-register state with vCPU state, and treat missing GIC virtualization as a typed unsupported condition.
 - Memory manager and Stage-2 permission manager.
+- IOMMU and device-isolation backend code only after page ownership, DMA domain, PCI inventory, SMMU, VT-d, AMD-Vi, and quarantine models pass unit tests.
 - Interrupt/device/IOMMU isolation.
 - Guest lifecycle, SMP, crash recovery, secure update.
 - Hardware test matrix on Intel, AMD, and arm64.
