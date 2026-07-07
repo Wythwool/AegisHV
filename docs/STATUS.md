@@ -1,0 +1,55 @@
+# Status
+
+This tree is a hardened host-side KVM sensor and a cleaner platform for the next VMI/trap work. It is not being mislabeled as a finished type-1 hypervisor.
+
+## Implemented in this tree
+
+- Committed release `Cargo.lock`; no CI/release lockfile generation before `--locked` builds.
+- Dependency-free main crate so the source archive is self-contained for `cargo metadata --locked`.
+- Hardened tracefs/replay collector with a separate non-lossy control channel for EOF and collector errors.
+- Strict config validation and normalization.
+- `validate-config` CLI command.
+- JSONL event pipeline with event IDs, monotonic timestamps, sequence numbers, host metadata, VM identity fields, host CPU, guest vCPU field, address-space fields, rule/action state, and data-loss objects.
+- Optional disk spool segments for JSONL write failures, with compatible plaintext v1 records and opt-in RLE-compressed v2 records.
+- Optional UDP syslog and Linux journald mirroring of emitted JSON events. JSONL remains the primary event stream.
+- Snapshot schema version 2 with tracefs diagnostics and bounded VM inventory from configured identity discovery.
+- Unsupported/unrelated trace lines separated from malformed `kvm_exit` parse errors.
+- Queue-loss watermark propagation through `data_loss=true` on the next emitted event, with aggregate drop counts and exact emitted-sequence gaps only when the runtime can prove the gap.
+- Page-aligned W^X correlation scoped by VM identity and address space (`cr3/asid/vmid/vpid`), with detector cooldown separate from policy cooldown.
+- Explicit split between trace header `host_cpu` and real `vcpu_id`.
+- Best-effort VM identity enrichment from `/proc`, PID start time, QEMU command line, cgroups/systemd, libvirt-style UUID/name hints, and QMP socket hints, with bounded source and confidence metadata.
+- Tracepoint format autodiscovery parser for `events/*/*/format` files. The active collector still uses text `trace_pipe`.
+- Policy priority, entity-scoped cooldown, dry-run, suppress, and enforce modes.
+- Multiple actions per rule.
+- QMP action retries, timeout handling, stable `vm_id` matching by default, VM-name fallback refusal when `identity.require_stable_qmp_match=true`, dump-root checks, structured action audit fields, manual-approval/noop actions, and mock tests.
+- Replay EOF unit tests, including the queue-full EOF case.
+- Prometheus text metrics + JSON health/readiness endpoints.
+- PMU target rediscovery fallback with unavailable hardware counters represented as `null`, not fake zeroes.
+- CI/release wiring, systemd unit, Docker build smoke, docs, and packaging scripts.
+- VMI/trap/type-1 interface boundaries in `src/vmi.rs` and `src/hypervisor.rs`.
+
+## Still not implemented as runtime code
+
+- Bare-metal VMXON/VMLAUNCH/VMRESUME hypervisor backend.
+- AMD VMRUN/VMCB backend.
+- ARM64 EL2 runtime and vectors.
+- Guest physical memory reader.
+- Guest virtual-to-physical translation.
+- vCPU register reader from a real backend.
+- Linux/Windows guest OS profiles and symbol resolution.
+- Syscall-path integrity checks are not implemented.
+- Direct EPT/NPT/Stage-2 permission flips, TLB invalidation, huge-page split, and single-step/retrap lifecycle are not implemented.
+- Libvirt API integration with lifecycle events is not implemented.
+- True PMU grouped-counter/ring-buffer sampling with PEBS/IBS/SPE semantics is not implemented.
+- OTLP runtime export is not implemented. `docs/EVENT_EXPORT.md` is design-only.
+- OCSF and ECS runtime output is not implemented. `docs/EVENT_MAPPINGS.md` is mapping guidance only.
+
+## Claim discipline
+
+Describe the current code as a Linux host-side KVM telemetry sensor. It reads tracefs text, emits JSONL events, exposes metrics, correlates W^X patterns, and can call configured QMP actions.
+
+Do not describe this tree as type-1, full VMI, direct EPT/NPT/Stage-2 enforcement, syscall-path integrity, hardware PMU sampling, libvirt lifecycle integration, or a finished EDR product. Those claims require backend code, tests, docs, and release evidence that are not present in this tree.
+
+Roadmap documents may discuss those targets, but they must keep planned work separate from implemented behavior.
+
+This version removes several deployment footguns from the host sensor layer and makes the next backend work explicit. It does not fake a type-1 hypervisor.

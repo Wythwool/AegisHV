@@ -1,0 +1,44 @@
+# Compatibility
+
+## Current implementation status
+
+| Layer | Status |
+| --- | --- |
+| Linux host + KVM tracefs | Supported as host-side telemetry |
+| Replay mode | Supported |
+| x86 EPT-like exit parsing | Supported on text trace/replay path |
+| AMD NPF-like exit parsing | Supported on text trace/replay path |
+| arm64 Stage-2 abort parsing | Supported on text trace/replay path |
+| Tracepoint format autodiscovery | KVM `kvm_exit` metadata is checked in live startup diagnostics and snapshots; not wired into binary/perf ingestion |
+| VM identity from PID/cmdline/cgroup | Best-effort supported |
+| Libvirt API lifecycle discovery | Not implemented |
+| QEMU QMP actions | Supported for mapped sockets |
+| PMU fallback heartbeat | Supported as host-thread target discovery with unavailable hardware counters reported as `null` |
+| Guest memory introspection | Not implemented |
+| VMX/SVM/EL2 backends | Not implemented |
+| EPT/NPT/Stage-2 permission enforcement | Not implemented |
+
+## Guest and platform caveats
+
+- SEV/SEV-ES/SEV-SNP, TDX, VBS/HVCI, pKVM and similar protections can limit or block memory introspection.
+- Huge pages, live migration, snapshots, nested virtualization and multi-tenant QMP policies need dedicated test coverage before stronger deployment claims.
+- Tracefs text formats depend on kernel tracepoint formatting. Use replay and format autodiscovery tests for every kernel family you support.
+
+Treat this matrix literally. Unsupported means unsupported.
+
+## Snapshot schema notes
+
+Snapshot schema version 2 includes `tracepoints_ok` and `tracepoints` for tracefs metadata diagnostics plus `vm_inventory` for the current identity discovery state. `vm_inventory` reports file-backed or mock lifecycle metadata already known to the identity layer: UUID/name, host task ids, vCPU mappings, QMP socket presence, source/confidence, and bounded conflict state. It does not include raw XML, command lines, socket paths, host paths, or live libvirt freshness claims.
+
+## Event schema notes
+
+Policy action events include structured action audit fields inside the existing `action` object. Identity-enriched events include a nullable `identity` object with bounded source and confidence fields. Loss objects may include `range_kind`, `sequence_gap_start`, and `sequence_gap_end`. Queue drops are reported as `range_kind=aggregate_counter` because the dropped trace lines never received event sequence numbers. Exact sequence gaps are only reported when the emitted event stream itself has a known discontinuity. The event schema version remains `2`; older consumers that ignore unknown optional properties remain compatible with the JSON shape.
+
+## Schema compatibility examples
+
+Current-schema examples live under `schema/examples/`:
+
+- `event-v2-compatibility.jsonl` covers current event schema version 2 shapes for `exit`, `wx`, `pmu`, `policy`, `snapshot`, and `sensor` categories, including action audit, identity metadata, lifecycle, tracefs diagnostic, and loss-range fields.
+- `snapshot-v2-inventory.json` covers current snapshot schema version 2 with tracefs diagnostics and bounded VM inventory fields.
+
+The repository validator accepts these examples against the current schemas. That is the compatibility guarantee: current schema files accept these current example shapes. It does not prove support for older schemas, future schemas, external SIEM schemas, OCSF, ECS, OTLP, or every field combination a downstream consumer may accept. Event schema version 2 still allows additional event properties; validation of an extra property is not a promise that AegisHV runtime code emits or interprets it. Snapshot schema version 2 rejects extra top-level fields.
