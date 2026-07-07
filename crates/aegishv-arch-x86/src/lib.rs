@@ -3,3 +3,4 @@
 pub mod ap_startup;
 pub mod paging;
 pub mod serial;
+pub mod vmx;
