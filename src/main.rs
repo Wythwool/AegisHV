@@ -1,9 +1,12 @@
+use aegishv::actions::ActionDispatcher;
+use aegishv::admin::{validate_policy_test_input, AdminHealth, PolicyExplain, PolicyTestInput};
+use aegishv::build_info::BuildInfo;
 use aegishv::collector::{spawn_collector, ControlMessage, IngestItem, Source};
 use aegishv::config::{
     syslog_facility_code, Config, Journald as JournaldConfig, Spool as SpoolConfig,
     SpoolCompression, Syslog as SyslogConfig,
 };
-use aegishv::event::{Category, Event, Severity};
+use aegishv::event::{category_from_str, severity_from_str, Category, Event, Severity};
 use aegishv::identity::VmIdentityResolver;
 use aegishv::metrics::{Metrics, TraceInputReason};
 use aegishv::parser::{
@@ -75,6 +78,8 @@ fn real_main() -> Result<(), String> {
         "snapshot" => snapshot_cmd(args),
         "dump-schemas" => dump_schemas_cmd(args),
         "validate-config" => validate_config_cmd(args),
+        "version" => version_cmd(args),
+        "admin" => admin_cmd(args),
         "vmi" => vmi_cmd(args),
         other => Err(format!("unknown command '{other}'")),
     }
@@ -87,6 +92,11 @@ fn print_help() {
     println!("  snapshot [--tracefs PATH] [--config FILE] [--json FILE]");
     println!("  dump-schemas [--out-dir DIR]");
     println!("  validate-config --config FILE");
+    println!("  version [--json]");
+    println!("  admin health [--json]");
+    println!("  admin policy-explain --config FILE [--json]");
+    println!("  admin policy-test --config FILE --category CAT --severity SEV --reason REASON --vm VM [--vm-id ID] [--json]");
+    println!("  admin action-dry-run --config FILE --kind KIND --vm VM [--vm-id ID] [--output-path FILE] [--nic NAME] [--json]");
     println!("  vmi translate --fixture FILE --gva ADDR --mode MODE --json");
 }
 
@@ -281,6 +291,297 @@ fn validate_config_cmd(args: Vec<String>) -> Result<(), String> {
         cfg.actions.qmp.len()
     );
     Ok(())
+}
+
+fn version_cmd(args: Vec<String>) -> Result<(), String> {
+    let json = parse_json_only(args, "version")?;
+    let info = BuildInfo::current();
+    if json {
+        println!("{}", info.to_json());
+    } else {
+        println!(
+            "AegisHV {} target={}/{} git_rev={}",
+            info.version, info.target_os, info.target_arch, info.git_rev
+        );
+    }
+    Ok(())
+}
+
+fn admin_cmd(mut args: Vec<String>) -> Result<(), String> {
+    if args.is_empty() {
+        return Err("admin requires a subcommand".to_string());
+    }
+    let sub = args.remove(0);
+    match sub.as_str() {
+        "health" => admin_health_cmd(args),
+        "policy-explain" => admin_policy_explain_cmd(args),
+        "policy-test" => admin_policy_test_cmd(args),
+        "action-dry-run" => admin_action_dry_run_cmd(args),
+        other => Err(format!("unknown admin subcommand '{other}'")),
+    }
+}
+
+fn admin_health_cmd(args: Vec<String>) -> Result<(), String> {
+    let json = parse_json_only(args, "admin health")?;
+    let health = AdminHealth::local();
+    if json {
+        println!("{}", health.to_json());
+    } else {
+        println!(
+            "admin health: status={} runtime={} version={}",
+            health.status, health.runtime, health.version
+        );
+    }
+    Ok(())
+}
+
+fn admin_policy_explain_cmd(args: Vec<String>) -> Result<(), String> {
+    let (config_path, json) = parse_config_and_json(args, "admin policy-explain")?;
+    let cfg = Config::load(Some(&config_path))?;
+    let explain = PolicyExplain::from_config(&cfg);
+    if json {
+        println!("{}", explain.to_json());
+    } else {
+        println!(
+            "policy: version={} enabled_rules={} qmp_mappings={} stable_qmp_required={}",
+            explain.version,
+            explain.enabled_rules,
+            explain.qmp_mappings,
+            explain.stable_qmp_required
+        );
+    }
+    Ok(())
+}
+
+fn admin_policy_test_cmd(args: Vec<String>) -> Result<(), String> {
+    let parsed = parse_policy_test_args(args)?;
+    let mut cfg = Config::load(Some(&parsed.config))?;
+    for rule in &mut cfg.policy.rules {
+        rule.mode = "dry_run".to_string();
+    }
+    let input = PolicyTestInput {
+        category: parsed.category.clone(),
+        severity: parsed.severity.clone(),
+        reason: parsed.reason.clone(),
+        vm: parsed.vm.clone(),
+    };
+    validate_policy_test_input(&input)?;
+    let category = category_from_str(&parsed.category).ok_or("unknown category")?;
+    let severity = severity_from_str(&parsed.severity).ok_or("unknown severity")?;
+    let mut event = Event::base(category, severity, now_rfc3339(), parsed.vm);
+    event.reason = Some(parsed.reason);
+    event.vm_id = parsed.vm_id;
+    let metrics = Metrics::new()?;
+    let engine = PolicyEngine::new(&cfg)?;
+    let outputs = engine.apply(&metrics, &event);
+    if parsed.json {
+        let joined = outputs
+            .iter()
+            .map(Event::to_json)
+            .collect::<Vec<_>>()
+            .join(",");
+        println!(
+            "{{\"matched\":{},\"events\":[{}]}}",
+            !outputs.is_empty(),
+            joined
+        );
+    } else {
+        println!(
+            "policy test: matched={} events={}",
+            !outputs.is_empty(),
+            outputs.len()
+        );
+    }
+    Ok(())
+}
+
+fn admin_action_dry_run_cmd(args: Vec<String>) -> Result<(), String> {
+    let parsed = parse_action_dry_run_args(args)?;
+    let cfg = Config::load(Some(&parsed.config))?;
+    let dispatcher = ActionDispatcher::new(&cfg)?;
+    let metrics = Metrics::new()?;
+    let event = dispatcher.run_action(
+        &metrics,
+        None,
+        &parsed.vm,
+        parsed.vm_id.as_deref(),
+        &parsed.kind,
+        parsed.output_path.as_deref(),
+        parsed.nic.as_deref(),
+        None,
+        &[],
+        false,
+    );
+    if parsed.json {
+        println!("{}", event.to_json());
+    } else {
+        let action = event
+            .action
+            .as_ref()
+            .ok_or("action event missing action body")?;
+        println!(
+            "action dry-run: kind={} status={} decision={}",
+            action.kind, action.status, action.decision
+        );
+    }
+    Ok(())
+}
+
+fn parse_json_only(args: Vec<String>, command: &str) -> Result<bool, String> {
+    let mut json = false;
+    for arg in args {
+        match arg.as_str() {
+            "--json" => json = true,
+            other => return Err(format!("unknown {command} option '{other}'")),
+        }
+    }
+    Ok(json)
+}
+
+fn parse_config_and_json(args: Vec<String>, command: &str) -> Result<(PathBuf, bool), String> {
+    let mut config = None;
+    let mut json = false;
+    let mut i = 0usize;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--config" => {
+                i += 1;
+                config = Some(PathBuf::from(
+                    args.get(i).ok_or("--config requires value")?.as_str(),
+                ));
+            }
+            "--json" => json = true,
+            other => return Err(format!("unknown {command} option '{other}'")),
+        }
+        i += 1;
+    }
+    Ok((config.ok_or(format!("{command} requires --config"))?, json))
+}
+
+struct PolicyTestArgs {
+    config: PathBuf,
+    category: String,
+    severity: String,
+    reason: String,
+    vm: String,
+    vm_id: Option<String>,
+    json: bool,
+}
+
+fn parse_policy_test_args(args: Vec<String>) -> Result<PolicyTestArgs, String> {
+    let mut out = PolicyTestArgs {
+        config: PathBuf::new(),
+        category: String::new(),
+        severity: String::new(),
+        reason: String::new(),
+        vm: String::new(),
+        vm_id: None,
+        json: false,
+    };
+    let mut have_config = false;
+    let mut i = 0usize;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--config" => {
+                i += 1;
+                out.config = PathBuf::from(args.get(i).ok_or("--config requires value")?);
+                have_config = true;
+            }
+            "--category" => {
+                i += 1;
+                out.category = args.get(i).ok_or("--category requires value")?.clone();
+            }
+            "--severity" => {
+                i += 1;
+                out.severity = args.get(i).ok_or("--severity requires value")?.clone();
+            }
+            "--reason" => {
+                i += 1;
+                out.reason = args.get(i).ok_or("--reason requires value")?.clone();
+            }
+            "--vm" => {
+                i += 1;
+                out.vm = args.get(i).ok_or("--vm requires value")?.clone();
+            }
+            "--vm-id" => {
+                i += 1;
+                out.vm_id = Some(args.get(i).ok_or("--vm-id requires value")?.clone());
+            }
+            "--json" => out.json = true,
+            other => return Err(format!("unknown admin policy-test option '{other}'")),
+        }
+        i += 1;
+    }
+    if !have_config {
+        return Err("admin policy-test requires --config".to_string());
+    }
+    Ok(out)
+}
+
+struct ActionDryRunArgs {
+    config: PathBuf,
+    kind: String,
+    vm: String,
+    vm_id: Option<String>,
+    output_path: Option<String>,
+    nic: Option<String>,
+    json: bool,
+}
+
+fn parse_action_dry_run_args(args: Vec<String>) -> Result<ActionDryRunArgs, String> {
+    let mut out = ActionDryRunArgs {
+        config: PathBuf::new(),
+        kind: String::new(),
+        vm: String::new(),
+        vm_id: None,
+        output_path: None,
+        nic: None,
+        json: false,
+    };
+    let mut have_config = false;
+    let mut i = 0usize;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--config" => {
+                i += 1;
+                out.config = PathBuf::from(args.get(i).ok_or("--config requires value")?);
+                have_config = true;
+            }
+            "--kind" => {
+                i += 1;
+                out.kind = args.get(i).ok_or("--kind requires value")?.clone();
+            }
+            "--vm" => {
+                i += 1;
+                out.vm = args.get(i).ok_or("--vm requires value")?.clone();
+            }
+            "--vm-id" => {
+                i += 1;
+                out.vm_id = Some(args.get(i).ok_or("--vm-id requires value")?.clone());
+            }
+            "--output-path" => {
+                i += 1;
+                out.output_path = Some(args.get(i).ok_or("--output-path requires value")?.clone());
+            }
+            "--nic" => {
+                i += 1;
+                out.nic = Some(args.get(i).ok_or("--nic requires value")?.clone());
+            }
+            "--json" => out.json = true,
+            other => return Err(format!("unknown admin action-dry-run option '{other}'")),
+        }
+        i += 1;
+    }
+    if !have_config {
+        return Err("admin action-dry-run requires --config".to_string());
+    }
+    if out.kind.trim().is_empty() {
+        return Err("admin action-dry-run requires --kind".to_string());
+    }
+    if out.vm.trim().is_empty() {
+        return Err("admin action-dry-run requires --vm".to_string());
+    }
+    Ok(out)
 }
 
 fn vmi_cmd(mut args: Vec<String>) -> Result<(), String> {
