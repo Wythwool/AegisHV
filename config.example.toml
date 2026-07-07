@@ -62,6 +62,17 @@ enabled = true
 budget_ms = 100
 max_findings = 256
 
+[trap]
+# Synthetic trap-engine model settings. The current runtime parses and validates these values,
+# but it does not flip real EPT/NPT/Stage-2 permissions.
+enable = false
+backend = "synthetic"
+storm_window_ms = 1000
+storm_max_hits = 256
+storm_mode = "fail_closed"
+jit_window_ms = 5
+jit_max_pages = 2
+
 [spool]
 # Optional emergency copy for events that cannot be written to the main JSONL output.
 # Disabled preserves the existing fail-fast output behavior.

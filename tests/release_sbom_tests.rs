@@ -81,6 +81,10 @@ fn release_package_includes_lockfile_for_sbom_scan() {
         script.contains("Cargo.toml Cargo.lock"),
         "release package must include Cargo.toml and Cargo.lock for SBOM generation"
     );
+    assert!(
+        script.contains("LICENSE-BINARY"),
+        "release package must include the binary license notice"
+    );
 }
 
 #[test]

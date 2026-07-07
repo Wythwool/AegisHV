@@ -302,7 +302,7 @@ mod tests {
     use super::*;
     use crate::config::{
         Action, Actions, Allow, DetectorSettings, General, Identity, Journald, Match,
-        MetricsConfig, Pmu, Policy, Spool, Syslog, WxAllow,
+        MetricsConfig, Pmu, Policy, Spool, Syslog, TrapSettings, WxAllow,
     };
     use crate::event::{IdentityConfidence, IdentityInfo};
     use crate::identity::{
@@ -319,6 +319,7 @@ mod tests {
             pmu: Pmu::default(),
             metrics: MetricsConfig::default(),
             detectors: DetectorSettings::default(),
+            trap: TrapSettings::default(),
             spool: Spool::default(),
             syslog: Syslog::default(),
             journald: Journald::default(),

@@ -1,0 +1,8 @@
+AegisHV binary distribution notice
+
+Binary archives built from this repository are distributed under the MIT License in
+LICENSE unless a signed release package states different terms.
+
+This notice is included so binary packages carry an explicit license file. It does
+not add support commitments, warranty, hardware compatibility claims, type-1
+hypervisor claims, full VMI claims, or EPT/NPT/Stage-2 enforcement claims.

@@ -316,6 +316,72 @@ budget_ms = 0
 }
 
 #[test]
+fn accepts_synthetic_trap_engine_policy() {
+    let path = temp_config(
+        r#"
+[trap]
+enable = true
+backend = "synthetic"
+storm_window_ms = 250
+storm_max_hits = 32
+storm_mode = "fail_open"
+jit_window_ms = 7
+jit_max_pages = 4
+"#,
+    );
+    let cfg = Config::load(Some(&path)).expect("valid trap policy must load");
+
+    assert!(cfg.trap.enable);
+    assert_eq!(cfg.trap.backend, "synthetic");
+    assert_eq!(cfg.trap.storm_window_ms, 250);
+    assert_eq!(cfg.trap.storm_max_hits, 32);
+    assert_eq!(cfg.trap.storm_mode, "fail_open");
+    assert_eq!(cfg.trap.jit_window_ms, 7);
+    assert_eq!(cfg.trap.jit_max_pages, 4);
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn rejects_trap_hardware_backend_until_runtime_exists() {
+    let path = temp_config(
+        r#"
+[trap]
+backend = "intel_ept"
+"#,
+    );
+    let err = Config::load(Some(&path)).expect_err("unsupported trap backend must fail");
+    assert!(err.contains("invalid trap.backend"));
+    assert!(err.contains("only \"synthetic\" is supported"));
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn rejects_trap_storm_mode_outside_fail_policy() {
+    let path = temp_config(
+        r#"
+[trap]
+storm_mode = "ignore"
+"#,
+    );
+    let err = Config::load(Some(&path)).expect_err("bad trap storm mode must fail");
+    assert!(err.contains("invalid trap.storm_mode"));
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn rejects_trap_jit_window_out_of_range() {
+    let path = temp_config(
+        r#"
+[trap]
+jit_window_ms = 0
+"#,
+    );
+    let err = Config::load(Some(&path)).expect_err("zero trap JIT window must fail");
+    assert!(err.contains("invalid trap.jit_window_ms"));
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
 fn accepts_disabled_spool_defaults_and_explicit_limits() {
     let path = temp_config(
         r#"

@@ -1858,7 +1858,7 @@ mod tests {
     use super::*;
     use crate::config::{
         Actions, Config, DetectorSettings, General, Identity, Journald, MetricsConfig, Pmu, Spool,
-        Syslog,
+        Syslog, TrapSettings,
     };
     use crate::metrics::Metrics;
     use std::io::{BufRead, BufReader, Write};
@@ -1872,6 +1872,7 @@ mod tests {
             pmu: Pmu::default(),
             metrics: MetricsConfig::default(),
             detectors: DetectorSettings::default(),
+            trap: TrapSettings::default(),
             spool: Spool::default(),
             syslog: Syslog::default(),
             journald: Journald::default(),

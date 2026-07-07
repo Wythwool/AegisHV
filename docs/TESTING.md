@@ -17,6 +17,20 @@ Detector engine tests are normal locked Rust tests:
 - `detectors_inventory_memory_tests` covers hidden process/module comparison, executable anonymous memory, RWX mappings, JIT allow rules, and malformed ranges.
 - `detectors_state_incident_tests` covers dedupe, incident correlation, versioned state round trips, and corrupt-state sensor events.
 
+Trap engine tests are normal locked Rust tests:
+
+- `trap_stage2_model_tests` covers permission bits, backend limits, synthetic table lookup, overlap rejection, permission updates, and one-level splits.
+- `trap_controller_tests` covers execute/write lifecycles, JIT temporary-window refusal, storm throttling, invalidation planning, and single-step capability selection.
+- `trap_benchmark_tests` runs the synthetic benchmark harness with a small iteration count to keep the binary path compiling and executable.
+
+Synthetic trap benchmark harness:
+
+```bash
+cargo run --locked --bin trap_synthetic_bench -- --iterations 10000
+```
+
+The harness reports local process timing only. It does not benchmark VM exits, hardware invalidation, EPT/NPT writes, or guest runtime behavior.
+
 ## Deterministic Replay
 
 Use `--deterministic-replay` only with `--replay` when generating golden JSONL fixtures. It freezes event timestamps, monotonic time, event sequence, event IDs, action IDs, and host/sensor/tenant IDs. Live tracefs runs reject this flag; AegisHV does not fake deterministic timing for live runtime output.

@@ -18,6 +18,14 @@ pub const DETECTOR_BUDGET_MS_MIN: u64 = 1;
 pub const DETECTOR_BUDGET_MS_MAX: u64 = 60_000;
 pub const DETECTOR_MAX_FINDINGS_MIN: usize = 1;
 pub const DETECTOR_MAX_FINDINGS_MAX: usize = 10_000;
+pub const TRAP_STORM_WINDOW_MS_MIN: u64 = 1;
+pub const TRAP_STORM_WINDOW_MS_MAX: u64 = 60_000;
+pub const TRAP_STORM_MAX_HITS_MIN: u32 = 1;
+pub const TRAP_STORM_MAX_HITS_MAX: u32 = 1_000_000;
+pub const TRAP_JIT_WINDOW_MS_MIN: u64 = 1;
+pub const TRAP_JIT_WINDOW_MS_MAX: u64 = 60_000;
+pub const TRAP_JIT_MAX_PAGES_MIN: u64 = 1;
+pub const TRAP_JIT_MAX_PAGES_MAX: u64 = 65_536;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
@@ -28,6 +36,7 @@ pub struct Config {
     pub pmu: Pmu,
     pub metrics: MetricsConfig,
     pub detectors: DetectorSettings,
+    pub trap: TrapSettings,
     pub spool: Spool,
     pub syslog: Syslog,
     pub journald: Journald,
@@ -91,6 +100,17 @@ pub struct DetectorRule {
     pub enabled: bool,
     pub budget_ms: Option<u64>,
     pub max_findings: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrapSettings {
+    pub enable: bool,
+    pub backend: String,
+    pub storm_window_ms: u64,
+    pub storm_max_hits: u32,
+    pub storm_mode: String,
+    pub jit_window_ms: u64,
+    pub jit_max_pages: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -245,6 +265,20 @@ impl Default for DetectorRule {
     }
 }
 
+impl Default for TrapSettings {
+    fn default() -> Self {
+        Self {
+            enable: false,
+            backend: "synthetic".to_string(),
+            storm_window_ms: 1000,
+            storm_max_hits: 256,
+            storm_mode: "fail_closed".to_string(),
+            jit_window_ms: 5,
+            jit_max_pages: 2,
+        }
+    }
+}
+
 impl SpoolCompression {
     pub fn as_str(self) -> &'static str {
         match self {
@@ -314,6 +348,7 @@ impl Default for Config {
             pmu: Pmu::default(),
             metrics: MetricsConfig::default(),
             detectors: DetectorSettings::default(),
+            trap: TrapSettings::default(),
             spool: Spool::default(),
             syslog: Syslog::default(),
             journald: Journald::default(),
@@ -414,6 +449,7 @@ impl Config {
             ));
         }
         validate_detectors(&self.detectors)?;
+        validate_trap(&self.trap)?;
         if self.spool.enable && self.spool.dir.trim().is_empty() {
             return Err(
                 "invalid spool.dir: enabled spool requires a non-empty directory".to_string(),
@@ -614,6 +650,46 @@ fn is_safe_detector_id(value: &str) -> bool {
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'_' | b'-'))
 }
 
+fn validate_trap(trap: &TrapSettings) -> Result<(), String> {
+    if trap.backend != "synthetic" {
+        return Err(format!(
+            "invalid trap.backend '{}': only \"synthetic\" is supported by the current runtime",
+            trap.backend
+        ));
+    }
+    if !(TRAP_STORM_WINDOW_MS_MIN..=TRAP_STORM_WINDOW_MS_MAX).contains(&trap.storm_window_ms) {
+        return Err(format!(
+            "invalid trap.storm_window_ms {}: expected {}..={} milliseconds",
+            trap.storm_window_ms, TRAP_STORM_WINDOW_MS_MIN, TRAP_STORM_WINDOW_MS_MAX
+        ));
+    }
+    if !(TRAP_STORM_MAX_HITS_MIN..=TRAP_STORM_MAX_HITS_MAX).contains(&trap.storm_max_hits) {
+        return Err(format!(
+            "invalid trap.storm_max_hits {}: expected {}..={} hits",
+            trap.storm_max_hits, TRAP_STORM_MAX_HITS_MIN, TRAP_STORM_MAX_HITS_MAX
+        ));
+    }
+    if !matches!(trap.storm_mode.as_str(), "fail_open" | "fail_closed") {
+        return Err(format!(
+            "invalid trap.storm_mode '{}': expected \"fail_open\" or \"fail_closed\"",
+            trap.storm_mode
+        ));
+    }
+    if !(TRAP_JIT_WINDOW_MS_MIN..=TRAP_JIT_WINDOW_MS_MAX).contains(&trap.jit_window_ms) {
+        return Err(format!(
+            "invalid trap.jit_window_ms {}: expected {}..={} milliseconds",
+            trap.jit_window_ms, TRAP_JIT_WINDOW_MS_MIN, TRAP_JIT_WINDOW_MS_MAX
+        ));
+    }
+    if !(TRAP_JIT_MAX_PAGES_MIN..=TRAP_JIT_MAX_PAGES_MAX).contains(&trap.jit_max_pages) {
+        return Err(format!(
+            "invalid trap.jit_max_pages {}: expected {}..={} pages",
+            trap.jit_max_pages, TRAP_JIT_MAX_PAGES_MIN, TRAP_JIT_MAX_PAGES_MAX
+        ));
+    }
+    Ok(())
+}
+
 fn validate_action(a: &Action, rule: &str) -> Result<(), String> {
     match a.kind.as_str() {
         "pause_vm" | "resume_vm" | "manual_approval" | "noop" => Ok(()),
@@ -726,6 +802,7 @@ fn parse_config(s: &str) -> Result<Config, String> {
             "pmu" => set_pmu(&mut cfg.pmu, key, value),
             "metrics" => set_metrics(&mut cfg.metrics, key, value),
             "detectors" => set_detectors(&mut cfg.detectors, key, value),
+            "trap" => set_trap(&mut cfg.trap, key, value),
             "spool" => set_spool(&mut cfg.spool, key, value),
             "syslog" => set_syslog(&mut cfg.syslog, key, value),
             "journald" => set_journald(&mut cfg.journald, key, value),
@@ -810,6 +887,7 @@ fn is_supported_table(section: &str) -> bool {
             | "pmu"
             | "metrics"
             | "detectors"
+            | "trap"
             | "spool"
             | "syslog"
             | "journald"
@@ -1090,6 +1168,36 @@ fn set_detector_rule(rule: &mut DetectorRule, key: &str, value: &str) -> Result<
             )
         }
         _ => return Err(format!("unknown detectors.rules key '{key}'")),
+    }
+    Ok(())
+}
+
+fn set_trap(t: &mut TrapSettings, key: &str, value: &str) -> Result<(), String> {
+    match key {
+        "enable" => t.enable = parse_bool(value).ok_or("invalid trap.enable")?,
+        "backend" => t.backend = parse_string_value(value),
+        "storm_window_ms" => {
+            t.storm_window_ms = value
+                .parse()
+                .map_err(|_| "invalid trap.storm_window_ms".to_string())?
+        }
+        "storm_max_hits" => {
+            t.storm_max_hits = value
+                .parse()
+                .map_err(|_| "invalid trap.storm_max_hits".to_string())?
+        }
+        "storm_mode" => t.storm_mode = parse_string_value(value),
+        "jit_window_ms" => {
+            t.jit_window_ms = value
+                .parse()
+                .map_err(|_| "invalid trap.jit_window_ms".to_string())?
+        }
+        "jit_max_pages" => {
+            t.jit_max_pages = value
+                .parse()
+                .map_err(|_| "invalid trap.jit_max_pages".to_string())?
+        }
+        _ => return Err(format!("unknown trap key '{key}'")),
     }
     Ok(())
 }
