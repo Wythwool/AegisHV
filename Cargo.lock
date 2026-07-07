@@ -5,3 +5,14 @@ version = 4
 [[package]]
 name = "aegishv"
 version = "0.4.0"
+
+[[package]]
+name = "aegishv-arch-x86"
+version = "0.1.0"
+dependencies = [
+ "aegishv-hypervisor-core",
+]
+
+[[package]]
+name = "aegishv-hypervisor-core"
+version = "0.1.0"

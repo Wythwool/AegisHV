@@ -1,0 +1,15 @@
+[package]
+name = "aegishv-arch-x86"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.81"
+license = "MIT"
+description = "x86 no_std helpers for AegisHV boot models, serial logging, and page-table plans"
+
+[features]
+default = []
+std = ["aegishv-hypervisor-core/std"]
+serial-io = []
+
+[dependencies]
+aegishv-hypervisor-core = { path = "../aegishv-hypervisor-core" }

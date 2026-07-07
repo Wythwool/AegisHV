@@ -9,6 +9,14 @@ license = "MIT"
 authors = ["Wythwool", "Nullbit1"]
 readme = "README.md"
 
+[workspace]
+members = [
+    ".",
+    "crates/aegishv-hypervisor-core",
+    "crates/aegishv-arch-x86",
+]
+resolver = "2"
+
 [package.metadata.aegishv.ownership]
 creator = "https://github.com/Wythwool"
 organization = "https://github.com/Nullbit1"

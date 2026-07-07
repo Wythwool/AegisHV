@@ -1,0 +1,11 @@
+[package]
+name = "aegishv-hypervisor-core"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.81"
+license = "MIT"
+description = "no_std AegisHV core models for boot, memory, ABI, VM, and vCPU state"
+
+[features]
+default = []
+std = []
