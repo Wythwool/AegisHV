@@ -17,5 +17,5 @@ Each ADR uses these sections:
 | ADR | Status | Title |
 | --- | --- | --- |
 | [ADR-0001](0001-record-architecture-decisions.md) | Accepted | Record architecture decisions as ADRs |
-| [ADR-0002](0002-type1-boot-strategy.md) | Accepted | Type-1 boot strategy |
+| [ADR-0002](0002-type1-boot-strategy.md) | Accepted | Type-1 target boot strategy |
 | [ADR-0003](0003-x86-ap-startup.md) | Accepted | x86 application processor startup |

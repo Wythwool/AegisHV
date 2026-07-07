@@ -1,4 +1,4 @@
-# Type-1 Invariants
+# Type-1 Boundary Invariants
 
 This document records invariants now represented by the `no_std` crates. It does not claim the repository boots as a type-1 hypervisor.
 

@@ -1,4 +1,4 @@
-# ADR-0002: Type-1 Boot Strategy
+# ADR-0002: Type-1 Target Boot Strategy
 
 ## Status
 
@@ -6,7 +6,7 @@ Accepted.
 
 ## Context
 
-AegisHV currently ships a Linux userspace sensor. The repository now also has `no_std` crates for core type-1 models, event ABI, and x86 boot helpers, but it does not ship a bootable hypervisor image.
+AegisHV currently ships a Linux userspace sensor. The repository now also has `no_std` crates for core type-1 target boundary models, event ABI, and x86 boot helpers, but it does not ship a bootable hypervisor image.
 
 The first boot path needs firmware memory-map handoff, a controlled kernel image format, a way to capture early serial output, and enough room to add per-CPU state before hardware VMX/SVM work starts.
 
@@ -19,7 +19,7 @@ The options considered are:
 
 ## Decision
 
-Use Limine as the first boot protocol for the type-1 runtime path.
+Use Limine as the first boot protocol for the target type-1 runtime path.
 
 The initial runtime model keeps identity and direct-map page-table plans explicit. Early serial logging uses COM1 through an x86 arch crate feature. Firmware memory-map parsing and physical page allocation live in `aegishv-hypervisor-core` so the boot path and tests share the same invariants.
 

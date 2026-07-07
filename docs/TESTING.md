@@ -31,9 +31,9 @@ cargo run --locked --bin trap_synthetic_bench -- --iterations 10000
 
 The harness reports local process timing only. It does not benchmark VM exits, hardware invalidation, EPT/NPT writes, or guest runtime behavior.
 
-## Type-1 Model Crates
+## Type-1 Boundary Model Crates
 
-The type-1 workspace crates are library models. They are included in the normal workspace gate:
+The type-1 boundary workspace crates are library models. They are included in the normal workspace gate:
 
 ```bash
 cargo test --locked -p aegishv-hypervisor-core -p aegishv-event-abi -p aegishv-arch-x86
