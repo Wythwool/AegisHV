@@ -304,6 +304,48 @@ fn linux_vmi_profile_doc_records_synthetic_only_scope() {
 }
 
 #[test]
+fn windows_vmi_profile_doc_records_synthetic_only_scope() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let text = read_required_file(root, "docs/VMI_WINDOWS.md").expect("Windows VMI doc must exist");
+    let symbols = read_required_file(root, "docs/VMI_WINDOWS_SYMBOLS.md")
+        .expect("Windows symbol doc must exist");
+
+    assert_contains_all(
+        &text,
+        &[
+            "synthetic/offline and x86_64-only",
+            "exact build and PDB identity",
+            "No real Windows profile data ships by default.",
+            "There is no nearest-match fallback.",
+            "ntoskrnl base resolution",
+            "`EPROCESS` list walking",
+            "SSDT handler inspection",
+            "`MSR_LSTAR` inspection",
+            "process-create callback inventory",
+            "kernel and driver text hashing",
+            "protection-limit reporting",
+            "off-hot-path Windows detector runner",
+            "There is no live Windows guest backend.",
+            "Real Windows profile extraction is not shipped.",
+            "AegisHV does not claim a bypass.",
+        ],
+    );
+
+    assert_contains_all(
+        &symbols,
+        &[
+            "offline metadata format for pre-extracted kernel symbols",
+            "It is not a downloader",
+            "does not contact the network",
+            "Exact PDB identity still matters",
+            "No real Windows symbol cache data ships by default.",
+            "There is no automatic symbol download.",
+            "There is no PDB type reconstruction.",
+        ],
+    );
+}
+
+#[test]
 fn claim_line_validator_rejects_unqualified_full_vmi_claim() {
     assert_eq!(
         validate_claim_line("docs/STATUS.md", 7, "AegisHV provides full VMI support."),

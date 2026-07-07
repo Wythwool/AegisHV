@@ -1,10 +1,17 @@
 use aegishv::vmi::{ProfileError, VmiErrorKind};
 use aegishv::vmi_profiles::{OsKind, OsProfileRegistry, ProfileArchitecture, ProfileIdentity};
 use aegishv::windows_profile::{
-    parse_windows_profile, windows_registry_build, WindowsProtectionKind, WindowsProtectionState,
-    WindowsStructFieldKey,
+    load_windows_profile, parse_windows_profile, windows_registry_build, WindowsProtectionKind,
+    WindowsProtectionState, WindowsStructFieldKey,
 };
-use aegishv::windows_symbols::parse_windows_symbol_cache;
+use aegishv::windows_symbols::{load_windows_symbol_cache, parse_windows_symbol_cache};
+
+fn fixture_path(rel: &str) -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join(rel)
+}
 
 fn profile_text(extra: &str) -> String {
     format!(
@@ -61,6 +68,19 @@ fn windows_profile_preserves_identity_symbols_offsets_syscalls_and_limits() {
         profile.limitations()[1].state,
         WindowsProtectionState::Degraded
     );
+}
+
+#[test]
+fn windows_profile_fixture_loads_with_exact_identity() {
+    let profile = load_windows_profile(fixture_path("profiles/windows/synthetic_x86_64.profile"))
+        .expect("load fixture");
+
+    assert_eq!(profile.windows_identity().build, "10.0.22631.3155");
+    assert_eq!(profile.windows_identity().pdb_file, "ntkrnlmp.pdb");
+    assert!(profile.symbols().contains_key("PsInitialSystemProcess"));
+    assert!(profile.symbols().contains_key("KeServiceDescriptorTable"));
+    assert_eq!(profile.syscalls_by_number()[&8].name, "NtWriteFile");
+    assert_eq!(profile.limitations().len(), 3);
 }
 
 #[test]
@@ -162,6 +182,17 @@ symbol=PsLoadedModuleList,0x3000,0x10
     assert_eq!(cache.pdb_file, "ntkrnlmp.pdb");
     assert_eq!(cache.symbols["PsLoadedModuleList"].rva, 0x3000);
     assert_eq!(cache.symbols["KiSystemCall64"].size, Some(0x80));
+}
+
+#[test]
+fn windows_symbol_cache_fixture_loads_pre_extracted_symbols() {
+    let cache = load_windows_symbol_cache(fixture_path("vmi/windows/synthetic_symbols.cache"))
+        .expect("load symbol cache");
+
+    assert_eq!(cache.pdb_file, "ntkrnlmp.pdb");
+    assert_eq!(cache.pdb_age, 2);
+    assert_eq!(cache.symbols["KiSystemCall64"].rva, 0x6000);
+    assert!(cache.source.contains("synthetic"));
 }
 
 #[test]

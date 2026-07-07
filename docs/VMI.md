@@ -22,7 +22,7 @@ The current VMI code covers:
 
 These pieces are offline/testable infrastructure. They are not evidence of live guest inspection.
 
-Linux profile metadata format notes live in `docs/VMI_LINUX.md`.
+Linux profile metadata format notes live in `docs/VMI_LINUX.md`. Windows profile and pre-extracted symbol cache format notes live in `docs/VMI_WINDOWS.md` and `docs/VMI_WINDOWS_SYMBOLS.md`.
 
 ## Unsupported scope
 

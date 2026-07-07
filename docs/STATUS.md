@@ -28,6 +28,7 @@ This tree is a hardened host-side KVM sensor and a cleaner platform for the next
 - CI/release wiring, systemd unit, Docker build smoke, docs, and packaging scripts.
 - VMI/trap/type-1 interface boundaries in `src/vmi.rs` and `src/hypervisor.rs`.
 - Synthetic/offline Linux x86_64 VMI helpers for profile parsing, KASLR anchors, task/module walking, syscall table and LSTAR checks, IDT/GDT/control-register checks, text hashing, ftrace/kprobe/BPF inventory, and an off-hot-path detector runner.
+- Synthetic/offline Windows x86_64 VMI helpers for exact build/PDB profile parsing, pre-extracted symbol caches, ntoskrnl base checks, EPROCESS/module walking, SSDT and LSTAR checks, IDT/GDT checks, process callback inventory, text hashing, protection-limit reporting, and an off-hot-path detector runner.
 
 ## Still not implemented as runtime code
 
@@ -38,6 +39,7 @@ This tree is a hardened host-side KVM sensor and a cleaner platform for the next
 - Guest virtual-to-physical translation.
 - vCPU register reader from a real backend.
 - Real Linux/Windows guest OS profile extraction and live profile distribution.
+- Live Windows guest process/module/syscall/callback reads are not implemented.
 - Runtime syscall-path integrity monitoring is not implemented.
 - Direct EPT/NPT/Stage-2 permission flips, TLB invalidation, huge-page split, and single-step/retrap lifecycle are not implemented.
 - Libvirt API integration with lifecycle events is not implemented.
