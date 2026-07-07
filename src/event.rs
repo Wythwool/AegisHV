@@ -468,7 +468,9 @@ impl Event {
             bits_json(&self.page_permissions_after)
         ));
         fields.push(format!("\"wx\":{}", wx_json(&self.wx)));
-        fields.push(format!("\"trap\":{}", trap_json(&self.trap)));
+        if self.trap.is_some() {
+            fields.push(format!("\"trap\":{}", trap_json(&self.trap)));
+        }
         fields.push(format!("\"pmu\":{}", pmu_json(&self.pmu)));
         fields.push(format!("\"action\":{}", action_json(&self.action)));
         format!("{{{}}}", fields.join(","))
