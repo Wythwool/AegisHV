@@ -31,6 +31,24 @@ cargo run --locked --bin trap_synthetic_bench -- --iterations 10000
 
 The harness reports local process timing only. It does not benchmark VM exits, hardware invalidation, EPT/NPT writes, or guest runtime behavior.
 
+## Type-1 Model Crates
+
+The type-1 workspace crates are library models. They are included in the normal workspace gate:
+
+```bash
+cargo test --locked -p aegishv-hypervisor-core -p aegishv-event-abi -p aegishv-arch-x86
+```
+
+They cover memory-map validation, physical page allocation, crash records, event and command rings, VM lifecycle, vCPU scheduling, early serial logging, x86 page-table plans, and AP startup plan validation. These tests do not boot a hypervisor.
+
+`scripts/type1-qemu-smoke.sh` is opt-in lab plumbing for a boot image once one exists. The repository does not currently ship `./target/type1/aegishv-type1.elf`.
+
+```bash
+scripts/type1-qemu-smoke.sh --print-command ./target/type1/aegishv-type1.elf
+```
+
+The script exits with a clear error when the image is missing. It is not wired into normal CI.
+
 ## Deterministic Replay
 
 Use `--deterministic-replay` only with `--replay` when generating golden JSONL fixtures. It freezes event timestamps, monotonic time, event sequence, event IDs, action IDs, and host/sensor/tenant IDs. Live tracefs runs reject this flag; AegisHV does not fake deterministic timing for live runtime output.

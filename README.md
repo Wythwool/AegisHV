@@ -227,6 +227,9 @@ Tagging `vX.Y.Z` triggers locked release builds, packaging, SHA-256 generation, 
 - `src/metrics.rs` — Prometheus text metrics.
 - `src/tracefs.rs` — tracefs helpers and snapshot output.
 - `src/vmi.rs` / `src/hypervisor.rs` — future VMI/type-1 backend contracts and offline VMI infrastructure.
+- `crates/aegishv-hypervisor-core` — `no_std` type-1 bring-up models for IDs, memory maps, page allocation, crash records, per-CPU state, ABI rings, VM lifecycle, and vCPU scheduling.
+- `crates/aegishv-event-abi` — `no_std` facade for the event and command ring ABI.
+- `crates/aegishv-arch-x86` — `no_std` x86 helper models for early serial logging, host page-table plans, and AP startup validation.
 - `schema/` — JSON schemas.
 - `examples/traces/` — replay fixtures.
 - `tests/` — integration tests.

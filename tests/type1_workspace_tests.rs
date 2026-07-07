@@ -1,0 +1,101 @@
+use std::fs;
+use std::path::Path;
+
+fn read_repo_file(rel: &str) -> String {
+    fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(rel))
+        .unwrap_or_else(|err| panic!("read {rel}: {err}"))
+}
+
+#[test]
+fn workspace_lists_no_std_type1_crates() {
+    let cargo = read_repo_file("Cargo.toml");
+
+    for member in [
+        "crates/aegishv-hypervisor-core",
+        "crates/aegishv-event-abi",
+        "crates/aegishv-arch-x86",
+    ] {
+        assert!(cargo.contains(member), "workspace is missing {member}");
+    }
+}
+
+#[test]
+fn boot_strategy_adr_records_first_boot_path_without_claiming_runtime_support() {
+    let adr = read_repo_file("docs/adr/0002-type1-boot-strategy.md");
+    let index = read_repo_file("docs/adr/README.md");
+
+    for required in [
+        "UEFI application",
+        "Limine",
+        "Multiboot2",
+        "Custom loader",
+        "Use Limine as the first boot protocol",
+        "does not ship a bootable hypervisor image",
+        "does not make the current binary a type-1 hypervisor",
+    ] {
+        assert!(
+            adr.contains(required),
+            "boot strategy ADR is missing: {required}"
+        );
+    }
+    assert!(index.contains("ADR-0002"));
+}
+
+#[test]
+fn ap_startup_adr_matches_validator_scope() {
+    let adr = read_repo_file("docs/adr/0003-x86-ap-startup.md");
+
+    for required in [
+        "Reserve one 4K-aligned trampoline page below 1 MiB",
+        "at least 16 KiB per CPU",
+        "Send INIT/SIPI/SIPI",
+        "It is not AP startup code and it does not send IPIs",
+    ] {
+        assert!(
+            adr.contains(required),
+            "AP startup ADR is missing: {required}"
+        );
+    }
+}
+
+#[test]
+fn type1_invariants_doc_covers_memory_wx_rings_and_lifecycle() {
+    let doc = read_repo_file("docs/TYPE1_INVARIANTS.md");
+
+    for required in [
+        "Memory Ownership",
+        "W^X Mapping Intent",
+        "Event Ring Loss",
+        "CPU And VM State",
+        "does not claim the repository boots as a type-1 hypervisor",
+    ] {
+        assert!(
+            doc.contains(required),
+            "invariants doc is missing: {required}"
+        );
+    }
+}
+
+#[test]
+fn qemu_smoke_script_is_opt_in_and_refuses_missing_boot_images() {
+    let script = read_repo_file("scripts/type1-qemu-smoke.sh");
+    let testing = read_repo_file("docs/TESTING.md");
+
+    for required in [
+        "AEGISHV_TYPE1_BOOT_IMAGE",
+        "--print-command",
+        "boot image does not exist",
+        "exit 66",
+        "command -v \"$qemu\"",
+        "qemu-system-x86_64",
+        "-kernel \"$image\"",
+    ] {
+        assert!(
+            script.contains(required),
+            "QEMU smoke script is missing: {required}"
+        );
+    }
+
+    assert!(testing.contains("scripts/type1-qemu-smoke.sh"));
+    assert!(testing.contains("not wired into normal CI"));
+}

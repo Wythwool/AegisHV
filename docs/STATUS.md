@@ -31,12 +31,14 @@ This tree is a hardened host-side KVM sensor and a cleaner platform for the next
 - Synthetic/offline Windows x86_64 VMI helpers for exact build/PDB profile parsing, pre-extracted symbol caches, ntoskrnl base checks, EPROCESS/module walking, SSDT and LSTAR checks, IDT/GDT checks, process callback inventory, text hashing, protection-limit reporting, and an off-hot-path detector runner.
 - Detector engine library layer with a generic detector trait, scheduler, severity/confidence scoring, budget accounting, kernel text and syscall-hook normalizers, hidden process/module inventory comparison, executable anonymous and RWX mapping checks, JIT allow rules, W^X detection bridging, dedupe, incident objects, and versioned detector state parsing.
 - Synthetic trap-engine library layer with architecture-neutral Stage-2 permissions, a synthetic permission table, trap controller states, invalidation planning, single-step strategy selection, storm control, JIT temporary-window policy, trap event metadata, and backend capability negotiation.
+- `no_std` workspace crates for type-1 bring-up models: core IDs, memory-map validation, physical page allocation, crash records, per-CPU state, event and command ABI rings, VM lifecycle, vCPU scheduling, x86 serial logging, x86 page-table plans, and AP startup plan validation.
 
 ## Still not implemented as runtime code
 
 - Bare-metal VMXON/VMLAUNCH/VMRESUME hypervisor backend.
 - AMD VMRUN/VMCB backend.
 - ARM64 EL2 runtime and vectors.
+- Bootable type-1 image, Limine config, linker script, APIC startup, real trampoline code, and QEMU boot evidence are not implemented.
 - Guest physical memory reader.
 - Guest virtual-to-physical translation.
 - vCPU register reader from a real backend.
@@ -45,6 +47,7 @@ This tree is a hardened host-side KVM sensor and a cleaner platform for the next
 - Runtime syscall-path integrity monitoring is not implemented.
 - Runtime detector engine integration is not implemented; the detector layer is currently a library surface with tests.
 - Direct hardware EPT/NPT/Stage-2 permission flips, real TLB invalidation, and real single-step/retrap execution are not implemented. The current trap engine is a synthetic model with tests.
+- Host page-table plans are data models. They do not install CR3 or change live page tables.
 - Libvirt API integration with lifecycle events is not implemented.
 - True PMU grouped-counter/ring-buffer sampling with PEBS/IBS/SPE semantics is not implemented.
 - OTLP runtime export is not implemented. `docs/EVENT_EXPORT.md` is design-only.
