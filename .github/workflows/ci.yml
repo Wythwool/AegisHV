@@ -97,6 +97,8 @@ jobs:
   audit:
     name: audit locked graph
     runs-on: ubuntu-latest
+    env:
+      RUSTUP_TOOLCHAIN: stable
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -104,13 +106,15 @@ jobs:
       - name: Metadata locked
         run: cargo metadata --locked --format-version 1 >/dev/null
       - name: Install cargo-audit
-        run: cargo install cargo-audit --locked --version 0.21.2
+        run: cargo install cargo-audit --locked
       - name: Cargo audit
         run: cargo audit --locked
 
   deny:
     name: dependency policy
     runs-on: ubuntu-latest
+    env:
+      RUSTUP_TOOLCHAIN: stable
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -118,7 +122,7 @@ jobs:
       - name: Metadata locked
         run: cargo metadata --locked --format-version 1 >/dev/null
       - name: Install cargo-deny
-        run: cargo install cargo-deny --locked --version 0.17.0
+        run: cargo install cargo-deny --locked
       - name: Cargo deny
         run: cargo deny check
 
