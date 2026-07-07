@@ -301,8 +301,8 @@ fn opt_non_empty(s: &str) -> Option<&str> {
 mod tests {
     use super::*;
     use crate::config::{
-        Action, Actions, Allow, General, Identity, Journald, Match, MetricsConfig, Pmu, Policy,
-        Spool, Syslog, WxAllow,
+        Action, Actions, Allow, DetectorSettings, General, Identity, Journald, Match,
+        MetricsConfig, Pmu, Policy, Spool, Syslog, WxAllow,
     };
     use crate::event::{IdentityConfidence, IdentityInfo};
     use crate::identity::{
@@ -318,6 +318,7 @@ mod tests {
             wx_allow: WxAllow::default(),
             pmu: Pmu::default(),
             metrics: MetricsConfig::default(),
+            detectors: DetectorSettings::default(),
             spool: Spool::default(),
             syslog: Syslog::default(),
             journald: Journald::default(),

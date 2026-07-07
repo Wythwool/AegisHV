@@ -18,6 +18,7 @@ AegisHV now has a detector engine library layer. It is separate from the trace i
 - Dedupe and aggregation keyed by detector, VM, entity, range, and symbol.
 - Incident object model for VM-local correlation of W^X, syscall hook evidence, and kernel text hash drift.
 - Versioned detector state file for dedupe and incident summaries.
+- Parsed `[detectors]` and `[[detectors.rules]]` config for enabling detector ids, per-detector budgets, finding caps, and state-file path.
 
 ## Boundaries
 
@@ -26,6 +27,12 @@ The detector engine is not a live guest backend. It does not read guest memory, 
 Current detector inputs must come from existing trace events, synthetic fixtures, or caller-supplied offline VMI reports. Unsupported inputs return typed unsupported or degraded outcomes. The scheduler records those outcomes instead of reporting clean success.
 
 No public event schema changed in this layer. Incident records are Rust objects, not emitted JSONL events in the current runtime.
+
+## Configuration
+
+`config.example.toml` includes a disabled detector scheduler policy block. It is validated at startup with the rest of the config. Detector ids must use lowercase letters, digits, `_`, or `-`; duplicate ids are rejected. Budget and finding caps have bounded ranges so a bad operator file fails early.
+
+The current daemon does not automatically execute the detector engine from this config. Runtime wiring should translate these settings into `DetectorRunConfig` values and use the configured state path for dedupe and incident summaries.
 
 ## Budgets
 

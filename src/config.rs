@@ -14,6 +14,10 @@ pub const SYSLOG_MAX_MESSAGE_BYTES_MIN: usize = 512;
 pub const SYSLOG_MAX_MESSAGE_BYTES_MAX: usize = 65_507;
 pub const JOURNALD_MAX_MESSAGE_BYTES_MIN: usize = 512;
 pub const JOURNALD_MAX_MESSAGE_BYTES_MAX: usize = 65_536;
+pub const DETECTOR_BUDGET_MS_MIN: u64 = 1;
+pub const DETECTOR_BUDGET_MS_MAX: u64 = 60_000;
+pub const DETECTOR_MAX_FINDINGS_MIN: usize = 1;
+pub const DETECTOR_MAX_FINDINGS_MAX: usize = 10_000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
@@ -23,6 +27,7 @@ pub struct Config {
     pub wx_allow: WxAllow,
     pub pmu: Pmu,
     pub metrics: MetricsConfig,
+    pub detectors: DetectorSettings,
     pub spool: Spool,
     pub syslog: Syslog,
     pub journald: Journald,
@@ -69,6 +74,23 @@ pub struct Pmu {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct MetricsConfig {
     pub allow_bind_failure: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DetectorSettings {
+    pub enable: bool,
+    pub default_budget_ms: u64,
+    pub default_max_findings: usize,
+    pub state_file: String,
+    pub rules: Vec<DetectorRule>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DetectorRule {
+    pub id: String,
+    pub enabled: bool,
+    pub budget_ms: Option<u64>,
+    pub max_findings: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -200,6 +222,29 @@ impl Default for Spool {
     }
 }
 
+impl Default for DetectorSettings {
+    fn default() -> Self {
+        Self {
+            enable: false,
+            default_budget_ms: 50,
+            default_max_findings: 128,
+            state_file: "/var/lib/aegishv/detectors.state".to_string(),
+            rules: Vec::new(),
+        }
+    }
+}
+
+impl Default for DetectorRule {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            enabled: true,
+            budget_ms: None,
+            max_findings: None,
+        }
+    }
+}
+
 impl SpoolCompression {
     pub fn as_str(self) -> &'static str {
         match self {
@@ -268,6 +313,7 @@ impl Default for Config {
             wx_allow: WxAllow::default(),
             pmu: Pmu::default(),
             metrics: MetricsConfig::default(),
+            detectors: DetectorSettings::default(),
             spool: Spool::default(),
             syslog: Syslog::default(),
             journald: Journald::default(),
@@ -367,6 +413,7 @@ impl Config {
                 self.pmu.rediscover_ms, PMU_REDISCOVER_MS_MIN, PMU_REDISCOVER_MS_MAX
             ));
         }
+        validate_detectors(&self.detectors)?;
         if self.spool.enable && self.spool.dir.trim().is_empty() {
             return Err(
                 "invalid spool.dir: enabled spool requires a non-empty directory".to_string(),
@@ -509,6 +556,64 @@ impl Config {
     }
 }
 
+fn validate_detectors(detectors: &DetectorSettings) -> Result<(), String> {
+    if !(DETECTOR_BUDGET_MS_MIN..=DETECTOR_BUDGET_MS_MAX).contains(&detectors.default_budget_ms) {
+        return Err(format!(
+            "invalid detectors.default_budget_ms {}: expected {}..={} milliseconds",
+            detectors.default_budget_ms, DETECTOR_BUDGET_MS_MIN, DETECTOR_BUDGET_MS_MAX
+        ));
+    }
+    if !(DETECTOR_MAX_FINDINGS_MIN..=DETECTOR_MAX_FINDINGS_MAX)
+        .contains(&detectors.default_max_findings)
+    {
+        return Err(format!(
+            "invalid detectors.default_max_findings {}: expected {}..={} findings",
+            detectors.default_max_findings, DETECTOR_MAX_FINDINGS_MIN, DETECTOR_MAX_FINDINGS_MAX
+        ));
+    }
+    if detectors.enable && detectors.state_file.trim().is_empty() {
+        return Err(
+            "invalid detectors.state_file: enabled detectors require a state file path".to_string(),
+        );
+    }
+    let mut ids = HashSet::new();
+    for rule in &detectors.rules {
+        if !is_safe_detector_id(&rule.id) {
+            return Err(format!(
+                "invalid detectors.rules id '{}': expected lowercase letters, digits, '_' or '-'",
+                rule.id
+            ));
+        }
+        if !ids.insert(rule.id.clone()) {
+            return Err(format!("duplicate detectors.rules id '{}'", rule.id));
+        }
+        if let Some(budget_ms) = rule.budget_ms {
+            if !(DETECTOR_BUDGET_MS_MIN..=DETECTOR_BUDGET_MS_MAX).contains(&budget_ms) {
+                return Err(format!(
+                    "invalid detectors.rules '{}' budget_ms {}: expected {}..={} milliseconds",
+                    rule.id, budget_ms, DETECTOR_BUDGET_MS_MIN, DETECTOR_BUDGET_MS_MAX
+                ));
+            }
+        }
+        if let Some(max_findings) = rule.max_findings {
+            if !(DETECTOR_MAX_FINDINGS_MIN..=DETECTOR_MAX_FINDINGS_MAX).contains(&max_findings) {
+                return Err(format!(
+                    "invalid detectors.rules '{}' max_findings {}: expected {}..={} findings",
+                    rule.id, max_findings, DETECTOR_MAX_FINDINGS_MIN, DETECTOR_MAX_FINDINGS_MAX
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn is_safe_detector_id(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'_' | b'-'))
+}
+
 fn validate_action(a: &Action, rule: &str) -> Result<(), String> {
     match a.kind.as_str() {
         "pause_vm" | "resume_vm" | "manual_approval" | "noop" => Ok(()),
@@ -540,6 +645,7 @@ fn parse_config(s: &str) -> Result<Config, String> {
     let mut current_rule: Option<Rule> = None;
     let mut current_qmp: Option<QmpMapping> = None;
     let mut current_wx: Option<WxAllowEntry> = None;
+    let mut current_detector: Option<DetectorRule> = None;
     let mut declared_tables = HashSet::new();
     let mut seen_keys = HashSet::new();
 
@@ -557,6 +663,7 @@ fn parse_config(s: &str) -> Result<Config, String> {
             flush_rule(&mut cfg, &mut current_rule);
             flush_qmp(&mut cfg, &mut current_qmp);
             flush_wx(&mut cfg, &mut current_wx);
+            flush_detector_rule(&mut cfg, &mut current_detector);
             seen_keys.clear();
             section = match header {
                 SectionHeader::Table(name) => {
@@ -591,6 +698,10 @@ fn parse_config(s: &str) -> Result<Config, String> {
                         current_wx = Some(WxAllowEntry::default());
                         name
                     }
+                    "detectors.rules" => {
+                        current_detector = Some(DetectorRule::default());
+                        name
+                    }
                     _ => {
                         return Err(line_error(
                             line_number,
@@ -614,6 +725,7 @@ fn parse_config(s: &str) -> Result<Config, String> {
             "allow" => set_allow(&mut cfg.allow, key, value),
             "pmu" => set_pmu(&mut cfg.pmu, key, value),
             "metrics" => set_metrics(&mut cfg.metrics, key, value),
+            "detectors" => set_detectors(&mut cfg.detectors, key, value),
             "spool" => set_spool(&mut cfg.spool, key, value),
             "syslog" => set_syslog(&mut cfg.syslog, key, value),
             "journald" => set_journald(&mut cfg.journald, key, value),
@@ -626,6 +738,10 @@ fn parse_config(s: &str) -> Result<Config, String> {
             "wx_allow.entries" => match current_wx.as_mut() {
                 Some(w) => set_wx(w, key, value),
                 None => Err("internal wx parser state".to_string()),
+            },
+            "detectors.rules" => match current_detector.as_mut() {
+                Some(rule) => set_detector_rule(rule, key, value),
+                None => Err("internal detector parser state".to_string()),
             },
             "policy.rules" => match current_rule.as_mut() {
                 Some(r) => set_rule(r, key, value),
@@ -640,6 +756,7 @@ fn parse_config(s: &str) -> Result<Config, String> {
     flush_rule(&mut cfg, &mut current_rule);
     flush_qmp(&mut cfg, &mut current_qmp);
     flush_wx(&mut cfg, &mut current_wx);
+    flush_detector_rule(&mut cfg, &mut current_detector);
     Ok(cfg)
 }
 
@@ -692,6 +809,7 @@ fn is_supported_table(section: &str) -> bool {
             | "allow"
             | "pmu"
             | "metrics"
+            | "detectors"
             | "spool"
             | "syslog"
             | "journald"
@@ -930,6 +1048,48 @@ fn set_metrics(m: &mut MetricsConfig, key: &str, value: &str) -> Result<(), Stri
             m.allow_bind_failure = parse_bool(value).ok_or("invalid metrics.allow_bind_failure")?
         }
         _ => return Err(format!("unknown metrics key '{key}'")),
+    }
+    Ok(())
+}
+
+fn set_detectors(d: &mut DetectorSettings, key: &str, value: &str) -> Result<(), String> {
+    match key {
+        "enable" => d.enable = parse_bool(value).ok_or("invalid detectors.enable")?,
+        "default_budget_ms" => {
+            d.default_budget_ms = value
+                .parse()
+                .map_err(|_| "invalid detectors.default_budget_ms".to_string())?
+        }
+        "default_max_findings" => {
+            d.default_max_findings = value
+                .parse()
+                .map_err(|_| "invalid detectors.default_max_findings".to_string())?
+        }
+        "state_file" => d.state_file = parse_string_value(value),
+        _ => return Err(format!("unknown detectors key '{key}'")),
+    }
+    Ok(())
+}
+
+fn set_detector_rule(rule: &mut DetectorRule, key: &str, value: &str) -> Result<(), String> {
+    match key {
+        "id" => rule.id = parse_string_value(value),
+        "enabled" => rule.enabled = parse_bool(value).ok_or("invalid detectors.rules.enabled")?,
+        "budget_ms" => {
+            rule.budget_ms = Some(
+                value
+                    .parse()
+                    .map_err(|_| "invalid detectors.rules.budget_ms".to_string())?,
+            )
+        }
+        "max_findings" => {
+            rule.max_findings = Some(
+                value
+                    .parse()
+                    .map_err(|_| "invalid detectors.rules.max_findings".to_string())?,
+            )
+        }
+        _ => return Err(format!("unknown detectors.rules key '{key}'")),
     }
     Ok(())
 }
@@ -1288,6 +1448,12 @@ fn flush_qmp(cfg: &mut Config, current_qmp: &mut Option<QmpMapping>) {
 fn flush_wx(cfg: &mut Config, current_wx: &mut Option<WxAllowEntry>) {
     if let Some(w) = current_wx.take() {
         cfg.wx_allow.entries.push(w);
+    }
+}
+
+fn flush_detector_rule(cfg: &mut Config, current_detector: &mut Option<DetectorRule>) {
+    if let Some(rule) = current_detector.take() {
+        cfg.detectors.rules.push(rule);
     }
 }
 

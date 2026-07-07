@@ -221,6 +221,101 @@ allow_bind_failure = maybe
 }
 
 #[test]
+fn accepts_detector_scheduler_policy() {
+    let path = temp_config(
+        r#"
+[detectors]
+enable = true
+default_budget_ms = 75
+default_max_findings = 256
+state_file = "/var/lib/aegishv/detectors.state"
+
+[[detectors.rules]]
+id = "kernel_text_tamper"
+enabled = true
+budget_ms = 40
+max_findings = 32
+
+[[detectors.rules]]
+id = "hidden_process"
+enabled = false
+max_findings = 16
+"#,
+    );
+    let cfg = Config::load(Some(&path)).expect("valid detector scheduler policy must load");
+
+    assert!(cfg.detectors.enable);
+    assert_eq!(cfg.detectors.default_budget_ms, 75);
+    assert_eq!(cfg.detectors.default_max_findings, 256);
+    assert_eq!(cfg.detectors.rules.len(), 2);
+    assert_eq!(cfg.detectors.rules[0].id, "kernel_text_tamper");
+    assert_eq!(cfg.detectors.rules[0].budget_ms, Some(40));
+    assert_eq!(cfg.detectors.rules[0].max_findings, Some(32));
+    assert_eq!(cfg.detectors.rules[1].id, "hidden_process");
+    assert!(!cfg.detectors.rules[1].enabled);
+    assert_eq!(cfg.detectors.rules[1].budget_ms, None);
+    assert_eq!(cfg.detectors.rules[1].max_findings, Some(16));
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn rejects_detector_duplicate_rule_id() {
+    let path = temp_config(
+        r#"
+[[detectors.rules]]
+id = "syscall_hook"
+
+[[detectors.rules]]
+id = "syscall_hook"
+"#,
+    );
+    let err = Config::load(Some(&path)).expect_err("duplicate detector ids must fail");
+    assert!(err.contains("duplicate detectors.rules id 'syscall_hook'"));
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn rejects_detector_rule_missing_id() {
+    let path = temp_config(
+        r#"
+[[detectors.rules]]
+enabled = true
+"#,
+    );
+    let err = Config::load(Some(&path)).expect_err("detector rules need stable ids");
+    assert!(err.contains("invalid detectors.rules id"));
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn rejects_detector_budget_out_of_range() {
+    let path = temp_config(
+        r#"
+[detectors]
+default_budget_ms = 60001
+"#,
+    );
+    let err = Config::load(Some(&path)).expect_err("oversized detector budget must fail");
+    assert!(err.contains("invalid detectors.default_budget_ms"));
+    assert!(err.contains("expected 1..=60000 milliseconds"));
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn rejects_detector_rule_budget_out_of_range() {
+    let path = temp_config(
+        r#"
+[[detectors.rules]]
+id = "rwx_mapping"
+budget_ms = 0
+"#,
+    );
+    let err = Config::load(Some(&path)).expect_err("zero detector budget must fail");
+    assert!(err.contains("invalid detectors.rules 'rwx_mapping' budget_ms"));
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
 fn accepts_disabled_spool_defaults_and_explicit_limits() {
     let path = temp_config(
         r#"

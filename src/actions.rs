@@ -1857,7 +1857,8 @@ mod stable_match_tests {
 mod tests {
     use super::*;
     use crate::config::{
-        Actions, Config, General, Identity, Journald, MetricsConfig, Pmu, Spool, Syslog,
+        Actions, Config, DetectorSettings, General, Identity, Journald, MetricsConfig, Pmu, Spool,
+        Syslog,
     };
     use crate::metrics::Metrics;
     use std::io::{BufRead, BufReader, Write};
@@ -1870,6 +1871,7 @@ mod tests {
             wx_allow: Default::default(),
             pmu: Pmu::default(),
             metrics: MetricsConfig::default(),
+            detectors: DetectorSettings::default(),
             spool: Spool::default(),
             syslog: Syslog::default(),
             journald: Journald::default(),

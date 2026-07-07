@@ -30,6 +30,38 @@ vm_regex = ""
 # Set this only when losing local metrics during startup is an accepted degraded mode.
 allow_bind_failure = false
 
+[detectors]
+# Parsed scheduler policy for the detector engine library layer. The current runtime does not
+# execute these detectors automatically; callers that wire the library layer should honor this.
+enable = false
+default_budget_ms = 50
+default_max_findings = 128
+state_file = "/var/lib/aegishv/detectors.state"
+
+[[detectors.rules]]
+id = "kernel_text_tamper"
+enabled = true
+budget_ms = 50
+max_findings = 64
+
+[[detectors.rules]]
+id = "syscall_hook"
+enabled = true
+budget_ms = 50
+max_findings = 64
+
+[[detectors.rules]]
+id = "hidden_process"
+enabled = true
+budget_ms = 100
+max_findings = 256
+
+[[detectors.rules]]
+id = "executable_anonymous_memory"
+enabled = true
+budget_ms = 100
+max_findings = 256
+
 [spool]
 # Optional emergency copy for events that cannot be written to the main JSONL output.
 # Disabled preserves the existing fail-fast output behavior.
