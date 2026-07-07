@@ -63,6 +63,26 @@ impl PhysicalCpuId {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct DeviceId(u32);
+
+impl DeviceId {
+    pub const fn new(raw: u32) -> Result<Self, CoreError> {
+        if raw == 0 {
+            Err(CoreError::new(
+                CoreErrorKind::InvalidId,
+                "device id 0 is reserved",
+            ))
+        } else {
+            Ok(Self(raw))
+        }
+    }
+
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct HostPhysical(u64);
 
 impl HostPhysical {
@@ -142,6 +162,7 @@ mod tests {
             PhysicalCpuId::new(u16::MAX).unwrap_err().kind,
             CoreErrorKind::InvalidId
         );
+        assert_eq!(DeviceId::new(0).unwrap_err().kind, CoreErrorKind::InvalidId);
     }
 
     #[test]

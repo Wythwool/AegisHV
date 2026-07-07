@@ -16,6 +16,7 @@ members = [
     "crates/aegishv-event-abi",
     "crates/aegishv-arch-x86",
     "crates/aegishv-arch-arm64",
+    "crates/aegishv-devices",
 ]
 exclude = ["fuzz"]
 resolver = "2"
