@@ -645,7 +645,12 @@ fn run(
     let pmu_qemu_pid = cfg.pmu.qemu_pid;
     let pmu_vm_regex = cfg.pmu.vm_regex.clone();
     let allow_metrics_bind_failure = cfg.metrics.allow_bind_failure;
-    let mut runtime = RuntimeState::new(&cfg, quiet_flag, no_quiet_flag)?;
+    let mut runtime = RuntimeState::new_with_identity_mode(
+        &cfg,
+        quiet_flag,
+        no_quiet_flag,
+        deterministic_replay,
+    )?;
     let mut replay_determinism = if deterministic_replay {
         ReplayDeterminism::enabled()
     } else {
@@ -1133,12 +1138,27 @@ struct RuntimeState {
 
 impl RuntimeState {
     fn new(cfg: &Config, quiet_flag: bool, no_quiet_flag: bool) -> Result<Self, String> {
+        Self::new_with_identity_mode(cfg, quiet_flag, no_quiet_flag, false)
+    }
+
+    fn new_with_identity_mode(
+        cfg: &Config,
+        quiet_flag: bool,
+        no_quiet_flag: bool,
+        deterministic_replay: bool,
+    ) -> Result<Self, String> {
         let policy = PolicyEngine::new(cfg)?;
+        let identity = if deterministic_replay {
+            VmIdentityResolver::deterministic_replay(cfg.identity.clone())
+        } else {
+            VmIdentityResolver::new(cfg.identity.clone())
+        }
+        .map_err(|e| e.to_string())?;
         Ok(Self {
             quiet: effective_quiet(cfg, quiet_flag, no_quiet_flag),
             flush_every: cfg.general.flush_every,
             wx: WxEngine::new(cfg),
-            identity: VmIdentityResolver::new(cfg.identity.clone()).map_err(|e| e.to_string())?,
+            identity,
             policy,
             policy_rule_count: cfg.policy.rules.iter().filter(|rule| rule.enabled).count(),
             qmp_mapping_count: cfg.actions.qmp.len(),

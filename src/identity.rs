@@ -965,6 +965,7 @@ fn task_start_time_matches(
 
 pub struct VmIdentityResolver {
     enable: bool,
+    live_host_lookup: bool,
     ttl: Duration,
     qmp_socket_dirs: Vec<PathBuf>,
     libvirt: Mutex<Option<LibvirtDomainDiscovery>>,
@@ -974,7 +975,18 @@ pub struct VmIdentityResolver {
 
 impl VmIdentityResolver {
     pub fn new(cfg: Identity) -> Result<Self, LibvirtDiscoveryError> {
-        let libvirt = if cfg.libvirt_xml_dir.trim().is_empty() {
+        Self::with_live_host_lookup(cfg, true)
+    }
+
+    pub fn deterministic_replay(cfg: Identity) -> Result<Self, LibvirtDiscoveryError> {
+        Self::with_live_host_lookup(cfg, false)
+    }
+
+    fn with_live_host_lookup(
+        cfg: Identity,
+        live_host_lookup: bool,
+    ) -> Result<Self, LibvirtDiscoveryError> {
+        let libvirt = if !live_host_lookup || cfg.libvirt_xml_dir.trim().is_empty() {
             None
         } else {
             Some(LibvirtDomainDiscovery::from_dir(Path::new(
@@ -983,6 +995,7 @@ impl VmIdentityResolver {
         };
         Ok(Self {
             enable: cfg.enable,
+            live_host_lookup,
             ttl: Duration::from_millis(cfg.cache_ms),
             qmp_socket_dirs: cfg.qmp_socket_dirs.into_iter().map(PathBuf::from).collect(),
             libvirt: Mutex::new(libvirt),
@@ -1052,7 +1065,11 @@ impl VmIdentityResolver {
 
     pub fn resolve_pid_with_metrics(&self, pid: i32) -> IdentityResolution {
         let now = Instant::now();
-        let start_time = read_proc_start_time_ticks(pid);
+        let start_time = if self.live_host_lookup {
+            read_proc_start_time_ticks(pid)
+        } else {
+            None
+        };
         let mut stale_cache_conflict = None;
         let mut cache_result = IdentityCacheResult::Miss;
         if let Ok(cache) = self.cache.lock() {
@@ -1076,11 +1093,16 @@ impl VmIdentityResolver {
                 }
             }
         }
-        let mut ident =
-            resolve_identity_once_with_start_time(pid, &self.qmp_socket_dirs, start_time);
-        if let Ok(libvirt) = self.libvirt.lock() {
-            if let Some(libvirt) = libvirt.as_ref() {
-                apply_libvirt_discovery(pid, &mut ident, libvirt);
+        let mut ident = if self.live_host_lookup {
+            resolve_identity_once_with_start_time(pid, &self.qmp_socket_dirs, start_time)
+        } else {
+            fallback_pid_identity(pid)
+        };
+        if self.live_host_lookup {
+            if let Ok(libvirt) = self.libvirt.lock() {
+                if let Some(libvirt) = libvirt.as_ref() {
+                    apply_libvirt_discovery(pid, &mut ident, libvirt);
+                }
             }
         }
         if ident.vm_id.is_empty() {
@@ -1467,6 +1489,17 @@ fn recompute_identity_confidence(ident: &mut VmIdentity) {
 pub fn resolve_identity_once(pid: i32, qmp_socket_dirs: &[PathBuf]) -> VmIdentity {
     let start_time = read_proc_start_time_ticks(pid);
     resolve_identity_once_with_start_time(pid, qmp_socket_dirs, start_time)
+}
+
+fn fallback_pid_identity(pid: i32) -> VmIdentity {
+    let mut ident = VmIdentity {
+        host_pid: pid,
+        vm_id: stable_pid_id(pid, None),
+        ..VmIdentity::default()
+    };
+    push_identity_source(&mut ident.identity_sources, IDENTITY_SOURCE_FALLBACK_PID);
+    recompute_identity_confidence(&mut ident);
+    ident
 }
 
 fn resolve_identity_once_with_start_time(
@@ -2817,6 +2850,20 @@ mod tests {
         let _ = resolver.resolve_pid(2_147_000_001);
 
         assert_eq!(resolver.cache_len(), 0);
+    }
+
+    #[test]
+    fn deterministic_replay_resolver_does_not_read_live_host_identity() {
+        let resolver = VmIdentityResolver::deterministic_replay(Identity::default()).unwrap();
+
+        let ident = resolver.resolve_pid(4242);
+
+        assert_eq!(ident.vm_id, "host-pid:4242");
+        assert_eq!(ident.host_start_time_ticks, None);
+        assert_eq!(
+            ident.identity_sources,
+            vec![IDENTITY_SOURCE_FALLBACK_PID.to_string()]
+        );
     }
 
     #[test]
