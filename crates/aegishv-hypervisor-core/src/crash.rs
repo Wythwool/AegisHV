@@ -40,10 +40,7 @@ impl<const N: usize> FixedText<N> {
     }
 
     pub fn as_str(&self) -> &str {
-        match core::str::from_utf8(&self.bytes[..self.len]) {
-            Ok(text) => text,
-            Err(_) => "",
-        }
+        core::str::from_utf8(&self.bytes[..self.len]).unwrap_or_default()
     }
 }
 

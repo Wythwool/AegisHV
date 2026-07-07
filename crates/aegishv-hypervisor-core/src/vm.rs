@@ -40,24 +40,24 @@ impl Vm {
 }
 
 pub const fn allowed_transition(from: VmState, to: VmState) -> bool {
-    match (from, to) {
-        (VmState::Created, VmState::Configured) => true,
-        (VmState::Configured, VmState::Runnable) => true,
-        (VmState::Runnable, VmState::Running) => true,
-        (VmState::Running, VmState::Paused) => true,
-        (VmState::Paused, VmState::Running) => true,
-        (VmState::Running, VmState::Stopping) => true,
-        (VmState::Paused, VmState::Stopping) => true,
-        (VmState::Runnable, VmState::Stopping) => true,
-        (VmState::Stopping, VmState::Stopped) => true,
-        (VmState::Created, VmState::Crashed) => true,
-        (VmState::Configured, VmState::Crashed) => true,
-        (VmState::Runnable, VmState::Crashed) => true,
-        (VmState::Running, VmState::Crashed) => true,
-        (VmState::Paused, VmState::Crashed) => true,
-        (VmState::Stopping, VmState::Crashed) => true,
-        _ => false,
-    }
+    matches!(
+        (from, to),
+        (VmState::Created, VmState::Configured)
+            | (VmState::Configured, VmState::Runnable)
+            | (VmState::Runnable, VmState::Running)
+            | (VmState::Running, VmState::Paused)
+            | (VmState::Paused, VmState::Running)
+            | (VmState::Running, VmState::Stopping)
+            | (VmState::Paused, VmState::Stopping)
+            | (VmState::Runnable, VmState::Stopping)
+            | (VmState::Stopping, VmState::Stopped)
+            | (VmState::Created, VmState::Crashed)
+            | (VmState::Configured, VmState::Crashed)
+            | (VmState::Runnable, VmState::Crashed)
+            | (VmState::Running, VmState::Crashed)
+            | (VmState::Paused, VmState::Crashed)
+            | (VmState::Stopping, VmState::Crashed)
+    )
 }
 
 #[cfg(test)]

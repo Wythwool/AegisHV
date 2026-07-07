@@ -182,6 +182,10 @@ impl<const N: usize, const P: usize> NptMapPlan<N, P> {
         self.len
     }
 
+    pub const fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
     pub fn mappings(&self) -> impl Iterator<Item = NptMapping> + '_ {
         self.mappings[..self.len]
             .iter()
@@ -254,14 +258,12 @@ impl<const N: usize, const P: usize> NptMapPlan<N, P> {
     }
 
     fn reject_hypervisor_overlap(&self, candidate: NptMapping) -> Result<(), SvmError> {
-        for protected in &self.protected[..self.protected_len] {
-            if let Some(range) = protected {
-                if range.overlaps_mapping(candidate) {
-                    return Err(SvmError::new(
-                        SvmErrorKind::InvalidNptMapping,
-                        "NPT mapping would expose protected hypervisor memory",
-                    ));
-                }
+        for range in self.protected[..self.protected_len].iter().flatten() {
+            if range.overlaps_mapping(candidate) {
+                return Err(SvmError::new(
+                    SvmErrorKind::InvalidNptMapping,
+                    "NPT mapping would expose protected hypervisor memory",
+                ));
             }
         }
         Ok(())

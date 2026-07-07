@@ -38,6 +38,10 @@ impl<const N: usize> PerCpuTable<N> {
         self.len
     }
 
+    pub const fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
     pub fn reserve_stack(
         &mut self,
         cpu: PhysicalCpuId,

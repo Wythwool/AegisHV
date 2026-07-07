@@ -81,6 +81,10 @@ impl<const N: usize> PageTablePlan<N> {
         self.len
     }
 
+    pub const fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
     pub fn mappings(&self) -> &[MappingDescriptor] {
         &self.mappings[..self.len]
     }

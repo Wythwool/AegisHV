@@ -66,6 +66,10 @@ impl<const N: usize> PageOwnershipTable<N> {
         self.len
     }
 
+    pub const fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
     pub fn entries(&self) -> impl Iterator<Item = PageOwnership> + '_ {
         self.entries[..self.len].iter().filter_map(|entry| *entry)
     }

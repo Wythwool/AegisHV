@@ -157,6 +157,10 @@ impl<const N: usize> EptMapPlan<N> {
         self.len
     }
 
+    pub const fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
     pub fn mappings(&self) -> impl Iterator<Item = EptMapping> + '_ {
         self.mappings[..self.len]
             .iter()

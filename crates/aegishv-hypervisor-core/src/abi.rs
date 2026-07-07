@@ -79,6 +79,10 @@ impl<const N: usize> EventRing<N> {
         self.len
     }
 
+    pub const fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
     pub const fn dropped(&self) -> u64 {
         self.dropped
     }
