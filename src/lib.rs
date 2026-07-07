@@ -21,6 +21,7 @@ pub mod pmu;
 pub mod policy;
 pub mod trace_format;
 pub mod tracefs;
+pub mod trap;
 pub mod util;
 pub mod vmi;
 pub mod vmi_arm64;
