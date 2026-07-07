@@ -310,6 +310,33 @@ fn does_not_cross_correlate_between_address_spaces() {
 }
 
 #[test]
+fn wx_alert_preserves_guest_attribution_from_exit_event() {
+    let cfg = Config::default();
+    let wx = WxEngine::new(&cfg);
+    let mut write = base_exit("vm-a", Some("vm-a"), Some("0xabc"), "0x2400", true, false);
+    write.guest_os = Some("linux".to_string());
+    write.guest_process = Some("sshd".to_string());
+    write.guest_thread = Some("sshd-worker".to_string());
+    write.guest_module = Some("vmlinux".to_string());
+    write.guest_symbol = Some("__x64_sys_write".to_string());
+    let mut exec = base_exit("vm-a", Some("vm-a"), Some("0xabc"), "0x2408", false, true);
+    exec.guest_os = write.guest_os.clone();
+    exec.guest_process = write.guest_process.clone();
+    exec.guest_thread = write.guest_thread.clone();
+    exec.guest_module = write.guest_module.clone();
+    exec.guest_symbol = write.guest_symbol.clone();
+
+    assert!(wx.on_exit_event(&write).is_none());
+    let alert = wx.on_exit_event(&exec).expect("W^X alert");
+
+    assert_eq!(alert.guest_os.as_deref(), Some("linux"));
+    assert_eq!(alert.guest_process.as_deref(), Some("sshd"));
+    assert_eq!(alert.guest_thread.as_deref(), Some("sshd-worker"));
+    assert_eq!(alert.guest_module.as_deref(), Some("vmlinux"));
+    assert_eq!(alert.guest_symbol.as_deref(), Some("__x64_sys_write"));
+}
+
+#[test]
 fn detector_cooldown_suppresses_duplicate_same_scope_page_and_reason() {
     let cfg = Config::default();
     let wx = WxEngine::new(&cfg);

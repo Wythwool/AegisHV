@@ -154,6 +154,11 @@ impl WxEngine {
                     wx_ev.vmid = ev.vmid.clone();
                     wx_ev.vpid = ev.vpid.clone();
                     wx_ev.arch = ev.arch.clone();
+                    wx_ev.guest_os = ev.guest_os.clone();
+                    wx_ev.guest_process = ev.guest_process.clone();
+                    wx_ev.guest_thread = ev.guest_thread.clone();
+                    wx_ev.guest_module = ev.guest_module.clone();
+                    wx_ev.guest_symbol = ev.guest_symbol.clone();
                     wx_ev.reason = Some("W^X".to_string());
                     wx_ev.trap_type = ev.trap_type.clone();
                     wx_ev.message = Some(

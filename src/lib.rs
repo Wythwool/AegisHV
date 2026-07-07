@@ -5,6 +5,7 @@ pub mod event;
 pub mod hypervisor;
 pub mod identity;
 pub mod linux_bpf;
+pub mod linux_detectors;
 pub mod linux_hooks;
 pub mod linux_integrity;
 pub mod linux_symbols;
