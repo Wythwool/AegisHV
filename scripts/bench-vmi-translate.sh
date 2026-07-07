@@ -7,7 +7,11 @@ iterations="${AEGISHV_BENCH_ITERATIONS:-100}"
 fixture="${AEGISHV_BENCH_VMI_FIXTURE:-./tests/fixtures/vmi/x86_64_basic.vmi}"
 gva="${AEGISHV_BENCH_VMI_GVA:-0x0}"
 mode="${AEGISHV_BENCH_VMI_MODE:-x86_64-4level}"
-out_dir="${AEGISHV_BENCH_OUT:-${TMPDIR:-/tmp}/aegishv-bench-vmi-translate}"
+if [[ -n "${AEGISHV_BENCH_OUT:-}" ]]; then
+  out_dir="$AEGISHV_BENCH_OUT"
+else
+  out_dir="target/tmp/aegishv-bench-vmi-translate"
+fi
 
 if [[ ! "$iterations" =~ ^[1-9][0-9]*$ ]]; then
   echo "AEGISHV_BENCH_ITERATIONS must be a positive integer" >&2

@@ -8,7 +8,11 @@ if [[ "${AEGISHV_RUN_LIVE_KVM:-}" != "1" ]]; then
   exit 77
 fi
 
-log_dir="${AEGISHV_LIVE_KVM_LOG_DIR:-${TMPDIR:-/tmp}/aegishv-live-kvm}"
+if [[ -n "${AEGISHV_LIVE_KVM_LOG_DIR:-}" ]]; then
+  log_dir="$AEGISHV_LIVE_KVM_LOG_DIR"
+else
+  log_dir="target/tmp/aegishv-live-kvm"
+fi
 timeout_s="${AEGISHV_LIVE_KVM_TIMEOUT:-30}"
 
 mkdir -p "$log_dir"

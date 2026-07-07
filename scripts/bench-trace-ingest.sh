@@ -5,7 +5,11 @@ cd "$(dirname "$0")/.."
 
 iterations="${AEGISHV_BENCH_ITERATIONS:-3}"
 replay="${AEGISHV_BENCH_REPLAY:-./examples/traces/kvm_exit_sample.log}"
-out_dir="${AEGISHV_BENCH_OUT:-${TMPDIR:-/tmp}/aegishv-bench-trace-ingest}"
+if [[ -n "${AEGISHV_BENCH_OUT:-}" ]]; then
+  out_dir="$AEGISHV_BENCH_OUT"
+else
+  out_dir="target/tmp/aegishv-bench-trace-ingest"
+fi
 
 if [[ ! "$iterations" =~ ^[1-9][0-9]*$ ]]; then
   echo "AEGISHV_BENCH_ITERATIONS must be a positive integer" >&2

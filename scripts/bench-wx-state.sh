@@ -6,7 +6,11 @@ cd "$(dirname "$0")/.."
 iterations="${AEGISHV_BENCH_ITERATIONS:-3}"
 replay="${AEGISHV_BENCH_WX_REPLAY:-./corpus/malicious/wx_same_vm_same_as.log}"
 config="${AEGISHV_BENCH_CONFIG:-./config.example.toml}"
-out_dir="${AEGISHV_BENCH_OUT:-${TMPDIR:-/tmp}/aegishv-bench-wx-state}"
+if [[ -n "${AEGISHV_BENCH_OUT:-}" ]]; then
+  out_dir="$AEGISHV_BENCH_OUT"
+else
+  out_dir="target/tmp/aegishv-bench-wx-state"
+fi
 
 if [[ ! "$iterations" =~ ^[1-9][0-9]*$ ]]; then
   echo "AEGISHV_BENCH_ITERATIONS must be a positive integer" >&2

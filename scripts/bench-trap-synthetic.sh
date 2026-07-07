@@ -4,7 +4,11 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 iterations="${AEGISHV_BENCH_ITERATIONS:-10000}"
-out_dir="${AEGISHV_BENCH_OUT:-${TMPDIR:-/tmp}/aegishv-bench-trap-synthetic}"
+if [[ -n "${AEGISHV_BENCH_OUT:-}" ]]; then
+  out_dir="$AEGISHV_BENCH_OUT"
+else
+  out_dir="target/tmp/aegishv-bench-trap-synthetic"
+fi
 
 if [[ ! "$iterations" =~ ^[1-9][0-9]*$ ]]; then
   echo "AEGISHV_BENCH_ITERATIONS must be a positive integer" >&2
