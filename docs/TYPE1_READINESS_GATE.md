@@ -25,7 +25,7 @@ This gate prevents a planned type-1 path from being described as implemented too
 
 ## Current Result
 
-The current repository does not pass this gate. It has useful no-std model crates, lab model tests, device isolation models, and opt-in scripts, but no bootable type-1 runtime.
+The current repository does not pass this gate. It has useful no-std model crates, lab model tests, device isolation models, opt-in scripts, and a planned boot skeleton, but no bootable type-1 runtime.
 
 ## Wording Rule
 

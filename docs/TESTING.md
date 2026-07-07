@@ -58,9 +58,12 @@ The type-1 boundary workspace crates are library models. They are included in th
 
 ```bash
 cargo test --locked -p aegishv-hypervisor-core -p aegishv-event-abi -p aegishv-arch-x86
+cargo test --locked -p aegishv-type1-boot --all-features
 ```
 
 They cover memory-map validation, physical page allocation, page ownership, huge-page split/merge planning, DMA domains, PCI inventory, crash records, event and command rings, VM lifecycle, vCPU scheduling, early serial logging, x86 page-table plans, ACPI DMAR/IVRS fixture parsing, and AP startup plan validation. These tests do not boot a hypervisor.
+
+`scripts/build-type1-skeleton.sh` validates the planned boot handoff crate and writes `target/type1/aegishv-type1-build-plan.txt`. The manifest is review material only and does not prove type-1 support.
 
 Device model tests are also normal locked Rust tests:
 

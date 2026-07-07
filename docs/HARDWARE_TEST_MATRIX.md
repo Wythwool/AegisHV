@@ -18,7 +18,7 @@ This matrix separates checked paths, planned lab paths, degraded cases, and unsu
 | Intel VMX model tests | checked | `aegishv-arch-x86::vmx` unit tests | Lab-only wording required |
 | AMD SVM model tests | checked | `aegishv-arch-x86::svm` unit tests | Lab-only wording required |
 | ARM64 EL2 model tests | checked | `aegishv-arch-arm64` unit tests | Lab-only wording required |
-| Bare-metal type-1 boot | unsupported | no boot image in repository | Must not be claimed |
+| Bare-metal type-1 boot | unsupported | boot boundary skeleton only; no boot image | Must not be claimed |
 | Direct EPT/NPT/Stage-2 enforcement | unsupported | synthetic trap model only | Must not be claimed |
 | Hardware PMU sampling | unsupported | grouped/ring models only | Must not be claimed |
 

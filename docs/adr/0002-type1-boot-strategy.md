@@ -27,7 +27,7 @@ This decision does not make the current binary a type-1 hypervisor. It only fixe
 
 ## Consequences
 
-The repository may add Limine config, linker scripts, and a boot image crate when the runtime has an entry point. Until then, QEMU boot smoke remains opt-in and requires an explicit boot image path.
+The repository now has planned Limine config, linker script, and boot handoff crate artifacts. They still do not produce a bootable image. QEMU boot smoke remains opt-in and requires an explicit boot image path.
 
 The host-side sensor stays the default `aegishv` binary. `cargo run -- ...` continues to target the userspace sensor.
 

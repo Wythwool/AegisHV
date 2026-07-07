@@ -6,6 +6,7 @@
 - Added role, audit, approval, policy bundle, dump evidence, and startup hash helper primitives.
 - Added benchmark helper scripts for replay ingest, W^X state handling, offline VMI translation, and synthetic trap transitions.
 - Added hardware, performance, security, release, VMI alpha, and type-1 readiness gate documents.
+- Added planned type-1 boot boundary artifacts: boot handoff crate, Limine config, x86_64 linker script, x86_64 entry symbol, and build-plan helper.
 - Expanded synthetic Linux and Windows VMI fixture corpus.
 
 ## 0.4.0
