@@ -30,4 +30,6 @@ pub mod vmi_register_fixtures;
 pub mod vmi_registers;
 pub mod vmi_snapshot;
 pub mod vmi_x86;
+pub mod windows_profile;
+pub mod windows_symbols;
 pub mod wx;
