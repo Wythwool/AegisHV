@@ -32,5 +32,7 @@ pub mod vmi_snapshot;
 pub mod vmi_x86;
 pub mod windows_profile;
 pub mod windows_symbols;
+pub mod windows_syscall;
 pub mod windows_vmi;
+pub mod windows_x64;
 pub mod wx;
