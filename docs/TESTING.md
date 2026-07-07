@@ -49,6 +49,26 @@ scripts/type1-qemu-smoke.sh --print-command ./target/type1/aegishv-type1.elf
 
 The script exits with a clear error when the image is missing. It is not wired into normal CI.
 
+## Intel VMX Lab Models
+
+The Intel VMX model code lives in `aegishv-arch-x86::vmx` and is covered by normal locked Rust tests:
+
+```bash
+cargo test --locked -p aegishv-arch-x86 --all-features
+```
+
+The tests cover VMX feature gates, VMXON and VMCS region validation, VMCS lifecycle transitions, control-field adjustment, CPUID/MSR/CR/HLT exit handling, EPT mapping and violation decisions, VPID validation, execute/write trap windows, Monitor Trap Flag fallback behavior, and minimal Linux lab coverage validation. They do not execute privileged VMX instructions.
+
+`scripts/vmx-linux-lab-smoke.sh` is opt-in lab plumbing for a future boot image and Linux guest kernel:
+
+```bash
+AEGISHV_TYPE1_BOOT_IMAGE=./target/type1/aegishv-type1.elf \
+AEGISHV_VMX_LAB_KERNEL=./lab/bzImage \
+scripts/vmx-linux-lab-smoke.sh --print-command
+```
+
+The script refuses missing artifacts, missing QEMU, and missing KVM when KVM is required. It is not wired into normal CI and does not prove type-1 support.
+
 ## Deterministic Replay
 
 Use `--deterministic-replay` only with `--replay` when generating golden JSONL fixtures. It freezes event timestamps, monotonic time, event sequence, event IDs, action IDs, and host/sensor/tenant IDs. Live tracefs runs reject this flag; AegisHV does not fake deterministic timing for live runtime output.

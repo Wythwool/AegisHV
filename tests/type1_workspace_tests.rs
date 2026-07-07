@@ -99,3 +99,39 @@ fn qemu_smoke_script_is_opt_in_and_refuses_missing_boot_images() {
     assert!(testing.contains("scripts/type1-qemu-smoke.sh"));
     assert!(testing.contains("not wired into normal CI"));
 }
+
+#[test]
+fn vmx_lab_docs_and_script_keep_hardware_scope_explicit() {
+    let doc = read_repo_file("docs/VMX_LAB.md");
+    let script = read_repo_file("scripts/vmx-linux-lab-smoke.sh");
+    let testing = read_repo_file("docs/TESTING.md");
+
+    for required in [
+        "Intel VMX Lab Boundary",
+        "does not ship a bootable type-1 image",
+        "VMXON and VMCS region initialization",
+        "Required Exit Coverage",
+        "CPUID",
+        "Monitor Trap Flag",
+        "does not prove that AegisHV boots as a type-1 hypervisor",
+    ] {
+        assert!(doc.contains(required), "VMX lab doc is missing: {required}");
+    }
+
+    for required in [
+        "AEGISHV_TYPE1_BOOT_IMAGE",
+        "AEGISHV_VMX_LAB_KERNEL",
+        "AEGISHV_VMX_LAB_REQUIRE_KVM",
+        "/dev/kvm is required",
+        "exit 78",
+        "host,+vmx",
+    ] {
+        assert!(
+            script.contains(required),
+            "VMX Linux lab script is missing: {required}"
+        );
+    }
+
+    assert!(testing.contains("aegishv-arch-x86::vmx"));
+    assert!(testing.contains("do not execute privileged VMX instructions"));
+}

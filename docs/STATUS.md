@@ -32,10 +32,12 @@ This tree is a hardened host-side KVM sensor and a cleaner platform for the next
 - Detector engine library layer with a generic detector trait, scheduler, severity/confidence scoring, budget accounting, kernel text and syscall-hook normalizers, hidden process/module inventory comparison, executable anonymous and RWX mapping checks, JIT allow rules, W^X detection bridging, dedupe, incident objects, and versioned detector state parsing.
 - Synthetic trap-engine library layer with architecture-neutral Stage-2 permissions, a synthetic permission table, trap controller states, invalidation planning, single-step strategy selection, storm control, JIT temporary-window policy, trap event metadata, and backend capability negotiation.
 - `no_std` workspace crates for type-1 boundary models: core IDs, memory-map validation, physical page allocation, crash records, per-CPU state, event and command ABI rings, VM lifecycle, vCPU scheduling, x86 serial logging, x86 page-table plans, and AP startup plan validation.
+- Intel VMX lab models for feature detection, VMXON/VMCS region checks, VMCS lifecycle, VMX control adjustment, explicit exit handlers, EPT mapping plans, VPID/INVEPT invalidation plans, execute/write traps, Monitor Trap Flag fallback behavior, and minimal Linux lab coverage validation.
 
 ## Still not implemented as runtime code
 
 - Bare-metal VMXON/VMLAUNCH/VMRESUME hypervisor backend.
+- Bare-metal execution of the Intel VMX lab models is not implemented.
 - AMD VMRUN/VMCB backend.
 - ARM64 EL2 runtime and vectors.
 - Bootable type-1 image, Limine config, linker script, APIC startup, real trampoline code, and QEMU boot evidence are not implemented.
