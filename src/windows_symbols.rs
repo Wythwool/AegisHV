@@ -115,7 +115,7 @@ fn logical_lines(text: &str) -> impl Iterator<Item = (usize, &str)> {
     })
 }
 
-fn split_entry<'a>(line: usize, entry: &'a str) -> Result<(&'a str, &'a str), ProfileError> {
+fn split_entry(line: usize, entry: &str) -> Result<(&str, &str), ProfileError> {
     let Some((key, value)) = entry.split_once('=') else {
         return Err(malformed(format!("line {line}: expected key=value")));
     };
