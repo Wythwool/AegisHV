@@ -1,0 +1,12 @@
+<domain type="kvm">
+  <name>win11</name>
+  <uuid>11111111-2222-3333-4444-555555555555</uuid>
+  <metadata>
+    <aegishv:qemu xmlns:aegishv="https://github.com/Nullbit1/AegisHV"
+                  pid="4242"
+                  qmp_socket="/run/libvirt/qemu/win11.monitor">
+      <aegishv:thread tid="4243" vcpu_id="0"/>
+      <aegishv:thread tid="4244" vcpu_id="1"/>
+    </aegishv:qemu>
+  </metadata>
+</domain>
