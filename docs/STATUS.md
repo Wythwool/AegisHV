@@ -29,6 +29,7 @@ This tree is a hardened host-side KVM sensor and a cleaner platform for the next
 - VMI/trap/type-1 interface boundaries in `src/vmi.rs` and `src/hypervisor.rs`.
 - Synthetic/offline Linux x86_64 VMI helpers for profile parsing, KASLR anchors, task/module walking, syscall table and LSTAR checks, IDT/GDT/control-register checks, text hashing, ftrace/kprobe/BPF inventory, and an off-hot-path detector runner.
 - Synthetic/offline Windows x86_64 VMI helpers for exact build/PDB profile parsing, pre-extracted symbol caches, ntoskrnl base checks, EPROCESS/module walking, SSDT and LSTAR checks, IDT/GDT checks, process callback inventory, text hashing, protection-limit reporting, and an off-hot-path detector runner.
+- Detector engine library layer with a generic detector trait, scheduler, severity/confidence scoring, budget accounting, kernel text and syscall-hook normalizers, hidden process/module inventory comparison, executable anonymous and RWX mapping checks, JIT allow rules, W^X detection bridging, dedupe, incident objects, and versioned detector state parsing.
 
 ## Still not implemented as runtime code
 
@@ -41,6 +42,7 @@ This tree is a hardened host-side KVM sensor and a cleaner platform for the next
 - Real Linux/Windows guest OS profile extraction and live profile distribution.
 - Live Windows guest process/module/syscall/callback reads are not implemented.
 - Runtime syscall-path integrity monitoring is not implemented.
+- Runtime detector engine integration is not implemented; the detector layer is currently a library surface with tests.
 - Direct EPT/NPT/Stage-2 permission flips, TLB invalidation, huge-page split, and single-step/retrap lifecycle are not implemented.
 - Libvirt API integration with lifecycle events is not implemented.
 - True PMU grouped-counter/ring-buffer sampling with PEBS/IBS/SPE semantics is not implemented.

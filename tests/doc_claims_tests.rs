@@ -346,6 +346,56 @@ fn windows_vmi_profile_doc_records_synthetic_only_scope() {
 }
 
 #[test]
+fn detector_docs_record_engine_limits_and_mapping_scope() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let engine =
+        read_required_file(root, "docs/DETECTOR_ENGINE.md").expect("detector doc must exist");
+    let limits =
+        read_required_file(root, "docs/DETECTION_LIMITS.md").expect("limits doc must exist");
+    let mitre = read_required_file(root, "docs/MITRE_MAPPING.md").expect("MITRE doc must exist");
+
+    assert_contains_all(
+        &engine,
+        &[
+            "detector engine library layer",
+            "`Detector` trait",
+            "Per-detector runtime and finding-count budgets",
+            "Severity and confidence scoring",
+            "Versioned detector state file",
+            "not a live guest backend",
+            "No public event schema changed",
+            "does not preempt a running detector thread",
+        ],
+    );
+    assert_contains_all(
+        &limits,
+        &[
+            "`kernel_text_tamper`",
+            "`syscall_hook`",
+            "`hidden_process`",
+            "`hidden_module`",
+            "`executable_anonymous_memory`",
+            "`rwx_mapping`",
+            "`wx_correlation`",
+            "False positives",
+            "False negatives",
+            "Unsupported cases",
+        ],
+    );
+    assert_contains_all(
+        &mitre,
+        &[
+            "implemented detection records",
+            "`kernel_text_tamper`",
+            "T1014 Rootkit",
+            "`executable_anonymous_memory`",
+            "T1055 Process Injection",
+            "No mapping is provided for detectors that are unsupported",
+        ],
+    );
+}
+
+#[test]
 fn claim_line_validator_rejects_unqualified_full_vmi_claim() {
     assert_eq!(
         validate_claim_line("docs/STATUS.md", 7, "AegisHV provides full VMI support."),

@@ -10,6 +10,13 @@ cargo test --locked --all --all-features
 ./scripts/smoke-replay.sh
 ```
 
+Detector engine tests are normal locked Rust tests:
+
+- `detectors_core_tests` covers scoring, scheduler enable flags, unsupported/degraded outcomes, and budget accounting.
+- `detectors_normalizer_tests` covers kernel text, syscall hook, and W^X normalization.
+- `detectors_inventory_memory_tests` covers hidden process/module comparison, executable anonymous memory, RWX mappings, JIT allow rules, and malformed ranges.
+- `detectors_state_incident_tests` covers dedupe, incident correlation, versioned state round trips, and corrupt-state sensor events.
+
 ## Deterministic Replay
 
 Use `--deterministic-replay` only with `--replay` when generating golden JSONL fixtures. It freezes event timestamps, monotonic time, event sequence, event IDs, action IDs, and host/sensor/tenant IDs. Live tracefs runs reject this flag; AegisHV does not fake deterministic timing for live runtime output.
