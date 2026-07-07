@@ -27,6 +27,17 @@ Management and policy-review tests are normal locked Rust tests:
 
 These checks do not start a management daemon, open a remote API, authenticate users, or verify hardware attestation.
 
+Benchmark and release-gate helpers:
+
+- `scripts/bench-trace-ingest.sh` measures replay ingestion against committed trace fixtures.
+- `scripts/bench-wx-state.sh` measures replay-driven W^X state handling against the committed W^X corpus.
+- `scripts/bench-vmi-translate.sh` measures repeated offline `vmi translate` calls.
+- `scripts/bench-trap-synthetic.sh` runs the synthetic trap benchmark binary.
+- `scripts/check-doc-links.sh` checks local markdown links.
+- `scripts/live-kvm-integration.sh` is opt-in and exits unless `AEGISHV_RUN_LIVE_KVM=1`.
+
+Benchmark helpers do not write checked-in result numbers. Keep raw outputs and host metadata with any result you publish.
+
 Trap engine tests are normal locked Rust tests:
 
 - `trap_stage2_model_tests` covers permission bits, backend limits, synthetic table lookup, overlap rejection, permission updates, and one-level splits.
