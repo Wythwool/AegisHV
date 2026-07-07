@@ -1,0 +1,40 @@
+[package]
+name = "aegishv-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+aegishv = { path = ".." }
+libfuzzer-sys = "0.4"
+
+[[bin]]
+name = "trace_parser_line"
+path = "fuzz_targets/trace_parser_line.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "config_input"
+path = "fuzz_targets/config_input.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "trace_format_metadata"
+path = "fuzz_targets/trace_format_metadata.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "qmp_action_safety"
+path = "fuzz_targets/qmp_action_safety.rs"
+test = false
+doc = false
+bench = false
