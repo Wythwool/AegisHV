@@ -104,7 +104,7 @@ jobs:
       - name: Metadata locked
         run: cargo metadata --locked --format-version 1 >/dev/null
       - name: Install cargo-audit
-        run: cargo install cargo-audit --locked
+        run: cargo install cargo-audit --locked --version 0.21.2
       - name: Cargo audit
         run: cargo audit --locked
 
@@ -118,13 +118,15 @@ jobs:
       - name: Metadata locked
         run: cargo metadata --locked --format-version 1 >/dev/null
       - name: Install cargo-deny
-        run: cargo install cargo-deny --locked
+        run: cargo install cargo-deny --locked --version 0.17.0
       - name: Cargo deny
         run: cargo deny check
 
   fuzz-harness-smoke:
     name: fuzz harness compile check
     runs-on: ubuntu-latest
+    env:
+      RUSTUP_TOOLCHAIN: stable
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable

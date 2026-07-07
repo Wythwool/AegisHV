@@ -1915,10 +1915,20 @@ mod tests {
             let (mut stream, _) = listener.accept().unwrap();
             let reader_stream = stream.try_clone().unwrap();
             let mut reader = BufReader::new(reader_stream);
-            writeln!(stream, "{}", r#"{"QMP":{"version":{"qemu":{"major":8}}}}"#).unwrap();
+            stream
+                .write_all(
+                    br#"{"QMP":{"version":{"qemu":{"major":8}}}}
+"#,
+                )
+                .unwrap();
             let mut line = String::new();
             reader.read_line(&mut line).unwrap();
-            writeln!(stream, "{}", r#"{"return":{}}"#).unwrap();
+            stream
+                .write_all(
+                    br#"{"return":{}}
+"#,
+                )
+                .unwrap();
             line.clear();
             reader.read_line(&mut line).unwrap();
             writeln!(stream, "{}", final_reply).unwrap();
@@ -1933,10 +1943,20 @@ mod tests {
             let (mut stream, _) = listener.accept().unwrap();
             let reader_stream = stream.try_clone().unwrap();
             let mut reader = BufReader::new(reader_stream);
-            writeln!(stream, "{}", r#"{"QMP":{"version":{"qemu":{"major":8}}}}"#).unwrap();
+            stream
+                .write_all(
+                    br#"{"QMP":{"version":{"qemu":{"major":8}}}}
+"#,
+                )
+                .unwrap();
             let mut line = String::new();
             reader.read_line(&mut line).unwrap();
-            writeln!(stream, "{}", r#"{"return":{}}"#).unwrap();
+            stream
+                .write_all(
+                    br#"{"return":{}}
+"#,
+                )
+                .unwrap();
             line.clear();
             reader.read_line(&mut line).unwrap();
             thread::sleep(Duration::from_millis(timeout_ms.saturating_mul(3)));

@@ -3,3 +3,9 @@
 *.jsonl
 *.bin
 *.sock
+
+!corpus/**/*.log
+!examples/events/**/*.jsonl
+!examples/traces/*.log
+!schema/examples/*.jsonl
+!tests/fixtures/golden/*.jsonl
