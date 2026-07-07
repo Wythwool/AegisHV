@@ -1,8 +1,13 @@
 use std::error::Error;
 use std::fmt;
 
+pub mod controller;
+pub mod invalidation;
+pub mod jit;
+pub mod singlestep;
 pub mod stage2;
 pub mod stage2_model;
+pub mod storm;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TrapErrorKind {
