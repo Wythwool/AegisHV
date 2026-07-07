@@ -14,5 +14,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "aegishv-event-abi"
+version = "0.1.0"
+dependencies = [
+ "aegishv-hypervisor-core",
+]
+
+[[package]]
 name = "aegishv-hypervisor-core"
 version = "0.1.0"

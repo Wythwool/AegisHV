@@ -13,6 +13,7 @@ readme = "README.md"
 members = [
     ".",
     "crates/aegishv-hypervisor-core",
+    "crates/aegishv-event-abi",
     "crates/aegishv-arch-x86",
 ]
 resolver = "2"
