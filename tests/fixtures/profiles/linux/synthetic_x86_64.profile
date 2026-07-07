@@ -9,6 +9,7 @@ kaslr_slide=0x100000
 
 symbol=start_kernel,0xffffffff81000000,0x120
 symbol=sys_call_table,0xffffffff81200000
+kaslr_anchor=start_kernel,554889e5,0x200000,0x100000
 
 offset=task_struct,pid,0x430,0x4
 offset=task_struct,comm,0x738,0x10

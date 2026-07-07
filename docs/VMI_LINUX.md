@@ -1,8 +1,8 @@
 # Linux VMI profile metadata
 
-P078 adds a synthetic/offline Linux x86_64 profile metadata format. It does not add Linux guest inspection, KASLR resolution, kallsyms parsing, System.map parsing, task walking, syscall table resolution, or syscall integrity checks.
+The Linux profile path is synthetic/offline and x86_64-only. It stores profile metadata, parses kallsyms/System.map-style symbol maps, and can resolve a KASLR slide from fixed metadata, a known slide, or bounded profile anchors against an offline reader.
 
-No real Linux kernel profile data ships by default. Test profiles are hand-written fixtures for parser and registry behavior.
+No real Linux kernel profile data ships by default. Test profiles are hand-written fixtures for parser, registry, and offline resolver behavior.
 
 ## Format
 
@@ -33,8 +33,15 @@ Metadata records:
 - `symbol=<name>,<virtual-address>[,<size>]`
 - `offset=<struct-name>,<field-name>,<byte-offset>[,<size>]`
 - `syscall=<number>,<name>[,<symbol-name>]`
+- `kaslr_anchor=<symbol-name>,<hex-bytes>,<max-slide>,<step>`
 
 Hex and decimal integers are accepted. Duplicate symbol names, duplicate struct field offsets, duplicate syscall numbers, and duplicate syscall names are rejected. Unknown keys are rejected.
+
+`kaslr_anchor` is used only when KASLR is marked `unknown-unsupported` and the caller supplies an offline virtual-memory reader. The resolver checks candidate slides from `0` through `max-slide` using `step`, and accepts only one slide where every configured anchor matches. Zero matches and multiple matches are explicit errors.
+
+## Symbol maps
+
+The kallsyms/System.map loader parses the normal `address type name` fields. kallsyms may also include a `[module]` suffix. Duplicate names are preserved because real kernels can expose aliases, but APIs that require a unique symbol refuse ambiguous names.
 
 ## Registry key
 
@@ -48,4 +55,4 @@ Lookup is still exact by OS kind, architecture, this combined kernel/build key, 
 
 ## Limits
 
-This format is metadata storage only. It does not prove that the data matches a real kernel. It does not load real kernel symbols. It does not resolve KASLR. It does not walk `task_struct`, modules, or syscall tables. Later work must add those pieces with real inputs and tests before any stronger Linux VMI claim.
+This format does not prove that the data matches a real kernel. It does not walk `task_struct`, modules, or syscall tables yet. KASLR resolution is limited to fixed metadata, a known profile slide, or bounded synthetic/offline anchor scans. There is no live Linux guest backend.

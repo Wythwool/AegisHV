@@ -4,6 +4,7 @@ pub mod config;
 pub mod event;
 pub mod hypervisor;
 pub mod identity;
+pub mod linux_symbols;
 pub mod metrics;
 pub mod parser;
 pub mod pattern;

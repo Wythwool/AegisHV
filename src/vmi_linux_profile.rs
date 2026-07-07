@@ -13,6 +13,7 @@ pub struct LinuxProfile {
     registry_identity: ProfileIdentity,
     profile_name: String,
     kaslr: LinuxKaslrMode,
+    kaslr_anchors: Vec<LinuxKaslrAnchor>,
     symbols: BTreeMap<String, LinuxSymbol>,
     struct_offsets: BTreeMap<LinuxStructFieldKey, LinuxStructOffset>,
     syscalls_by_number: BTreeMap<u32, LinuxSyscall>,
@@ -29,6 +30,10 @@ impl LinuxProfile {
 
     pub fn kaslr(&self) -> LinuxKaslrMode {
         self.kaslr
+    }
+
+    pub fn kaslr_anchors(&self) -> &[LinuxKaslrAnchor] {
+        &self.kaslr_anchors
     }
 
     pub fn symbols(&self) -> &BTreeMap<String, LinuxSymbol> {
@@ -84,6 +89,38 @@ pub struct LinuxSymbol {
     pub size: Option<u64>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LinuxKaslrAnchor {
+    pub symbol_name: String,
+    pub bytes: Vec<u8>,
+    pub max_slide: u64,
+    pub step: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinuxKaslrResolutionSource {
+    FixedProfile,
+    KnownProfileSlide,
+    AnchorScan,
+}
+
+impl LinuxKaslrResolutionSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::FixedProfile => "fixed_profile",
+            Self::KnownProfileSlide => "known_profile_slide",
+            Self::AnchorScan => "anchor_scan",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LinuxKaslrResolution {
+    pub slide: u64,
+    pub source: LinuxKaslrResolutionSource,
+    pub anchors_checked: usize,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct LinuxStructFieldKey {
     pub struct_name: String,
@@ -114,6 +151,7 @@ struct LinuxProfileBuilder {
     variant: Option<String>,
     kaslr: Option<ParsedKaslrMode>,
     kaslr_slide: Option<u64>,
+    kaslr_anchors: Vec<LinuxKaslrAnchor>,
     symbols: BTreeMap<String, LinuxSymbol>,
     struct_offsets: BTreeMap<LinuxStructFieldKey, LinuxStructOffset>,
     syscalls_by_number: BTreeMap<u32, LinuxSyscall>,
@@ -155,6 +193,7 @@ pub fn parse_linux_profile(text: &str) -> Result<LinuxProfile, ProfileError> {
             "symbol" => parse_symbol(line, value, &mut builder)?,
             "offset" => parse_offset(line, value, &mut builder)?,
             "syscall" => parse_syscall(line, value, &mut builder)?,
+            "kaslr_anchor" => parse_kaslr_anchor(line, value, &mut builder)?,
             _ => {
                 reject_duplicate_key(&mut singleton_keys, line, key)?;
                 parse_top_level(line, key, value, &mut builder)?;
@@ -167,6 +206,121 @@ pub fn parse_linux_profile(text: &str) -> Result<LinuxProfile, ProfileError> {
 
 pub fn linux_registry_kernel_or_build(kernel_release: &str, kernel_build: &str) -> String {
     format!("{kernel_release}#{kernel_build}")
+}
+
+pub fn resolve_linux_kaslr<F>(
+    profile: &LinuxProfile,
+    mut read_virtual: F,
+) -> Result<LinuxKaslrResolution, ProfileError>
+where
+    F: FnMut(u64, &mut [u8]) -> Result<(), ProfileError>,
+{
+    match profile.kaslr {
+        LinuxKaslrMode::Fixed => {
+            return Ok(LinuxKaslrResolution {
+                slide: 0,
+                source: LinuxKaslrResolutionSource::FixedProfile,
+                anchors_checked: 0,
+            })
+        }
+        LinuxKaslrMode::SlideKnown { slide } => {
+            return Ok(LinuxKaslrResolution {
+                slide,
+                source: LinuxKaslrResolutionSource::KnownProfileSlide,
+                anchors_checked: 0,
+            })
+        }
+        LinuxKaslrMode::UnknownUnsupported => {}
+    }
+
+    if profile.kaslr_anchors.is_empty() {
+        return Err(ProfileError::Unsupported {
+            backend: "linux-profile",
+            operation: "resolve_kaslr_slide",
+        });
+    }
+
+    let mut matched_slide = None;
+    let mut anchors_checked = 0usize;
+    let max_slide = profile
+        .kaslr_anchors
+        .iter()
+        .map(|anchor| anchor.max_slide)
+        .max()
+        .unwrap_or(0);
+    let step = profile
+        .kaslr_anchors
+        .iter()
+        .map(|anchor| anchor.step)
+        .min()
+        .unwrap_or(0);
+    if step == 0 {
+        return Err(malformed("KASLR anchor step must be non-zero"));
+    }
+
+    let mut slide = 0u64;
+    while slide <= max_slide {
+        let mut all_match = true;
+        for anchor in &profile.kaslr_anchors {
+            if slide > anchor.max_slide || slide % anchor.step != 0 {
+                all_match = false;
+                continue;
+            }
+            anchors_checked += 1;
+            let symbol = profile.symbols.get(&anchor.symbol_name).ok_or_else(|| {
+                malformed(format!(
+                    "KASLR anchor references missing symbol '{}'",
+                    anchor.symbol_name
+                ))
+            })?;
+            let address = symbol.virtual_address.checked_add(slide).ok_or_else(|| {
+                malformed(format!(
+                    "KASLR candidate slide 0x{slide:x} overflows symbol '{}'",
+                    anchor.symbol_name
+                ))
+            })?;
+            let mut buf = vec![0u8; anchor.bytes.len()];
+            match read_virtual(address, &mut buf) {
+                Ok(()) if buf == anchor.bytes => {}
+                Ok(()) => all_match = false,
+                Err(err) if err.kind() == crate::vmi::VmiErrorKind::Unmapped => {
+                    all_match = false;
+                }
+                Err(err) if err.kind() == crate::vmi::VmiErrorKind::MissingMemory => {
+                    all_match = false;
+                }
+                Err(err) => return Err(err),
+            }
+        }
+        if all_match {
+            if let Some(previous) = matched_slide {
+                return Err(ProfileError::InconsistentSnapshot {
+                    detail: format!(
+                        "KASLR anchor scan matched more than one slide: 0x{previous:x} and 0x{slide:x}"
+                    ),
+                });
+            }
+            matched_slide = Some(slide);
+        }
+        let Some(next) = slide.checked_add(step) else {
+            break;
+        };
+        slide = next;
+    }
+
+    let Some(slide) = matched_slide else {
+        return Err(ProfileError::MissingProfileIdentity {
+            os: "linux".to_string(),
+            arch: "x86_64".to_string(),
+            kernel_or_build: "kaslr-anchor-match".to_string(),
+        });
+    };
+
+    Ok(LinuxKaslrResolution {
+        slide,
+        source: LinuxKaslrResolutionSource::AnchorScan,
+        anchors_checked,
+    })
 }
 
 fn parse_top_level(
@@ -261,6 +415,7 @@ fn build_profile(builder: LinuxProfileBuilder) -> Result<LinuxProfile, ProfileEr
         registry_identity,
         profile_name,
         kaslr,
+        kaslr_anchors: builder.kaslr_anchors,
         symbols: builder.symbols,
         struct_offsets: builder.struct_offsets,
         syscalls_by_number: builder.syscalls_by_number,
@@ -323,6 +478,44 @@ fn parse_symbol(
             size,
         },
     );
+    Ok(())
+}
+
+fn parse_kaslr_anchor(
+    line: usize,
+    value: &str,
+    builder: &mut LinuxProfileBuilder,
+) -> Result<(), ProfileError> {
+    let parts = split_csv(line, "kaslr_anchor", value, 4, 4)?;
+    let symbol_name = normalize_required(line, "kaslr_anchor.symbol", parts[0])?;
+    if builder
+        .kaslr_anchors
+        .iter()
+        .any(|anchor| anchor.symbol_name == symbol_name)
+    {
+        return Err(malformed(format!(
+            "line {line}: duplicate KASLR anchor for symbol '{symbol_name}'"
+        )));
+    }
+    let bytes = parse_hex_bytes(line, "kaslr_anchor.bytes", parts[1])?;
+    let max_slide = parse_u64(line, "kaslr_anchor.max_slide", parts[2])?;
+    let step = parse_u64(line, "kaslr_anchor.step", parts[3])?;
+    if step == 0 || !step.is_power_of_two() {
+        return Err(malformed(format!(
+            "line {line}: kaslr_anchor.step must be a non-zero power of two"
+        )));
+    }
+    if max_slide % step != 0 {
+        return Err(malformed(format!(
+            "line {line}: kaslr_anchor.max_slide must be aligned to step"
+        )));
+    }
+    builder.kaslr_anchors.push(LinuxKaslrAnchor {
+        symbol_name,
+        bytes,
+        max_slide,
+        step,
+    });
     Ok(())
 }
 
@@ -495,6 +688,35 @@ fn parse_u32(line: usize, field: &str, value: &str) -> Result<u32, ProfileError>
             "line {line}: integer for field '{field}' is out of range: {value}"
         ))
     })
+}
+
+fn parse_hex_bytes(line: usize, field: &str, value: &str) -> Result<Vec<u8>, ProfileError> {
+    let hex = value
+        .strip_prefix("0x")
+        .or_else(|| value.strip_prefix("0X"))
+        .unwrap_or(value);
+    if hex.is_empty() || hex.len() % 2 != 0 {
+        return Err(malformed(format!(
+            "line {line}: field '{field}' must contain full hex bytes"
+        )));
+    }
+    if hex.len() > 512 {
+        return Err(malformed(format!(
+            "line {line}: field '{field}' is too large for bounded KASLR scan"
+        )));
+    }
+    hex.as_bytes()
+        .chunks_exact(2)
+        .map(|pair| {
+            let text = std::str::from_utf8(pair)
+                .map_err(|_| malformed(format!("line {line}: field '{field}' must be ASCII")))?;
+            u8::from_str_radix(text, 16).map_err(|_| {
+                malformed(format!(
+                    "line {line}: invalid hex byte '{text}' in field '{field}'"
+                ))
+            })
+        })
+        .collect()
 }
 
 fn malformed(detail: impl Into<String>) -> ProfileError {

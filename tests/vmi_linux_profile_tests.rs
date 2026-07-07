@@ -1,6 +1,7 @@
 use aegishv::vmi::{ProfileError, VmiErrorKind};
 use aegishv::vmi_linux_profile::{
-    load_linux_profile, parse_linux_profile, LinuxKaslrMode, LinuxStructFieldKey,
+    load_linux_profile, parse_linux_profile, resolve_linux_kaslr, LinuxKaslrMode,
+    LinuxKaslrResolutionSource, LinuxStructFieldKey,
 };
 use aegishv::vmi_profiles::{OsKind, OsProfileRegistry, ProfileArchitecture, ProfileIdentity};
 
@@ -23,6 +24,7 @@ kaslr=slide-known
 kaslr_slide=0x100000
 symbol=start_kernel,0xffffffff81000000,0x120
 symbol=sys_call_table,0xffffffff81200000
+kaslr_anchor=start_kernel,554889e5,0x200000,0x100000
 offset=task_struct,pid,0x430,0x4
 offset=task_struct,comm,0x738,0x10
 syscall=0,read,__x64_sys_read
@@ -69,6 +71,12 @@ fn linux_profile_preserves_kaslr_symbols_offsets_and_syscalls() {
         0xffff_ffff_8100_0000
     );
     assert_eq!(profile.symbols()["start_kernel"].size, Some(0x120));
+    assert_eq!(profile.kaslr_anchors().len(), 1);
+    assert_eq!(profile.kaslr_anchors()[0].symbol_name, "start_kernel");
+    assert_eq!(
+        profile.kaslr_anchors()[0].bytes,
+        vec![0x55, 0x48, 0x89, 0xe5]
+    );
     assert_eq!(
         profile.symbols()["sys_call_table"].virtual_address,
         0xffff_ffff_8120_0000
@@ -94,6 +102,97 @@ fn linux_profile_preserves_kaslr_symbols_offsets_and_syscalls() {
         Some("__x64_sys_read")
     );
     assert_eq!(profile.syscalls_by_number()[&1].name, "write");
+}
+
+#[test]
+fn linux_kaslr_resolver_uses_fixed_and_known_profile_modes_without_memory_reads() {
+    let fixed = parse_linux_profile(
+        r#"
+aegishv-linux-profile-v1
+os=linux
+arch=x86_64
+kernel_release=6.8.0-aegishv-synthetic
+kernel_build=synthetic-test-build
+kaslr=fixed
+"#,
+    )
+    .expect("parse fixed profile");
+    let known = parse_linux_profile(valid_profile_text()).expect("parse known profile");
+
+    let fixed_resolution =
+        resolve_linux_kaslr(&fixed, |_, _| panic!("fixed KASLR must not read memory"))
+            .expect("resolve fixed");
+    let known_resolution =
+        resolve_linux_kaslr(&known, |_, _| panic!("known KASLR must not read memory"))
+            .expect("resolve known");
+
+    assert_eq!(fixed_resolution.slide, 0);
+    assert_eq!(
+        fixed_resolution.source,
+        LinuxKaslrResolutionSource::FixedProfile
+    );
+    assert_eq!(known_resolution.slide, 0x100000);
+    assert_eq!(
+        known_resolution.source,
+        LinuxKaslrResolutionSource::KnownProfileSlide
+    );
+}
+
+#[test]
+fn linux_kaslr_resolver_finds_unique_anchor_slide() {
+    let profile = parse_linux_profile(
+        r#"
+aegishv-linux-profile-v1
+os=linux
+arch=x86_64
+kernel_release=6.8.0-aegishv-synthetic
+kernel_build=synthetic-test-build
+kaslr=unknown-unsupported
+symbol=start_kernel,0xffffffff81000000,0x120
+kaslr_anchor=start_kernel,554889e5,0x300000,0x100000
+"#,
+    )
+    .expect("parse scan profile");
+
+    let resolution = resolve_linux_kaslr(&profile, |addr, buf| {
+        if addr == 0xffff_ffff_8120_0000 {
+            buf.copy_from_slice(&[0x55, 0x48, 0x89, 0xe5]);
+        } else {
+            buf.fill(0xcc);
+        }
+        Ok(())
+    })
+    .expect("resolve by anchor");
+
+    assert_eq!(resolution.slide, 0x200000);
+    assert_eq!(resolution.source, LinuxKaslrResolutionSource::AnchorScan);
+    assert!(resolution.anchors_checked >= 3);
+}
+
+#[test]
+fn linux_kaslr_resolver_refuses_ambiguous_anchor_matches() {
+    let profile = parse_linux_profile(
+        r#"
+aegishv-linux-profile-v1
+os=linux
+arch=x86_64
+kernel_release=6.8.0-aegishv-synthetic
+kernel_build=synthetic-test-build
+kaslr=unknown-unsupported
+symbol=start_kernel,0xffffffff81000000,0x120
+kaslr_anchor=start_kernel,554889e5,0x100000,0x100000
+"#,
+    )
+    .expect("parse scan profile");
+
+    let err = resolve_linux_kaslr(&profile, |_, buf| {
+        buf.copy_from_slice(&[0x55, 0x48, 0x89, 0xe5]);
+        Ok(())
+    })
+    .expect_err("ambiguous KASLR scan must fail");
+
+    assert_eq!(err.kind(), VmiErrorKind::InconsistentSnapshot);
+    assert!(err.to_string().contains("more than one slide"));
 }
 
 #[test]
