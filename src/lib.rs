@@ -1,9 +1,11 @@
 pub mod actions;
 pub mod collector;
 pub mod config;
+pub mod detectors;
 pub mod event;
 pub mod hypervisor;
 pub mod identity;
+pub mod incidents;
 pub mod linux_bpf;
 pub mod linux_detectors;
 pub mod linux_hooks;
