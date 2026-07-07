@@ -65,6 +65,7 @@ fn parse_x86<'a>(
             "cr3" => snapshot.cr3 = Some(parse_u64(line, key, value)?),
             "cr4" => snapshot.cr4 = Some(parse_u64(line, key, value)?),
             "efer" => snapshot.efer = Some(parse_u64(line, key, value)?),
+            "lstar" => snapshot.lstar = Some(parse_u64(line, key, value)?),
             "idtr.base" => {
                 let limit = snapshot
                     .idtr

@@ -27,6 +27,7 @@ pub struct X86_64RegisterSnapshot {
     pub cr3: Option<u64>,
     pub cr4: Option<u64>,
     pub efer: Option<u64>,
+    pub lstar: Option<u64>,
     pub idtr: Option<DescriptorTableRegister>,
     pub gdtr: Option<DescriptorTableRegister>,
 }
@@ -48,9 +49,15 @@ impl X86_64RegisterSnapshot {
             cr3: Some(cr3),
             cr4: Some(cr4),
             efer: Some(efer),
+            lstar: None,
             idtr: Some(idtr),
             gdtr: Some(gdtr),
         }
+    }
+
+    pub fn with_lstar(mut self, lstar: u64) -> Self {
+        self.lstar = Some(lstar);
+        self
     }
 
     pub fn partial() -> Self {
@@ -60,6 +67,7 @@ impl X86_64RegisterSnapshot {
             cr3: None,
             cr4: None,
             efer: None,
+            lstar: None,
             idtr: None,
             gdtr: None,
         }
@@ -83,6 +91,10 @@ impl X86_64RegisterSnapshot {
 
     pub fn efer(&self) -> Result<u64, RegisterReadError> {
         required_u64(ARCH_X86_64, "efer", self.efer)
+    }
+
+    pub fn lstar(&self) -> Result<u64, RegisterReadError> {
+        required_u64(ARCH_X86_64, "lstar", self.lstar)
     }
 
     pub fn idtr(&self) -> Result<DescriptorTableRegister, RegisterReadError> {
@@ -237,6 +249,10 @@ impl RegisterSnapshot {
 
     pub fn x86_nx_enabled(&self) -> Result<bool, RegisterReadError> {
         self.as_x86_64()?.nx_enabled()
+    }
+
+    pub fn x86_lstar(&self) -> Result<u64, RegisterReadError> {
+        self.as_x86_64()?.lstar()
     }
 
     pub fn x86_idtr(&self) -> Result<DescriptorTableRegister, RegisterReadError> {
