@@ -1,0 +1,10 @@
+aegishv-registers-v1
+arch=x86_64
+cr0=0x80050033
+cr2=0x0
+cr4=0x0
+efer=0xd00
+idtr.base=0xffff800000001000
+idtr.limit=0x0fff
+gdtr.base=0xffff800000002000
+gdtr.limit=127

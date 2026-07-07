@@ -1,0 +1,7 @@
+aegishv-registers-v1
+arch=arm64
+ttbr0_el1=0x0000000010000001
+ttbr1_el1=0xffff000020000002
+tcr_el1=0x0000000080803520
+sctlr_el1=0x1
+vbar_el1=0xffff000000008000

@@ -1,0 +1,6 @@
+aegishv-memory-map-v1
+map 0x1000 0x08 pages.mem 0
+map 0x1008 0x04 pages.mem 8
+deny 0x2000 0x10 MMIO aperture is not readable
+unavailable 0x3000 0x10 fixture range intentionally omitted
+map 0x4000 0x04 missing.mem 0

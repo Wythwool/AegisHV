@@ -1,0 +1,7 @@
+aegishv-vmi-fixture-v2
+id=malformed
+name=malformed header
+arch=x86_64
+memory=memory/x86_64_translate.map
+registers=registers/x86_64_basic.regs
+profile=none

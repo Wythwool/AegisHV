@@ -1,0 +1,11 @@
+aegishv-vmi-fixture-v1
+id=x86_64-basic
+name=x86_64 offline fixture
+arch=x86_64
+memory=memory/x86_64_translate.map
+registers=registers/x86_64_basic.regs
+os=linux
+kernel_or_build=6.8.0-aegishv-test
+variant=tiny
+translation=name=zero gva=0x0 gpa=0x0 page_size=0x1000 mode=x86_64-4level readable=true writable=true executable=true user=true
+translation=name=kernel-text gva=0xffff800000001000 gpa=0x1000 page_size=0x1000 mode=x86_64-la57 readable=true writable=false executable=true user=false
