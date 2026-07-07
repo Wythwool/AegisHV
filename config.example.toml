@@ -1,12 +1,116 @@
-# Thresholds and allowlists
+version = 1
+
 [general]
-wx_window_ms = 5000    # time window to flag write->exec on the same page
+# Correlate write->exec on the same VM + address-space + guest-physical page.
+# This is correlation, not hardware W^X enforcement.
+wx_window_ms = 5000
+# Detector-level alert cooldown. This is separate from policy rule cooldowns.
+wx_cooldown_ms = 30000
+wx_max_pages = 200000
+page_size = 4096
+flush_every = 64
 quiet = false
 
 [allow]
-# VM names to ignore or relax
-names = ["builder", "ci-runner"]
+ignore_vm = ["builder", "ci-runner"]
 
 [pmu]
-enable = true          # perf cycles for vCPU threads
+# Current default is off. The built-in no-dependency fallback emits target heartbeat events
+# with unavailable hardware counters as null. Grouped perf/PEBS/IBS/SPE sampling belongs to
+# the dedicated backend workstream.
+enable = false
 sample_ms = 1000
+# Target rediscovery interval. Valid range: 1000..=3600000 milliseconds.
+rediscover_ms = 30000
+qemu_pid = 0
+vm_regex = ""
+
+[metrics]
+# Empty --listen disables the listener. A non-empty listener bind failure exits by default.
+# Set this only when losing local metrics during startup is an accepted degraded mode.
+allow_bind_failure = false
+
+[spool]
+# Optional emergency copy for events that cannot be written to the main JSONL output.
+# Disabled preserves the existing fail-fast output behavior.
+enable = false
+dir = "/var/lib/aegishv/spool"
+max_bytes = 67108864
+segment_bytes = 4194304
+# "none" keeps v1 plaintext segments. "rle" writes real compressed v2 segments.
+compression = "none"
+
+[syslog]
+# Optional UDP syslog mirror for events already sent through the EventSink path.
+# JSONL remains the primary event stream. Address must be numeric ip:port.
+enable = false
+address = "127.0.0.1:514"
+facility = "local0"
+max_message_bytes = 8192
+
+[journald]
+# Optional Linux systemd-journald mirror for events already sent through the EventSink path.
+# Disabled by default. Enabling it on non-Linux hosts fails startup with an explicit error.
+enable = false
+socket = "/run/systemd/journal/socket"
+identifier = "aegishv"
+max_message_bytes = 8192
+
+[identity]
+# Best-effort PID -> VM identity from /proc cmdline/cgroup plus common QMP socket paths.
+# Optional libvirt XML discovery is fixture/file based; it does not talk to a libvirt daemon.
+# Include PID/TID start_time_ticks in XML snapshots when available to avoid PID-reuse ambiguity.
+enable = true
+cache_ms = 5000
+# When true, QMP actions require an actions.qmp vm_id match and refuse VM-name fallback.
+require_stable_qmp_match = true
+# QMP-backed actions also require this confidence plus PID/TID start-time verification.
+# Allowed values are "medium" and "high"; "low" is rejected.
+min_action_confidence = "high"
+qmp_socket_dirs = ["/run/libvirt/qemu", "/var/run/libvirt/qemu", "/run/qemu"]
+# Disabled by default. Set to a directory of domain XML files only when that fixture source
+# is maintained by the operator or tests.
+libvirt_xml_dir = ""
+
+[actions]
+timeout_ms = 2000
+retries = 1
+# Dump paths must stay under this root, must not pre-exist, and must not cross symlinks.
+# The directory should be owned by root/aegishv and not group/world-writable.
+dump_root = "/var/lib/aegishv/dumps"
+
+[[actions.qmp]]
+# Prefer stable IDs. `vm` fallback is used only when identity.require_stable_qmp_match=false.
+vm_id = "libvirt:11111111-2222-3333-4444-555555555555"
+vm = "win11|prod-linux"
+socket = "/run/libvirt/qemu/win11.monitor"
+
+[[wx_allow.entries]]
+vm = "chrome|java|node"
+gpa_prefix = "0x7f"
+
+[[policy.rules]]
+name = "dry-run-pause-on-critical-wx"
+id = "policy-001"
+priority = 200
+mode = "dry_run"
+cooldown_ms = 15000
+action = { kind = "pause_vm" }
+match = { category = "wx", severity_at_least = "critical" }
+
+[[policy.rules]]
+name = "manual-approval-for-guest-dump"
+id = "policy-002"
+priority = 150
+mode = "enforce"
+cooldown_ms = 60000
+action = { kind = "manual_approval" }
+match = { category = "exit", severity_at_least = "high", reason_regex = "VIOLATION|NPF|STAGE2" }
+
+[[policy.rules]]
+name = "suppress-known-ci-noise"
+id = "policy-003"
+priority = 50
+mode = "suppress"
+cooldown_ms = 10000
+match = { vm_regex = "ci-runner" }
