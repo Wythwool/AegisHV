@@ -1,0 +1,13 @@
+# Boot Boundary Artifacts
+
+This directory contains planned type-1 boot artifacts. They define the first image layout, Limine handoff expectations, and x86_64 entry symbol names.
+
+The artifacts are not wired into a bootable image build yet. The normal binary remains the host-side sensor until the runtime entry path, architecture backend, and QEMU evidence are added.
+
+## Files
+
+- `limine/limine.conf` records the first Limine menu entry and kernel path.
+- `linker/x86_64-type1.ld` records the planned ELF layout and exported stack symbols.
+- `x86_64/entry.S` records the first entry symbol and a halt loop for early bring-up.
+
+`scripts/build-type1-skeleton.sh` validates the boot handoff crate and writes a manifest under `target/type1`. That manifest is review material, not a bootable hypervisor image.
