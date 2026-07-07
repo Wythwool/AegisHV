@@ -1,0 +1,174 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aegishv.local/schema/snapshot.schema.json",
+  "title": "AegisHV Snapshot",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "ts",
+    "kvm",
+    "tracefs_root",
+    "trace_pipe",
+    "trace_pipe_readable",
+    "tracepoints_ok",
+    "tracepoints",
+    "vm_inventory",
+    "mode"
+  ],
+  "properties": {
+    "schema_version": { "type": "integer", "const": 2 },
+    "ts": { "type": "string" },
+    "kvm": { "type": "boolean" },
+    "tracefs_root": { "type": "string" },
+    "trace_pipe": { "type": ["string", "null"] },
+    "trace_pipe_readable": { "type": "boolean" },
+    "tracepoints_ok": { "type": "boolean" },
+    "tracepoints": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["system", "name", "status", "missing_fields", "message"],
+        "properties": {
+          "system": { "type": "string" },
+          "name": { "type": "string" },
+          "status": {
+            "enum": ["ok", "missing", "unreadable", "malformed", "missing_fields"]
+          },
+          "missing_fields": { "type": "array", "items": { "type": "string" } },
+          "message": { "type": "string" }
+        }
+      }
+    },
+    "vm_inventory": { "$ref": "#/$defs/vm_inventory" },
+    "mode": { "type": "string" }
+  },
+  "$defs": {
+    "vm_inventory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "source", "freshness", "vm_count", "degraded", "vms"],
+      "properties": {
+        "status": { "enum": ["disabled", "ok", "degraded"] },
+        "source": {
+          "enum": ["disabled", "none", "libvirt_xml", "libvirt_lifecycle", "mixed"]
+        },
+        "freshness": {
+          "enum": ["none", "file_backed_snapshot", "mockable_lifecycle_state", "mixed"]
+        },
+        "vm_count": { "type": "integer", "minimum": 0 },
+        "degraded": { "type": "boolean" },
+        "vms": { "type": "array", "items": { "$ref": "#/$defs/vm_inventory_vm" } }
+      }
+    },
+    "vm_inventory_vm": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "vm_id",
+        "vm_uuid",
+        "vm_name",
+        "source",
+        "known_host_tasks",
+        "vcpu_mappings",
+        "qmp",
+        "identity",
+        "ambiguous",
+        "conflict"
+      ],
+      "properties": {
+        "vm_id": { "type": "string" },
+        "vm_uuid": { "type": "string" },
+        "vm_name": { "type": "string" },
+        "source": { "enum": ["libvirt_xml", "libvirt_lifecycle"] },
+        "known_host_tasks": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/vm_inventory_host_task" }
+        },
+        "vcpu_mappings": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/vm_inventory_vcpu_mapping" }
+        },
+        "qmp": { "$ref": "#/$defs/vm_inventory_qmp" },
+        "identity": { "$ref": "#/$defs/identity" },
+        "ambiguous": { "type": "boolean" },
+        "conflict": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["reason", "ambiguous"],
+          "properties": {
+            "reason": {
+              "enum": [
+                "multiple_domains",
+                "pid_reuse",
+                "start_time_unverified",
+                "stale_cache",
+                "proc_cgroup_mismatch",
+                "libvirt_uuid_mismatch",
+                "qmp_socket_mismatch",
+                "libvirt_name_mismatch"
+              ]
+            },
+            "ambiguous": { "type": "boolean" }
+          }
+        }
+      }
+    },
+    "vm_inventory_host_task": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "id", "start_time_ticks"],
+      "properties": {
+        "kind": { "enum": ["pid", "tid", "task"] },
+        "id": { "type": "integer" },
+        "start_time_ticks": { "type": ["integer", "null"], "minimum": 0 }
+      }
+    },
+    "vm_inventory_vcpu_mapping": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["host_tid", "vcpu_id", "start_time_ticks"],
+      "properties": {
+        "host_tid": { "type": "integer" },
+        "vcpu_id": { "type": "integer" },
+        "start_time_ticks": { "type": ["integer", "null"], "minimum": 0 }
+      }
+    },
+    "vm_inventory_qmp": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["present", "status"],
+      "properties": {
+        "present": { "type": "boolean" },
+        "status": { "enum": ["configured", "missing"] }
+      }
+    },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sources", "confidence", "start_time_verified", "ambiguous"],
+      "properties": {
+        "sources": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "trace_comm",
+              "proc_cmdline",
+              "proc_cgroup",
+              "libvirt_xml",
+              "libvirt_lifecycle",
+              "qmp_socket_hint",
+              "fallback_pid",
+              "ambiguous",
+              "start_time_verified"
+            ]
+          }
+        },
+        "confidence": { "enum": ["low", "medium", "high"] },
+        "start_time_verified": { "type": "boolean" },
+        "ambiguous": { "type": "boolean" }
+      }
+    }
+  }
+}

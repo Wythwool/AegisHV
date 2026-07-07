@@ -1,76 +1,189 @@
 {
-  "$id": "https://aegishv/schema/event.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aegishv.local/schema/event.schema.json",
+  "title": "AegisHV Event",
   "type": "object",
+  "additionalProperties": true,
   "required": [
     "version",
+    "schema_version",
     "ts",
+    "monotonic_ms",
+    "sequence",
+    "event_id",
+    "category",
+    "severity",
     "vm",
-    "vcpu",
-    "reason",
-    "arch"
+    "data_loss"
   ],
   "properties": {
-    "version": {
-      "type": "integer",
-      "const": 1
-    },
-    "ts": {
-      "type": "string"
-    },
-    "arch": {
-      "type": "string",
-      "enum": [
-        "x86_64",
-        "aarch64",
-        "unknown"
-      ]
-    },
-    "vm": {
-      "type": "string"
-    },
-    "vcpu": {
-      "type": "integer"
-    },
-    "reason": {
-      "type": "string"
-    },
-    "rip": {
-      "type": "string"
-    },
-    "gpa": {
-      "type": "string"
-    },
-    "ept": {
-      "type": "object",
+    "version": { "type": "integer", "minimum": 1 },
+    "schema_version": { "type": "integer", "const": 2 },
+    "ts": { "type": "string" },
+    "monotonic_ms": { "type": "integer", "minimum": 0 },
+    "sequence": { "type": "integer", "minimum": 1 },
+    "event_id": { "type": "string", "minLength": 1 },
+    "host_id": { "type": ["string", "null"] },
+    "sensor_id": { "type": ["string", "null"] },
+    "category": { "enum": ["exit", "wx", "pmu", "policy", "snapshot", "sensor"] },
+    "severity": { "enum": ["info", "low", "medium", "high", "critical"] },
+    "vm": { "type": "string" },
+    "vm_id": { "type": ["string", "null"] },
+    "vm_name": { "type": ["string", "null"] },
+    "tenant_id": { "type": ["string", "null"] },
+    "raw_comm": { "type": ["string", "null"] },
+    "host_pid": { "type": ["integer", "null"] },
+    "host_tid": { "type": ["integer", "null"] },
+    "host_start_time_ticks": { "type": ["integer", "null"] },
+    "identity": {
+      "type": ["object", "null"],
+      "required": ["sources", "confidence", "start_time_verified", "ambiguous"],
+      "additionalProperties": false,
       "properties": {
-        "read": {
-          "type": "boolean"
+        "sources": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "trace_comm",
+              "proc_cmdline",
+              "proc_cgroup",
+              "libvirt_xml",
+              "qmp_socket_hint",
+              "libvirt_lifecycle",
+              "fallback_pid",
+              "ambiguous",
+              "start_time_verified"
+            ]
+          }
         },
-        "write": {
-          "type": "boolean"
-        },
-        "exec": {
-          "type": "boolean"
-        },
-        "qual": {
-          "type": "string"
-        }
+        "confidence": { "enum": ["low", "medium", "high"] },
+        "start_time_verified": { "type": "boolean" },
+        "ambiguous": { "type": "boolean" }
       }
     },
-    "severity": {
-      "type": "string",
-      "enum": [
-        "info",
-        "low",
-        "medium",
-        "high",
-        "critical"
-      ]
+    "host_cpu": { "type": ["integer", "null"] },
+    "vcpu_id": { "type": ["integer", "null"] },
+    "vcpu": { "type": ["integer", "null"] },
+    "arch": { "type": ["string", "null"] },
+    "cr3": { "type": ["string", "null"] },
+    "asid": { "type": ["string", "null"] },
+    "vmid": { "type": ["string", "null"] },
+    "vpid": { "type": ["string", "null"] },
+    "privilege_level": { "type": ["string", "null"] },
+    "guest_os": { "type": ["string", "null"] },
+    "guest_process": { "type": ["string", "null"] },
+    "guest_thread": { "type": ["string", "null"] },
+    "guest_module": { "type": ["string", "null"] },
+    "guest_symbol": { "type": ["string", "null"] },
+    "reason": { "type": ["string", "null"] },
+    "trap_type": { "type": ["string", "null"] },
+    "message": { "type": ["string", "null"] },
+    "tags": { "type": "array", "items": { "type": "string" } },
+    "correlation_id": { "type": ["string", "null"] },
+    "rule_id": { "type": ["string", "null"] },
+    "decision": { "type": ["string", "null"] },
+    "action_id": { "type": ["string", "null"] },
+    "action_status": { "type": ["string", "null"] },
+    "data_loss": { "type": "boolean" },
+    "loss": {
+      "type": ["object", "null"],
+      "properties": {
+        "dropped_since_last_event": { "type": "integer", "minimum": 0 },
+        "dropped_total": { "type": "integer", "minimum": 0 },
+        "reason": { "type": "string" },
+        "range_kind": {
+          "enum": [
+            "aggregate_counter",
+            "sequence_gap",
+            "aggregate_counter_and_sequence_gap"
+          ]
+        },
+        "sequence_gap_start": { "type": ["integer", "null"], "minimum": 1 },
+        "sequence_gap_end": { "type": ["integer", "null"], "minimum": 1 }
+      }
     },
-    "message": {
-      "type": "string"
+    "addr": {
+      "type": ["object", "null"],
+      "properties": {
+        "rip": { "type": ["string", "null"] },
+        "gva": { "type": ["string", "null"] },
+        "gpa": { "type": ["string", "null"] },
+        "qual": { "type": ["string", "null"] }
+      }
+    },
+    "violation": { "$ref": "#/$defs/bits_or_null" },
+    "page_permissions_before": { "$ref": "#/$defs/bits_or_null" },
+    "page_permissions_after": { "$ref": "#/$defs/bits_or_null" },
+    "wx": {
+      "type": ["object", "null"],
+      "properties": {
+        "writer_rip": { "type": ["string", "null"] },
+        "executor_rip": { "type": ["string", "null"] },
+        "delta_ms": { "type": "integer", "minimum": 0 },
+        "page_size": { "type": ["integer", "null"] },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "pmu": {
+      "type": ["object", "null"],
+      "properties": {
+        "pid": { "type": "integer" },
+        "tid": { "type": "integer" },
+        "thread": { "type": "string" },
+        "cycles_delta": { "type": ["integer", "null"] },
+        "instr_delta": { "type": ["integer", "null"] },
+        "cache_ref_delta": { "type": ["integer", "null"] },
+        "cache_miss_delta": { "type": ["integer", "null"] },
+        "branch_delta": { "type": ["integer", "null"] },
+        "branch_miss_delta": { "type": ["integer", "null"] },
+        "sample_ms": { "type": "integer" },
+        "source": { "type": "string" },
+        "grouped": { "type": "boolean" }
+      }
+    },
+    "action": {
+      "type": ["object", "null"],
+      "properties": {
+        "rule": { "type": ["string", "null"] },
+        "kind": { "type": "string" },
+        "ok": { "type": "boolean" },
+        "status": { "type": "string" },
+        "decision": { "type": "string" },
+        "result": {
+          "enum": ["dry_run", "completed", "accepted", "error", "refused", "timeout", "unsupported"]
+        },
+        "detail": { "type": ["string", "null"] },
+        "latency_ms": { "type": ["integer", "null"] },
+        "target_vm_id": { "type": ["string", "null"] },
+        "attempt": { "type": "integer", "minimum": 0 },
+        "max_attempts": { "type": "integer", "minimum": 0 },
+        "retry_count": { "type": "integer", "minimum": 0 },
+        "timeout_ms": { "type": "integer", "minimum": 0 },
+        "timed_out": { "type": "boolean" },
+        "refused": { "type": "boolean" },
+        "failure_class": {
+          "type": ["string", "null"],
+          "enum": [
+            null,
+            "qmp_error",
+            "timeout",
+            "stable_identity_required",
+            "unsupported_action",
+            "unsafe_input",
+            "missing_argument"
+          ]
+        }
+      }
     }
   },
-  "additionalProperties": false
+  "$defs": {
+    "bits_or_null": {
+      "type": ["object", "null"],
+      "properties": {
+        "read": { "type": "boolean" },
+        "write": { "type": "boolean" },
+        "exec": { "type": "boolean" }
+      }
+    }
+  }
 }

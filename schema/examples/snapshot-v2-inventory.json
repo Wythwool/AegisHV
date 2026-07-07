@@ -1,0 +1,65 @@
+{
+  "schema_version": 2,
+  "ts": "2026-01-01T00:00:00.000Z",
+  "kvm": false,
+  "tracefs_root": "redacted",
+  "trace_pipe": null,
+  "trace_pipe_readable": false,
+  "tracepoints_ok": false,
+  "tracepoints": [
+    {
+      "system": "kvm",
+      "name": "kvm_exit",
+      "status": "missing_fields",
+      "missing_fields": ["exit_reason", "instruction_pointer"],
+      "message": "tracepoint kvm/kvm_exit format metadata is missing expected field groups"
+    }
+  ],
+  "vm_inventory": {
+    "status": "degraded",
+    "source": "libvirt_xml",
+    "freshness": "file_backed_snapshot",
+    "vm_count": 1,
+    "degraded": true,
+    "vms": [
+      {
+        "vm_id": "redacted",
+        "vm_uuid": "redacted",
+        "vm_name": "redacted",
+        "source": "libvirt_xml",
+        "known_host_tasks": [
+          {
+            "kind": "pid",
+            "id": 7001,
+            "start_time_ticks": 123456
+          },
+          {
+            "kind": "tid",
+            "id": 7101,
+            "start_time_ticks": 123500
+          }
+        ],
+        "vcpu_mappings": [
+          {
+            "host_tid": 7101,
+            "vcpu_id": 0,
+            "start_time_ticks": 123500
+          }
+        ],
+        "qmp": {
+          "present": true,
+          "status": "configured"
+        },
+        "identity": {
+          "sources": ["libvirt_xml", "qmp_socket_hint", "start_time_verified"],
+          "confidence": "high",
+          "start_time_verified": true,
+          "ambiguous": false
+        },
+        "ambiguous": false,
+        "conflict": null
+      }
+    ]
+  },
+  "mode": "unavailable"
+}
