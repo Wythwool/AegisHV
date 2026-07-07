@@ -26,7 +26,7 @@ Optional identity field:
 
 - `variant=<variant>`
 
-`kaslr=slide-known` requires `kaslr_slide=<u64>`. `kaslr=fixed`, `kaslr=none`, and `kaslr=unknown-unsupported` must not set a slide. P079 handles KASLR base resolution later.
+`kaslr=slide-known` requires `kaslr_slide=<u64>`. `kaslr=fixed`, `kaslr=none`, and `kaslr=unknown-unsupported` must not set a slide. KASLR base resolution is limited to the resolver modes described below.
 
 Metadata records:
 

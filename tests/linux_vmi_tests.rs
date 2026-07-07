@@ -51,33 +51,39 @@ fn memory() -> SyntheticLinuxVirtualMemory {
     let mut memory = SyntheticLinuxVirtualMemory::new();
     map_task(
         &mut memory,
-        INIT_TASK,
-        BASH_TASK,
-        1,
-        1,
-        "swapper",
-        0,
-        0x1010,
+        TaskFixture {
+            address: INIT_TASK,
+            next_task: BASH_TASK,
+            pid: 1,
+            tgid: 1,
+            comm: "swapper",
+            mm: 0,
+            cred: 0x1010,
+        },
     );
     map_task(
         &mut memory,
-        BASH_TASK,
-        SSHD_TASK,
-        1000,
-        1000,
-        "bash",
-        0x4000,
-        0x5010,
+        TaskFixture {
+            address: BASH_TASK,
+            next_task: SSHD_TASK,
+            pid: 1000,
+            tgid: 1000,
+            comm: "bash",
+            mm: 0x4000,
+            cred: 0x5010,
+        },
     );
     map_task(
         &mut memory,
-        SSHD_TASK,
-        INIT_TASK,
-        1001,
-        1001,
-        "sshd",
-        0x4100,
-        0x5020,
+        TaskFixture {
+            address: SSHD_TASK,
+            next_task: INIT_TASK,
+            pid: 1001,
+            tgid: 1001,
+            comm: "sshd",
+            mm: 0x4100,
+            cred: 0x5020,
+        },
     );
     map_u64(&mut memory, CURRENT_PTR, SSHD_TASK);
     map_u64(&mut memory, MODULE_HEAD, KVM_MODULE);
@@ -93,25 +99,26 @@ fn memory() -> SyntheticLinuxVirtualMemory {
     memory
 }
 
-fn map_task(
-    memory: &mut SyntheticLinuxVirtualMemory,
+struct TaskFixture<'a> {
     address: u64,
     next_task: u64,
     pid: i32,
     tgid: i32,
-    comm: &str,
+    comm: &'a str,
     mm: u64,
     cred: u64,
-) {
+}
+
+fn map_task(memory: &mut SyntheticLinuxVirtualMemory, task: TaskFixture<'_>) {
     let mut bytes = vec![0u8; 0x80];
-    write_u64(&mut bytes, 0x0, next_task);
+    write_u64(&mut bytes, 0x0, task.next_task);
     write_u64(&mut bytes, 0x8, 0);
-    write_i32(&mut bytes, 0x20, pid);
-    write_i32(&mut bytes, 0x24, tgid);
-    write_cstr(&mut bytes, 0x30, 0x10, comm);
-    write_u64(&mut bytes, 0x48, mm);
-    write_u64(&mut bytes, 0x50, cred);
-    memory.map_range(address, bytes).expect("map task");
+    write_i32(&mut bytes, 0x20, task.pid);
+    write_i32(&mut bytes, 0x24, task.tgid);
+    write_cstr(&mut bytes, 0x30, 0x10, task.comm);
+    write_u64(&mut bytes, 0x48, task.mm);
+    write_u64(&mut bytes, 0x50, task.cred);
+    memory.map_range(task.address, bytes).expect("map task");
 }
 
 fn map_module(
@@ -177,8 +184,30 @@ fn walks_init_task_list_and_extracts_process_fields() {
 #[test]
 fn task_walker_detects_corrupt_loop_before_returning_to_head() {
     let mut memory = SyntheticLinuxVirtualMemory::new();
-    map_task(&mut memory, INIT_TASK, BASH_TASK, 1, 1, "swapper", 0, 0);
-    map_task(&mut memory, BASH_TASK, BASH_TASK, 1000, 1000, "bash", 0, 0);
+    map_task(
+        &mut memory,
+        TaskFixture {
+            address: INIT_TASK,
+            next_task: BASH_TASK,
+            pid: 1,
+            tgid: 1,
+            comm: "swapper",
+            mm: 0,
+            cred: 0,
+        },
+    );
+    map_task(
+        &mut memory,
+        TaskFixture {
+            address: BASH_TASK,
+            next_task: BASH_TASK,
+            pid: 1000,
+            tgid: 1000,
+            comm: "bash",
+            mm: 0,
+            cred: 0,
+        },
+    );
 
     let err = walk_linux_tasks(
         &profile(),

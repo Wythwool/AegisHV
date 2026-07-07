@@ -287,7 +287,7 @@ fn x86_64_walker_accepts_pat_bit_for_1g_large_pages_without_leaking_it_into_gpa(
 fn x86_64_walker_rejects_non_canonical_48_bit_addresses() {
     let memory = SyntheticGuestPhysicalMemoryReader::new();
     let err = translate(memory, 0x1000, 0x0000_8000_0000_0000)
-        .expect_err("P066 does not translate non-canonical or LA57-style addresses");
+        .expect_err("non-canonical and LA57-style addresses must not translate in 4-level mode");
 
     assert_eq!(err.kind(), VmiErrorKind::InvalidAddress);
     assert!(matches!(
