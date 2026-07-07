@@ -1,85 +1,195 @@
-use std::fs::File;
-use std::io::{BufRead, BufReader};
+use crate::event::Event;
+use crate::metrics::Metrics;
+use crate::tracefs::{find_trace_pipe, open_trace_pipe};
+use std::io::{BufRead, ErrorKind};
 use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{Sender, SyncSender, TrySendError};
+use std::sync::Arc;
+use std::thread;
+use std::time::Duration;
 
-use crossbeam_channel::Sender;
+#[derive(Debug, Clone)]
+pub enum Source {
+    Tracefs { root: PathBuf },
+    Replay { path: PathBuf },
+}
 
-use crate::{Event};
-use crate::parser::{parse_trace_line, to_event};
-use crate::metrics::Registry;
-use crate::config::Config;
-use crate::pmu::Pmu;
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ControlMessage {
+    ReplayEof,
+    CollectorError(String),
+}
 
-pub fn run_replay(file: &Path, tx: Sender<Event>, reg: &Registry, cfg: &Config, _pmu: &Pmu) -> anyhow::Result<()> {
-    let f = File::open(file)?;
-    let rdr = BufReader::new(f);
-    let mut recent_writes: std::collections::HashMap<String, Instant> = std::collections::HashMap::new();
-    for line in rdr.lines() {
-        let line = line?;
-        if let Some(p) = parse_trace_line(&line) {
-            let mut ev = to_event(p.clone());
-            if let Some(gpa) = &ev.gpa {
-                if let Some(e) = &ev.ept {
-                    if e.write {
-                        recent_writes.insert(gpa.clone(), Instant::now());
-                    } else if e.exec {
-                        if let Some(t) = recent_writes.get(gpa) {
-                            if t.elapsed().as_millis() <= cfg.general.wx_window_ms.into() {
-                                ev.severity = "critical".into();
-                                ev.message = format!("W^X violation at {}", gpa);
-                                reg.inc_wx();
-                            }
-                        }
-                    }
-                }
+// Keep Event inline in the bounded ingest channel. Boxing this variant would add
+// heap allocation to PMU event handoff without reducing trace line allocations.
+#[allow(clippy::large_enum_variant)]
+#[derive(Debug, Clone)]
+pub enum IngestItem {
+    Line(String),
+    Event(Event),
+}
+
+pub fn spawn_collector(
+    source: Source,
+    tx: SyncSender<IngestItem>,
+    control_tx: Sender<ControlMessage>,
+    stop: Arc<AtomicBool>,
+    metrics: Metrics,
+    queue_capacity: usize,
+) -> thread::JoinHandle<Result<(), String>> {
+    thread::spawn(move || match source {
+        Source::Tracefs { root } => {
+            collect_tracefs(&root, tx, control_tx, stop, metrics, queue_capacity)
+        }
+        Source::Replay { path } => {
+            collect_replay(&path, tx, control_tx, stop, metrics, queue_capacity)
+        }
+    })
+}
+
+fn send_control(control_tx: &Sender<ControlMessage>, msg: ControlMessage) {
+    // Control-plane messages must never use the lossy telemetry queue.
+    let _ = control_tx.send(msg);
+}
+
+fn send_ingest(
+    tx: &SyncSender<IngestItem>,
+    item: IngestItem,
+    metrics: &Metrics,
+    queue_capacity: usize,
+) {
+    metrics.record_queue_send_attempt(queue_capacity);
+    match tx.try_send(item) {
+        Ok(()) => {}
+        Err(TrySendError::Full(_)) => {
+            metrics.record_queue_send_rejected();
+            metrics.record_queue_full(queue_capacity);
+            metrics.inc_dropped("queue_full");
+        }
+        Err(TrySendError::Disconnected(_)) => {
+            metrics.record_queue_send_rejected();
+            metrics.inc_dropped("receiver_disconnected");
+        }
+    }
+}
+
+fn collect_tracefs(
+    root: &Path,
+    tx: SyncSender<IngestItem>,
+    control_tx: Sender<ControlMessage>,
+    stop: Arc<AtomicBool>,
+    metrics: Metrics,
+    queue_capacity: usize,
+) -> Result<(), String> {
+    let p = find_trace_pipe(root)?;
+    let mut reader = open_trace_pipe(&p.trace_pipe)?;
+    let mut line = String::new();
+    loop {
+        if stop.load(Ordering::Relaxed) {
+            break;
+        }
+        line.clear();
+        match reader.read_line(&mut line) {
+            Ok(0) => {
+                thread::sleep(Duration::from_millis(50));
             }
-            reg.record(&ev);
-            tx.send(ev).ok();
+            Ok(_) => {
+                let l = line.trim_end().to_string();
+                metrics.inc_ingest_line();
+                send_ingest(&tx, IngestItem::Line(l), &metrics, queue_capacity);
+            }
+            Err(e) if e.kind() == ErrorKind::WouldBlock => {
+                thread::sleep(Duration::from_millis(50));
+            }
+            Err(e) => {
+                metrics.inc_tracefs_read_error();
+                metrics.inc_collector_error();
+                let msg = format!("tracefs collector read failed: {e}");
+                send_control(&control_tx, ControlMessage::CollectorError(msg.clone()));
+                return Err(msg);
+            }
         }
     }
     Ok(())
 }
 
-pub fn run_tracefs(tracefs: &Path, tx: Sender<Event>, reg: &Registry, cfg: &Config, _pmu: &Pmu) -> anyhow::Result<()> {
-    let mut candidates = vec![tracefs.join("trace_pipe")];
-    candidates.push(PathBuf::from("/sys/kernel/debug/tracing/trace_pipe"));
-    let file = candidates.into_iter().find(|p| p.exists()).ok_or_else(|| anyhow::anyhow!("trace_pipe not found"))?;
-    let f = File::open(file)?;
-    let rdr = BufReader::new(f);
-    let mut recent_writes: std::collections::HashMap<String, Instant> = std::collections::HashMap::new();
-    for line in rdr.lines() {
-        let line = line?;
-        if let Some(p) = parse_trace_line(&line) {
-            let mut ev = to_event(p.clone());
-            if let Some(gpa) = &ev.gpa {
-                if let Some(e) = &ev.ept {
-                    if e.write {
-                        recent_writes.insert(gpa.clone(), Instant::now());
-                    } else if e.exec {
-                        if let Some(t) = recent_writes.get(gpa) {
-                            if t.elapsed().as_millis() <= cfg.general.wx_window_ms.into() {
-                                ev.severity = "critical".into();
-                                ev.message = format!("W^X violation at {}", gpa);
-                                reg.inc_wx();
-                            }
-                        }
-                    }
-                }
-            }
-            reg.record(&ev);
-            tx.send(ev).ok();
+pub fn collect_replay(
+    path: &Path,
+    tx: SyncSender<IngestItem>,
+    control_tx: Sender<ControlMessage>,
+    stop: Arc<AtomicBool>,
+    metrics: Metrics,
+    queue_capacity: usize,
+) -> Result<(), String> {
+    let f =
+        std::fs::File::open(path).map_err(|e| format!("open replay {}: {e}", path.display()))?;
+    let reader = std::io::BufReader::new(f);
+    for line in reader.lines() {
+        if stop.load(Ordering::Relaxed) {
+            break;
         }
+        let l = match line {
+            Ok(l) => l,
+            Err(e) => {
+                metrics.inc_collector_error();
+                let msg = format!("replay collector read failed: {e}");
+                send_control(&control_tx, ControlMessage::CollectorError(msg.clone()));
+                return Err(msg);
+            }
+        };
+        metrics.inc_ingest_line();
+        send_ingest(&tx, IngestItem::Line(l), &metrics, queue_capacity);
     }
+    metrics.inc_collector_eof();
+    send_control(&control_tx, ControlMessage::ReplayEof);
     Ok(())
 }
 
-pub fn snapshot() -> anyhow::Result<serde_json::Value> {
-    let obj = serde_json::json!({
-        "version": 1,
-        "ts": time::OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339).unwrap(),
-        "kvm": { "present": std::path::Path::new("/dev/kvm").exists() },
-        "tracefs": { "tracing": std::path::Path::new("/sys/kernel/tracing").exists() }
-    });
-    Ok(obj)
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use std::sync::atomic::AtomicBool;
+    use std::sync::mpsc::{channel, sync_channel};
+
+    fn temp_file(contents: &str) -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "aegishv-replay-{}-{}.log",
+            std::process::id(),
+            crate::util::next_sequence()
+        ));
+        let mut f = std::fs::File::create(&path).unwrap();
+        write!(f, "{}", contents).unwrap();
+        path
+    }
+
+    #[test]
+    fn replay_sends_eof_control_message() {
+        let path = temp_file("qemu-1 [000] d..2 1.0: kvm_exit: reason EPT_VIOLATION rip 0x1 gpa 0x1000 error_code 0x4\n");
+        let (tx, rx) = sync_channel(8);
+        let (ctx, crx) = channel();
+        let stop = Arc::new(AtomicBool::new(false));
+        let metrics = Metrics::new().unwrap();
+        collect_replay(&path, tx, ctx, stop, metrics.clone(), 8).unwrap();
+        assert!(matches!(rx.try_recv().unwrap(), IngestItem::Line(_)));
+        assert_eq!(crx.try_recv().unwrap(), ControlMessage::ReplayEof);
+        assert_eq!(metrics.queue_depth(), 1);
+        assert_eq!(metrics.queue_capacity(), 8);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn replay_eof_survives_full_telemetry_queue() {
+        let path = temp_file("line-one\nline-two\n");
+        let (tx, _rx) = sync_channel(1);
+        let (ctx, crx) = channel();
+        let stop = Arc::new(AtomicBool::new(false));
+        let metrics = Metrics::new().unwrap();
+        collect_replay(&path, tx, ctx, stop, metrics.clone(), 1).unwrap();
+        assert_eq!(crx.try_recv().unwrap(), ControlMessage::ReplayEof);
+        assert_eq!(metrics.queue_depth(), 1);
+        assert_eq!(metrics.dropped_total(), 1);
+        let _ = std::fs::remove_file(path);
+    }
 }
