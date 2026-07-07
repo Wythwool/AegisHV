@@ -1,0 +1,24 @@
+[Unit]
+Description=AegisHV host-side KVM telemetry sensor
+Documentation=file:/usr/share/doc/aegishv/DEPLOYMENT.md
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/etc/aegishv/config.toml
+
+[Service]
+Type=simple
+User=aegishv
+Group=aegishv
+ExecStart=/usr/bin/aegishv run --tracefs /sys/kernel/tracing --config /etc/aegishv/config.toml --jsonl /var/log/aegishv/events.jsonl --listen 127.0.0.1:9108 --quiet
+Restart=on-failure
+RestartSec=5s
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ReadWritePaths=/var/lib/aegishv /var/log/aegishv /run/aegishv
+
+[Install]
+WantedBy=multi-user.target

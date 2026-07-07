@@ -1,0 +1,8 @@
+/usr/bin/aegishv                         --  gen_context(system_u:object_r:aegishv_exec_t,s0)
+/usr/local/bin/aegishv                   --  gen_context(system_u:object_r:aegishv_exec_t,s0)
+/etc/aegishv(/.*)?                           gen_context(system_u:object_r:aegishv_etc_t,s0)
+/usr/share/aegishv(/.*)?                     gen_context(system_u:object_r:aegishv_share_t,s0)
+/usr/share/doc/aegishv(/.*)?                 gen_context(system_u:object_r:aegishv_doc_t,s0)
+/var/log/aegishv(/.*)?                       gen_context(system_u:object_r:aegishv_log_t,s0)
+/var/lib/aegishv(/.*)?                       gen_context(system_u:object_r:aegishv_var_lib_t,s0)
+/run/aegishv(/.*)?                           gen_context(system_u:object_r:aegishv_runtime_t,s0)

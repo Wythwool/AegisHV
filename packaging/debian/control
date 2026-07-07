@@ -1,0 +1,18 @@
+Source: aegishv
+Section: admin
+Priority: optional
+Maintainer: Nullbit1 <noreply@github.com>
+Rules-Requires-Root: no
+Build-Depends: debhelper-compat (= 13), cargo, rustc
+Standards-Version: 4.7.0
+Homepage: https://github.com/Nullbit1/AegisHV
+
+Package: aegishv
+Architecture: linux-any
+Depends: adduser, systemd-tmpfiles | systemd, ${shlibs:Depends}, ${misc:Depends}
+Description: host-side KVM telemetry sensor
+ AegisHV reads Linux KVM tracefs text, emits JSONL telemetry, exposes
+ Prometheus-style metrics, correlates W^X patterns, and can call configured
+ QMP actions. This package installs the current host-side sensor and its
+ operator files. It does not provide type-1 hypervisor support, full VMI,
+ EPT/NPT enforcement, syscall-path integrity, or hardware PMU sampling.

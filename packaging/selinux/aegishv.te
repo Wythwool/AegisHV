@@ -1,0 +1,100 @@
+policy_module(aegishv, 0.1.0)
+
+require {
+    type configfs_t;
+    type debugfs_t;
+    type devlog_t;
+    type proc_t;
+    type sysfs_t;
+    type syslogd_t;
+    type tracefs_t;
+    type var_run_t;
+    type virtd_var_run_t;
+    class chr_file { getattr open read write };
+    class dir { add_name getattr open read remove_name search write };
+    class file { append create getattr lock open read rename unlink write };
+    class lnk_file { getattr read };
+    class process { getsched signal };
+    class sock_file { getattr read write };
+    class tcp_socket { accept bind create getattr listen name_bind read setopt write };
+    class udp_socket { connect create getattr sendto setopt write };
+    class unix_dgram_socket { connect create getattr sendto write };
+    class unix_stream_socket { connect create getattr read setopt write };
+}
+
+type aegishv_t;
+type aegishv_exec_t;
+init_daemon_domain(aegishv_t, aegishv_exec_t)
+
+type aegishv_etc_t;
+files_config_file(aegishv_etc_t)
+
+type aegishv_share_t;
+files_type(aegishv_share_t)
+
+type aegishv_doc_t;
+files_type(aegishv_doc_t)
+
+type aegishv_log_t;
+logging_log_file(aegishv_log_t)
+
+type aegishv_var_lib_t;
+files_type(aegishv_var_lib_t)
+
+type aegishv_runtime_t;
+files_pid_file(aegishv_runtime_t)
+
+allow aegishv_t self:process { getsched signal };
+allow aegishv_t self:tcp_socket { accept bind create getattr listen name_bind read setopt write };
+allow aegishv_t self:udp_socket { connect create getattr sendto setopt write };
+allow aegishv_t self:unix_dgram_socket { connect create getattr sendto write };
+allow aegishv_t self:unix_stream_socket { connect create getattr read setopt write };
+
+read_files_pattern(aegishv_t, aegishv_etc_t, aegishv_etc_t)
+read_lnk_files_pattern(aegishv_t, aegishv_etc_t, aegishv_etc_t)
+read_files_pattern(aegishv_t, aegishv_share_t, aegishv_share_t)
+read_lnk_files_pattern(aegishv_t, aegishv_share_t, aegishv_share_t)
+read_files_pattern(aegishv_t, aegishv_doc_t, aegishv_doc_t)
+read_lnk_files_pattern(aegishv_t, aegishv_doc_t, aegishv_doc_t)
+
+manage_dirs_pattern(aegishv_t, aegishv_log_t, aegishv_log_t)
+manage_files_pattern(aegishv_t, aegishv_log_t, aegishv_log_t)
+manage_lnk_files_pattern(aegishv_t, aegishv_log_t, aegishv_log_t)
+manage_dirs_pattern(aegishv_t, aegishv_var_lib_t, aegishv_var_lib_t)
+manage_files_pattern(aegishv_t, aegishv_var_lib_t, aegishv_var_lib_t)
+manage_lnk_files_pattern(aegishv_t, aegishv_var_lib_t, aegishv_var_lib_t)
+manage_dirs_pattern(aegishv_t, aegishv_runtime_t, aegishv_runtime_t)
+manage_files_pattern(aegishv_t, aegishv_runtime_t, aegishv_runtime_t)
+manage_lnk_files_pattern(aegishv_t, aegishv_runtime_t, aegishv_runtime_t)
+
+files_read_etc_files(aegishv_t)
+files_read_usr_files(aegishv_t)
+libs_use_ld_so(aegishv_t)
+libs_use_shared_libs(aegishv_t)
+kernel_read_kernel_sysctls(aegishv_t)
+kernel_read_system_state(aegishv_t)
+
+allow aegishv_t proc_t:dir { getattr open read search };
+allow aegishv_t proc_t:file { getattr open read };
+allow aegishv_t sysfs_t:dir { getattr open read search };
+allow aegishv_t sysfs_t:file { getattr open read };
+allow aegishv_t configfs_t:dir { getattr open read search };
+allow aegishv_t configfs_t:file { getattr open read };
+allow aegishv_t tracefs_t:dir { getattr open read search };
+allow aegishv_t tracefs_t:file { getattr open read };
+allow aegishv_t tracefs_t:lnk_file { getattr read };
+allow aegishv_t debugfs_t:dir { getattr open read search };
+allow aegishv_t debugfs_t:file { getattr open read };
+allow aegishv_t debugfs_t:lnk_file { getattr read };
+
+allow aegishv_t virtd_var_run_t:dir { getattr open read search };
+allow aegishv_t virtd_var_run_t:sock_file { getattr read write };
+allow aegishv_t virtd_var_run_t:unix_stream_socket connect;
+allow aegishv_t var_run_t:sock_file { getattr read write };
+allow aegishv_t devlog_t:sock_file { getattr write };
+allow aegishv_t syslogd_t:unix_dgram_socket sendto;
+
+corenet_tcp_bind_generic_node(aegishv_t)
+corenet_tcp_bind_all_unreserved_ports(aegishv_t)
+corenet_udp_sendrecv_generic_if(aegishv_t)
+corenet_udp_sendrecv_generic_node(aegishv_t)

@@ -1,0 +1,5 @@
+aegishv (0.4.0-1) unstable; urgency=medium
+
+  * Package AegisHV host-side KVM telemetry sensor files.
+
+ -- Nullbit1 <noreply@github.com>  Tue, 28 Apr 2026 00:00:00 +0000
