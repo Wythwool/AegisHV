@@ -1,0 +1,135 @@
+name: ci
+
+on:
+  push:
+    branches: ["main", "master"]
+  pull_request:
+
+jobs:
+  rust-msrv:
+    name: rust msrv 1.81 locked
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.81.0
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Lockfile is committed and self-contained
+        run: |
+          test -s Cargo.lock
+          ! grep -qi "placeholder" Cargo.lock
+          cargo metadata --locked --format-version 1 >/tmp/aegishv.metadata.json
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
+      - name: Tests
+        run: cargo test --locked --all --all-features
+      - name: Build
+        run: cargo build --locked --release
+      - name: Validate config
+        run: cargo run --locked -- validate-config --config config.example.toml
+      - name: Validate schemas are parseable
+        run: |
+          python3 -m json.tool schema/event.schema.json >/dev/null
+          python3 -m json.tool schema/snapshot.schema.json >/dev/null
+      - name: Smoke replay and event contract
+        run: |
+          cargo run --locked -- run --replay ./examples/traces/kvm_exit_sample.log --listen '' --jsonl /tmp/aegishv.jsonl --quiet
+          python3 scripts/validate-jsonl-schema.py --schema schema/event.schema.json --jsonl /tmp/aegishv.jsonl
+      - name: Snapshot contract
+        run: |
+          cargo run --locked -- snapshot --tracefs /sys/kernel/tracing >/tmp/aegishv-snapshot.json
+          python3 scripts/validate-jsonl-schema.py --schema schema/snapshot.schema.json --json /tmp/aegishv-snapshot.json
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aegishv-linux-amd64
+          path: |
+            target/release/aegishv
+            schema/*.json
+            config.example.toml
+            README.md
+
+  rust-stable-nextest:
+    name: stable nextest locked
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@nextest
+      - name: Metadata locked
+        run: cargo metadata --locked --format-version 1 >/dev/null
+      - name: Nextest
+        run: cargo nextest run --locked --all --all-features
+
+  cross-build:
+    name: cross ${{ matrix.target }} locked
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-unknown-linux-gnu
+          - x86_64-unknown-linux-musl
+          - aarch64-unknown-linux-gnu
+          - aarch64-unknown-linux-musl
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@cross
+      - uses: Swatinem/rust-cache@v2
+      - name: Cross build locked
+        run: cross build --locked --release --target ${{ matrix.target }}
+
+  docker:
+    name: docker build locked
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Docker build smoke
+        run: docker build -t aegishv:ci .
+
+  audit:
+    name: audit locked graph
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Metadata locked
+        run: cargo metadata --locked --format-version 1 >/dev/null
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+      - name: Cargo audit
+        run: cargo audit --locked
+
+  deny:
+    name: dependency policy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Metadata locked
+        run: cargo metadata --locked --format-version 1 >/dev/null
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --locked
+      - name: Cargo deny
+        run: cargo deny check
+
+  fuzz-harness-smoke:
+    name: fuzz harness compile check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Fuzz package metadata
+        run: cargo metadata --manifest-path fuzz/Cargo.toml --no-deps --format-version 1 >/tmp/aegishv-fuzz.metadata.json
+      - name: Compile fuzz harnesses without running campaigns
+        run: cargo check --manifest-path fuzz/Cargo.toml --bins

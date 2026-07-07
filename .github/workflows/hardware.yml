@@ -1,0 +1,62 @@
+name: opt-in hardware checks
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner_label:
+        description: "Self-hosted Linux runner label with reviewed KVM/tracefs permissions"
+        required: true
+        default: "aegishv-hardware-kvm"
+        type: string
+      run_live_tracefs:
+        description: "Run live tracefs smoke; requires KVM activity and tracefs write permission"
+        required: true
+        default: false
+        type: boolean
+      run_snapshot:
+        description: "Run host snapshot command on the selected runner"
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  live-host:
+    name: manual live-host checks
+    runs-on: ${{ inputs.runner_label }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Document selected host
+        run: |
+          uname -a
+          id
+          test -e /dev/kvm && ls -l /dev/kvm || true
+          test -d /sys/kernel/tracing && echo "tracefs: /sys/kernel/tracing present" || true
+          test -d /sys/kernel/debug/tracing && echo "tracefs: /sys/kernel/debug/tracing present" || true
+
+      - name: Locked build and normal replay checks
+        run: |
+          cargo metadata --locked --format-version 1 >/tmp/aegishv.metadata.json
+          cargo build --locked
+          cargo run --locked -- validate-config --config config.example.toml
+          cargo run --locked -- run --replay ./examples/traces/kvm_exit_sample.log --listen '' --jsonl /tmp/aegishv-hardware-replay.jsonl --quiet
+          python3 scripts/validate-jsonl-schema.py --schema schema/event.schema.json --jsonl /tmp/aegishv-hardware-replay.jsonl
+
+      - name: Host snapshot
+        if: ${{ inputs.run_snapshot }}
+        run: |
+          cargo run --locked -- snapshot --tracefs /sys/kernel/tracing >/tmp/aegishv-hardware-snapshot.json
+          python3 scripts/validate-jsonl-schema.py --schema schema/snapshot.schema.json --json /tmp/aegishv-hardware-snapshot.json
+
+      - name: Live tracefs smoke
+        if: ${{ inputs.run_live_tracefs }}
+        run: |
+          ./scripts/live-tracefs-smoke.sh --timeout 30
