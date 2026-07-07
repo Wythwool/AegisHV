@@ -124,6 +124,41 @@
         "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
       }
     },
+    "trap": {
+      "type": ["object", "null"],
+      "required": [
+        "trap_id",
+        "trap_kind",
+        "backend",
+        "page",
+        "permissions_before",
+        "permissions_after",
+        "decision",
+        "invalidation_status"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "trap_id": { "type": "string", "minLength": 1 },
+        "trap_kind": { "enum": ["read", "write", "execute", "wx_correlation"] },
+        "backend": { "type": "string", "minLength": 1 },
+        "page": { "type": "string", "pattern": "^0x[0-9a-fA-F]+$" },
+        "permissions_before": { "$ref": "#/$defs/bits_or_null" },
+        "permissions_after": { "$ref": "#/$defs/bits_or_null" },
+        "decision": {
+          "enum": [
+            "allow_step",
+            "allow_temporary_write",
+            "deny",
+            "fail_open",
+            "fail_closed",
+            "correlation_only"
+          ]
+        },
+        "invalidation_status": {
+          "enum": ["recorded", "required", "unsupported", "skipped"]
+        }
+      }
+    },
     "pmu": {
       "type": ["object", "null"],
       "properties": {

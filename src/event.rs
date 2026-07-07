@@ -102,6 +102,18 @@ pub struct PmuInfo {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrapInfo {
+    pub trap_id: String,
+    pub trap_kind: String,
+    pub backend: String,
+    pub page: String,
+    pub permissions_before: Option<ViolationBits>,
+    pub permissions_after: Option<ViolationBits>,
+    pub decision: String,
+    pub invalidation_status: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActionInfo {
     pub rule: Option<String>,
     pub kind: String,
@@ -263,6 +275,7 @@ pub struct Event {
     pub page_permissions_before: Option<ViolationBits>,
     pub page_permissions_after: Option<ViolationBits>,
     pub wx: Option<WxInfo>,
+    pub trap: Option<TrapInfo>,
     pub pmu: Option<PmuInfo>,
     pub action: Option<ActionInfo>,
 }
@@ -320,6 +333,7 @@ impl Event {
             page_permissions_before: None,
             page_permissions_after: None,
             wx: None,
+            trap: None,
             pmu: None,
             action: None,
         }
@@ -454,6 +468,7 @@ impl Event {
             bits_json(&self.page_permissions_after)
         ));
         fields.push(format!("\"wx\":{}", wx_json(&self.wx)));
+        fields.push(format!("\"trap\":{}", trap_json(&self.trap)));
         fields.push(format!("\"pmu\":{}", pmu_json(&self.pmu)));
         fields.push(format!("\"action\":{}", action_json(&self.action)));
         format!("{{{}}}", fields.join(","))
@@ -513,6 +528,23 @@ fn wx_json(v: &Option<WxInfo>) -> String {
             w.delta_ms,
             json_opt_u64(w.page_size),
             json_opt_f64(Some(w.confidence))
+        ),
+        None => "null".to_string(),
+    }
+}
+
+fn trap_json(v: &Option<TrapInfo>) -> String {
+    match v {
+        Some(t) => format!(
+            "{{\"trap_id\":{},\"trap_kind\":{},\"backend\":{},\"page\":{},\"permissions_before\":{},\"permissions_after\":{},\"decision\":{},\"invalidation_status\":{}}}",
+            json_str(&t.trap_id),
+            json_str(&t.trap_kind),
+            json_str(&t.backend),
+            json_str(&t.page),
+            bits_json(&t.permissions_before),
+            bits_json(&t.permissions_after),
+            json_str(&t.decision),
+            json_str(&t.invalidation_status)
         ),
         None => "null".to_string(),
     }

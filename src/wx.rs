@@ -1,5 +1,5 @@
 use crate::config::Config;
-use crate::event::{AddrInfo, Category, Event, Severity, WxInfo};
+use crate::event::{AddrInfo, Category, Event, Severity, TrapInfo, ViolationBits, WxInfo};
 use crate::identity::IdentityConflictReason;
 use crate::pattern::Pattern;
 use crate::util::{format_hex, now_rfc3339, page_align, parse_hex_u64};
@@ -37,12 +37,26 @@ pub struct WxEngine {
     max_pages: usize,
     page_size: u64,
     allow: Vec<AllowEntry>,
+    trap_mode: WxTrapMode,
     pruned_delta: std::sync::atomic::AtomicU64,
     cooldown_suppressed_delta: std::sync::atomic::AtomicU64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WxTrapMode {
+    CorrelationOnly,
+    TrapEnforced {
+        backend: String,
+        invalidation_status: String,
+    },
+}
+
 impl WxEngine {
     pub fn new(cfg: &Config) -> Self {
+        Self::new_with_trap_mode(cfg, WxTrapMode::CorrelationOnly)
+    }
+
+    pub fn new_with_trap_mode(cfg: &Config, trap_mode: WxTrapMode) -> Self {
         let allow = cfg
             .wx_allow
             .entries
@@ -63,6 +77,7 @@ impl WxEngine {
             max_pages: cfg.general.wx_max_pages,
             page_size: cfg.general.page_size,
             allow,
+            trap_mode,
             pruned_delta: std::sync::atomic::AtomicU64::new(0),
             cooldown_suppressed_delta: std::sync::atomic::AtomicU64::new(0),
         }
@@ -162,16 +177,27 @@ impl WxEngine {
                     wx_ev.reason = Some("W^X".to_string());
                     wx_ev.trap_type = ev.trap_type.clone();
                     wx_ev.message = Some(
-                        "write then exec on same guest page within correlation window".to_string(),
+                        match self.trap_mode {
+                            WxTrapMode::CorrelationOnly => {
+                                "write then exec on same guest page within correlation window"
+                            }
+                            WxTrapMode::TrapEnforced { .. } => {
+                                "write then exec on same guest page observed in trap-engine mode"
+                            }
+                        }
+                        .to_string(),
                     );
-                    wx_ev.tags =
-                        wx_tags_from_exit_event(&st.last_write_identity_conflict_tags, &ev.tags);
+                    wx_ev.tags = wx_tags_from_exit_event(
+                        &self.trap_mode,
+                        &st.last_write_identity_conflict_tags,
+                        &ev.tags,
+                    );
                     wx_ev.correlation_id =
                         Some(format!("wx:{}:{}:{:#x}", vm_scope, address_space, gpa_page));
                     wx_ev.addr = Some(AddrInfo {
                         rip: addr.rip.clone(),
                         gva: addr.gva.clone(),
-                        gpa: Some(page_hex),
+                        gpa: Some(page_hex.clone()),
                         qual: addr.qual.clone(),
                     });
                     wx_ev.wx = Some(WxInfo {
@@ -181,6 +207,8 @@ impl WxEngine {
                         page_size: Some(self.page_size),
                         confidence,
                     });
+                    wx_ev.trap =
+                        trap_info_from_mode(&self.trap_mode, &wx_ev.correlation_id, &page_hex);
                     self.maybe_prune(&mut pages);
                     return Some(wx_ev);
                 }
@@ -251,15 +279,52 @@ impl WxEngine {
     }
 }
 
-fn wx_tags_from_exit_event(write_tags: &[String], source_tags: &[String]) -> Vec<String> {
-    let mut tags = vec![
-        "wx".to_string(),
-        "correlated".to_string(),
-        "not-enforcement".to_string(),
-    ];
+fn wx_tags_from_exit_event(
+    mode: &WxTrapMode,
+    write_tags: &[String],
+    source_tags: &[String],
+) -> Vec<String> {
+    let mut tags = vec!["wx".to_string(), "correlated".to_string()];
+    match mode {
+        WxTrapMode::CorrelationOnly => tags.push("not-enforcement".to_string()),
+        WxTrapMode::TrapEnforced { .. } => tags.push("trap-enforcement".to_string()),
+    }
     append_safe_identity_conflict_tags(&mut tags, write_tags);
     append_safe_identity_conflict_tags(&mut tags, source_tags);
     tags
+}
+
+fn trap_info_from_mode(
+    mode: &WxTrapMode,
+    correlation_id: &Option<String>,
+    page_hex: &str,
+) -> Option<TrapInfo> {
+    match mode {
+        WxTrapMode::CorrelationOnly => None,
+        WxTrapMode::TrapEnforced {
+            backend,
+            invalidation_status,
+        } => Some(TrapInfo {
+            trap_id: correlation_id
+                .clone()
+                .unwrap_or_else(|| format!("trap:wx:{page_hex}")),
+            trap_kind: "wx_correlation".to_string(),
+            backend: backend.clone(),
+            page: page_hex.to_string(),
+            permissions_before: Some(ViolationBits {
+                read: true,
+                write: false,
+                exec: false,
+            }),
+            permissions_after: Some(ViolationBits {
+                read: true,
+                write: false,
+                exec: true,
+            }),
+            decision: "allow_step".to_string(),
+            invalidation_status: invalidation_status.clone(),
+        }),
+    }
 }
 
 fn safe_identity_conflict_tags(source_tags: &[String]) -> Vec<String> {

@@ -4,7 +4,7 @@ use aegishv::event::{
 };
 use aegishv::metrics::Metrics;
 use aegishv::policy::PolicyEngine;
-use aegishv::wx::WxEngine;
+use aegishv::wx::{WxEngine, WxTrapMode};
 
 fn base_exit(
     vm: &str,
@@ -203,6 +203,47 @@ fn wx_alert_preserves_bounded_identity_conflict_tags() {
         .tags
         .contains(&"/run/libvirt/qemu/aegishv-test.monitor".to_string()));
     assert!(!alert.tags.contains(&"qemu-system-x86".to_string()));
+}
+
+#[test]
+fn trap_mode_marks_wx_event_as_enforcement_observed() {
+    let cfg = Config::default();
+    let wx = WxEngine::new_with_trap_mode(
+        &cfg,
+        WxTrapMode::TrapEnforced {
+            backend: "synthetic".to_string(),
+            invalidation_status: "recorded".to_string(),
+        },
+    );
+    assert!(wx
+        .on_exit_event(&base_exit(
+            "vm-a",
+            Some("libvirt:vm-a"),
+            Some("0xabc"),
+            "0x1001",
+            true,
+            false,
+        ))
+        .is_none());
+
+    let alert = wx
+        .on_exit_event(&base_exit(
+            "vm-a",
+            Some("libvirt:vm-a"),
+            Some("0xabc"),
+            "0x1abc",
+            false,
+            true,
+        ))
+        .unwrap();
+
+    assert!(alert.tags.contains(&"trap-enforcement".to_string()));
+    assert!(!alert.tags.contains(&"not-enforcement".to_string()));
+    let trap = alert.trap.as_ref().unwrap();
+    assert_eq!(trap.backend, "synthetic");
+    assert_eq!(trap.trap_kind, "wx_correlation");
+    assert_eq!(trap.page, "0x1000");
+    assert_eq!(trap.invalidation_status, "recorded");
 }
 
 #[test]

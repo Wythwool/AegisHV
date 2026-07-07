@@ -83,6 +83,7 @@ fn schema_compatibility_examples_cover_current_contract_topics() {
         "\"reason\":\"sensor_startup\"",
         "\"reason\":\"tracefs_format_diagnostic\"",
         "\"action\":{",
+        "\"trap\":{",
         "\"identity\":{",
         "\"loss\":{",
         "\"range_kind\":\"sequence_gap\"",
