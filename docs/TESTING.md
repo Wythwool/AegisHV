@@ -19,6 +19,14 @@ Detector engine tests are normal locked Rust tests:
 
 PMU sampling model tests are normal locked Rust tests in the main crate. They cover grouped counter deltas, unavailable counters, stale target rejection, bounded ring loss accounting, PEBS/IBS/SPE capability flags, and offline CPI baseline anomaly checks. They do not open live `perf_event` groups.
 
+Management and policy-review tests are normal locked Rust tests:
+
+- library tests cover build info, role checks, policy bundle rollback/signature handling, bounded audit append behavior, manual approval stores, dump evidence state separation, startup hash event shaping, and admin input validation;
+- `management_security_tests` runs the local `aegishv version`, `admin health`, `admin policy-explain`, `admin policy-test`, and `admin action-dry-run` CLI paths against the checked-in example config;
+- documentation tests verify the management, policy bundle, update, attestation, and incident response boundaries.
+
+These checks do not start a management daemon, open a remote API, authenticate users, or verify hardware attestation.
+
 Trap engine tests are normal locked Rust tests:
 
 - `trap_stage2_model_tests` covers permission bits, backend limits, synthetic table lookup, overlap rejection, permission updates, and one-level splits.

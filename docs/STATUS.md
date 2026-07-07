@@ -13,6 +13,8 @@ This tree is a hardened host-side KVM sensor and a cleaner platform for the next
 - Optional disk spool segments for JSONL write failures, with compatible plaintext v1 records and opt-in RLE-compressed v2 records.
 - Optional UDP syslog and Linux journald mirroring of emitted JSON events. JSONL remains the primary event stream.
 - Snapshot schema version 2 with tracefs diagnostics and bounded VM inventory from configured identity discovery.
+- Local management CLI for version, health, policy explanation, policy dry-runs, and action dry-runs. It does not start a remote management service.
+- Library primitives for role checks, bounded append-only audit records, manual approval files, policy bundle verification, startup hash events, and dump evidence state separation.
 - Unsupported/unrelated trace lines separated from malformed `kvm_exit` parse errors.
 - Queue-loss watermark propagation through `data_loss=true` on the next emitted event, with aggregate drop counts and exact emitted-sequence gaps only when the runtime can prove the gap.
 - Page-aligned W^X correlation scoped by VM identity and address space (`cr3/asid/vmid/vpid`), with detector cooldown separate from policy cooldown.
@@ -59,6 +61,7 @@ This tree is a hardened host-side KVM sensor and a cleaner platform for the next
 - Host page-table plans are data models. They do not install CR3 or change live page tables.
 - Libvirt API integration with lifecycle events is not implemented.
 - True PMU grouped-counter/ring-buffer sampling with PEBS/IBS/SPE semantics is not implemented.
+- Remote management service, multi-user authentication backend, online policy update service, and hardware attestation are not implemented.
 - OTLP runtime export is not implemented. `docs/EVENT_EXPORT.md` is design-only.
 - OCSF and ECS runtime output is not implemented. `docs/EVENT_MAPPINGS.md` is mapping guidance only.
 
