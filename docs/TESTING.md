@@ -89,6 +89,24 @@ The script refuses missing CPU `svm` flags, missing `/dev/kvm` when required, mi
 
 `.github/workflows/amd-hardware.yml` is a manual AMD workflow. It uses `workflow_dispatch` only, runs on a user-selected self-hosted AMD runner, runs the SVM model tests, can run the host prerequisite check, and uploads `/tmp/aegishv-amd-lab` logs for review. It is separate from normal PR and push CI.
 
+## ARM64 EL2 Lab Models
+
+The ARM64 EL2 model code lives in `aegishv-arch-arm64` and is covered by normal locked Rust tests:
+
+```bash
+cargo test --locked -p aegishv-arch-arm64 --all-features
+```
+
+The tests cover EL2/VHE/nVHE capability decoding, 4K Stage-2 map planning, VTCR_EL2 and VTTBR_EL2 construction, ESR_EL2/FAR_EL2/HPFAR_EL2 abort decoding, TLBI plans, EL2 vector table validation, HVC/SMC/WFI/WFE trap policy, Stage-2 execute/write trap windows, GIC virtualization plans, and virtual timer state. They do not execute privileged EL2 instructions.
+
+`scripts/arm64-el2-lab-smoke.sh` is opt-in lab plumbing for ARM64 host checks and a future boot image:
+
+```bash
+scripts/arm64-el2-lab-smoke.sh --check-host --log-dir /tmp/aegishv-arm64-lab
+```
+
+The script refuses missing `/dev/kvm` when KVM is required, missing QEMU, and missing boot artifacts for command printing or execution. It is not wired into normal CI and does not prove type-1 support.
+
 ## Deterministic Replay
 
 Use `--deterministic-replay` only with `--replay` when generating golden JSONL fixtures. It freezes event timestamps, monotonic time, event sequence, event IDs, action IDs, and host/sensor/tenant IDs. Live tracefs runs reject this flag; AegisHV does not fake deterministic timing for live runtime output.

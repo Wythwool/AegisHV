@@ -34,6 +34,7 @@ This tree is a hardened host-side KVM sensor and a cleaner platform for the next
 - `no_std` workspace crates for type-1 boundary models: core IDs, memory-map validation, physical page allocation, crash records, per-CPU state, event and command ABI rings, VM lifecycle, vCPU scheduling, x86 serial logging, x86 page-table plans, and AP startup plan validation.
 - Intel VMX lab models for feature detection, VMXON/VMCS region checks, VMCS lifecycle, VMX control adjustment, explicit exit handlers, EPT mapping plans, VPID/INVEPT invalidation plans, execute/write traps, Monitor Trap Flag fallback behavior, and minimal Linux lab coverage validation.
 - AMD SVM lab models for feature detection, EFER.SVME value handling, VMCB layout checks, VMRUN/VMLOAD/VMSAVE/INVLPGA instruction facades, explicit intercept handlers, NPT map plans, nested page fault routing, ASID management, execute/write traps, and tiny guest lab validation.
+- ARM64 EL2 lab models for capability decoding, vector table validation, 4K Stage-2 map plans, VTCR/VTTBR construction, ESR/FAR/HPFAR abort decode, TLBI planning, HVC/SMC/WFI/WFE traps, execute/write traps, GIC virtualization planning, virtual timer state, and toy guest coverage validation.
 
 ## Still not implemented as runtime code
 
@@ -42,6 +43,7 @@ This tree is a hardened host-side KVM sensor and a cleaner platform for the next
 - AMD VMRUN/VMCB backend.
 - Bare-metal execution of the AMD SVM lab models is not implemented.
 - ARM64 EL2 runtime and vectors.
+- Bare-metal execution of the ARM64 EL2 lab models is not implemented.
 - Bootable type-1 image, Limine config, linker script, APIC startup, real trampoline code, and QEMU boot evidence are not implemented.
 - Guest physical memory reader.
 - Guest virtual-to-physical translation.
