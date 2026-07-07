@@ -3,6 +3,7 @@ name = "aegishv"
 version = "0.4.0"
 edition = "2021"
 rust-version = "1.81"
+default-run = "aegishv"
 description = "Host-side KVM telemetry sensor with strict JSONL events, W^X correlation, Prometheus metrics, policy actions, replay tests, and clean backend boundaries for future VMI/trap/type-1 work."
 license = "MIT"
 authors = ["Wythwool", "Nullbit1"]
