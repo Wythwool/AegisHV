@@ -1,0 +1,14 @@
+[package]
+name = "aegishv-arch-arm64"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.81"
+license = "MIT"
+description = "ARM64 no_std helpers for AegisHV EL2, Stage-2, trap, and timer models"
+
+[features]
+default = []
+std = ["aegishv-hypervisor-core/std"]
+
+[dependencies]
+aegishv-hypervisor-core = { path = "../aegishv-hypervisor-core" }

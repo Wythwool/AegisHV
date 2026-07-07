@@ -15,6 +15,7 @@ members = [
     "crates/aegishv-hypervisor-core",
     "crates/aegishv-event-abi",
     "crates/aegishv-arch-x86",
+    "crates/aegishv-arch-arm64",
 ]
 exclude = ["fuzz"]
 resolver = "2"
