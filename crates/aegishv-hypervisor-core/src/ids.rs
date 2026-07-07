@@ -4,6 +4,8 @@ use crate::error::{CoreError, CoreErrorKind};
 pub struct VmId(u32);
 
 impl VmId {
+    pub const ONE: Self = Self(1);
+
     pub const fn new(raw: u32) -> Result<Self, CoreError> {
         if raw == 0 {
             Err(CoreError::new(
