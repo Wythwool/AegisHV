@@ -1963,6 +1963,17 @@ mod tests {
         })
     }
 
+    fn wait_for_socket(path: &Path) {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            if path.exists() {
+                return;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        panic!("QMP test socket was not created: {}", path.display());
+    }
+
     #[test]
     fn qmp_pause_action_success_by_vm_id() {
         let dir =
@@ -1970,6 +1981,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let sock = dir.join("qmp.sock");
         let server = spawn_qmp_server(&sock, "{\"return\":{}}");
+        wait_for_socket(&sock);
         let cfg = base_config(sock.to_str().unwrap());
         let dispatcher = ActionDispatcher::new(&cfg).unwrap();
         let metrics = Metrics::new().unwrap();
@@ -2048,6 +2060,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let sock = dir.join("qmp.sock");
         let server = spawn_qmp_timeout_server(&sock, 100);
+        wait_for_socket(&sock);
         let mut cfg = base_config(sock.to_str().unwrap());
         cfg.actions.timeout_ms = 100;
         let dispatcher = ActionDispatcher::new(&cfg).unwrap();
