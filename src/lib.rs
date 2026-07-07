@@ -4,6 +4,7 @@ pub mod config;
 pub mod event;
 pub mod hypervisor;
 pub mod identity;
+pub mod linux_hooks;
 pub mod linux_integrity;
 pub mod linux_symbols;
 pub mod linux_syscall;
