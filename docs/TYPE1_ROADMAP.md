@@ -35,6 +35,7 @@ The current implementation intentionally provides contracts and a no-backend bou
 - Intel VMX backend: VMXON, VMCS setup, VMLAUNCH/VMRESUME, VM-exit handlers, EPT, VPID, INVEPT.
 - AMD SVM backend: VMCB, VMRUN, intercept vectors, NPT, ASIDs, INVLPGA, MSRPM/IOPM.
 - ARM64 backend: EL2 entry, vectors, HCR_EL2, VTCR_EL2, VTTBR_EL2, Stage-2 tables, GIC virtualization.
+- ARM64 GIC plan: prefer GICv3 when present, keep GICv2 as a compatibility target, save VGIC list-register state with vCPU state, and treat missing GIC virtualization as a typed unsupported condition.
 - Memory manager and Stage-2 permission manager.
 - Interrupt/device/IOMMU isolation.
 - Guest lifecycle, SMP, crash recovery, secure update.

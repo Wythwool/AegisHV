@@ -19,11 +19,14 @@
 | EPT/NPT/Stage-2 permission enforcement | Not implemented |
 | AMD SVM lab models | Implemented as library models; bare-metal execution is not implemented |
 | SEV, SEV-ES, SEV-SNP guest inspection | Degraded or unsupported; no bypass is claimed |
+| ARM64 EL2 lab models | Implemented as library models; bare-metal execution is not implemented |
+| pKVM, Arm CCA, protected guest memory | Degraded or unsupported; no introspection claim is made |
 
 ## Guest and platform caveats
 
 - SEV/SEV-ES/SEV-SNP, TDX, VBS/HVCI, pKVM and similar protections can limit or block memory introspection.
 - SEV can make guest memory unavailable to host inspection; SEV-ES can make register state unavailable; SEV-SNP adds integrity and isolation checks that must be treated as a boundary. AegisHV does not claim a bypass for these protections.
+- pKVM, Arm CCA realms, vendor protected guests, and similar ARM64 protections can make protected guest memory unavailable. AegisHV does not claim introspection for protected guest memory.
 - Huge pages, live migration, snapshots, nested virtualization and multi-tenant QMP policies need dedicated test coverage before stronger deployment claims.
 - Tracefs text formats depend on kernel tracepoint formatting. Use replay and format autodiscovery tests for every kernel family you support.
 

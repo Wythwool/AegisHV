@@ -14,6 +14,7 @@ fn workspace_lists_no_std_type1_crates() {
         "crates/aegishv-hypervisor-core",
         "crates/aegishv-event-abi",
         "crates/aegishv-arch-x86",
+        "crates/aegishv-arch-arm64",
     ] {
         assert!(cargo.contains(member), "workspace is missing {member}");
     }
@@ -172,4 +173,52 @@ fn svm_lab_docs_and_script_keep_hardware_scope_explicit() {
     assert!(testing.contains("aegishv-arch-x86::svm"));
     assert!(testing.contains("do not execute privileged SVM instructions"));
     assert!(testing.contains(".github/workflows/amd-hardware.yml"));
+}
+
+#[test]
+fn arm64_lab_docs_and_script_keep_hardware_scope_explicit() {
+    let doc = read_repo_file("docs/ARM64_LAB.md");
+    let script = read_repo_file("scripts/arm64-el2-lab-smoke.sh");
+    let testing = read_repo_file("docs/TESTING.md");
+    let adr = read_repo_file("docs/adr/0004-arm64-el2-boot.md");
+    let gic = read_repo_file("docs/adr/0005-arm64-gic-virtualization.md");
+    let index = read_repo_file("docs/adr/README.md");
+
+    for required in [
+        "ARM64 EL2 Lab Boundary",
+        "does not ship a bootable ARM64 type-1 image",
+        "EL2 vector table skeleton",
+        "VTCR_EL2 and VTTBR_EL2",
+        "does not treat FAR_EL2 as a guest physical address by itself",
+        "pKVM, Arm CCA realms",
+        "does not prove that AegisHV boots as an ARM64 type-1 hypervisor",
+    ] {
+        assert!(
+            doc.contains(required),
+            "ARM64 lab doc is missing: {required}"
+        );
+    }
+
+    for required in [
+        "AEGISHV_ARM64_BOOT_IMAGE",
+        "AEGISHV_ARM64_REQUIRE_KVM",
+        "/dev/kvm is required",
+        "qemu-system-aarch64",
+        "virt,virtualization=on,gic-version=3",
+        "exit 78",
+    ] {
+        assert!(
+            script.contains(required),
+            "ARM64 lab script is missing: {required}"
+        );
+    }
+
+    assert!(testing.contains("aegishv-arch-arm64"));
+    assert!(testing.contains("do not execute privileged EL2 instructions"));
+    assert!(adr.contains("firmware or bootloader must enter AegisHV at EL2"));
+    assert!(adr.contains("does not claim ARM64 EL2 runtime support"));
+    assert!(gic.contains("GICv3 is the preferred target"));
+    assert!(gic.contains("does not implement live interrupt injection"));
+    assert!(index.contains("ADR-0004"));
+    assert!(index.contains("ADR-0005"));
 }

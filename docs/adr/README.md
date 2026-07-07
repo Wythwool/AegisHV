@@ -19,3 +19,5 @@ Each ADR uses these sections:
 | [ADR-0001](0001-record-architecture-decisions.md) | Accepted | Record architecture decisions as ADRs |
 | [ADR-0002](0002-type1-boot-strategy.md) | Accepted | Type-1 target boot strategy |
 | [ADR-0003](0003-x86-ap-startup.md) | Accepted | x86 application processor startup |
+| [ADR-0004](0004-arm64-el2-boot.md) | Accepted | ARM64 EL2 boot boundary |
+| [ADR-0005](0005-arm64-gic-virtualization.md) | Accepted | ARM64 GIC virtualization strategy |
