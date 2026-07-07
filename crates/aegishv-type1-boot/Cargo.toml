@@ -1,0 +1,14 @@
+[package]
+name = "aegishv-type1-boot"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.81"
+license = "MIT"
+description = "no_std AegisHV boot handoff and layout checks for the planned type-1 runtime path"
+
+[features]
+default = []
+std = ["aegishv-hypervisor-core/std"]
+
+[dependencies]
+aegishv-hypervisor-core = { path = "../aegishv-hypervisor-core" }

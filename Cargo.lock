@@ -37,3 +37,10 @@ dependencies = [
 [[package]]
 name = "aegishv-hypervisor-core"
 version = "0.1.0"
+
+[[package]]
+name = "aegishv-type1-boot"
+version = "0.1.0"
+dependencies = [
+ "aegishv-hypervisor-core",
+]
