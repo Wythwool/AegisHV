@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Added local management CLI commands for version, health, policy review, policy dry-runs, and action dry-runs.
+- Added role, audit, approval, policy bundle, dump evidence, and startup hash helper primitives.
+- Added benchmark helper scripts for replay ingest, W^X state handling, offline VMI translation, and synthetic trap transitions.
+- Added hardware, performance, security, release, VMI alpha, and type-1 readiness gate documents.
+- Expanded synthetic Linux and Windows VMI fixture corpus.
+
 ## 0.4.0
 
 - Replaced the bootstrap lock marker with a committed production `Cargo.lock`.

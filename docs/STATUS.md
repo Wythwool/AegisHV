@@ -15,6 +15,8 @@ This tree is a hardened host-side KVM sensor and a cleaner platform for the next
 - Snapshot schema version 2 with tracefs diagnostics and bounded VM inventory from configured identity discovery.
 - Local management CLI for version, health, policy explanation, policy dry-runs, and action dry-runs. It does not start a remote management service.
 - Library primitives for role checks, bounded append-only audit records, manual approval files, policy bundle verification, startup hash events, and dump evidence state separation.
+- Benchmark helper scripts for replay ingest, W^X state, offline VMI translation, and synthetic trap-controller timing. They do not commit benchmark result numbers.
+- Release gate documents for hardware coverage, performance evidence, security review, host sensor release scope, VMI alpha scope, and type-1 readiness.
 - Unsupported/unrelated trace lines separated from malformed `kvm_exit` parse errors.
 - Queue-loss watermark propagation through `data_loss=true` on the next emitted event, with aggregate drop counts and exact emitted-sequence gaps only when the runtime can prove the gap.
 - Page-aligned W^X correlation scoped by VM identity and address space (`cr3/asid/vmid/vpid`), with detector cooldown separate from policy cooldown.
