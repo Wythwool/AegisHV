@@ -69,6 +69,26 @@ scripts/vmx-linux-lab-smoke.sh --print-command
 
 The script refuses missing artifacts, missing QEMU, and missing KVM when KVM is required. It is not wired into normal CI and does not prove type-1 support.
 
+## AMD SVM Lab Models
+
+The AMD SVM model code lives in `aegishv-arch-x86::svm` and is covered by normal locked Rust tests:
+
+```bash
+cargo test --locked -p aegishv-arch-x86 --all-features svm::
+```
+
+The tests cover SVM feature gates, EFER.SVME value handling, VMCB layout and accessors, SVM instruction facades, CPUID/MSR/CR/IO/HLT/PAUSE intercept handling, NPT mapping and protected hypervisor ranges, nested page fault routing, ASID allocation, INVLPGA planning, execute/write trap windows, and tiny guest lab validation. They do not execute privileged SVM instructions.
+
+`scripts/svm-amd-lab-smoke.sh` is opt-in lab plumbing for AMD host checks and a future boot image:
+
+```bash
+scripts/svm-amd-lab-smoke.sh --check-host --log-dir /tmp/aegishv-amd-lab
+```
+
+The script refuses missing CPU `svm` flags, missing `/dev/kvm` when required, missing QEMU, and missing boot artifacts for command printing or execution. It is not wired into normal CI and does not prove type-1 support.
+
+`.github/workflows/amd-hardware.yml` is a manual AMD workflow. It uses `workflow_dispatch` only, runs on a user-selected self-hosted AMD runner, runs the SVM model tests, can run the host prerequisite check, and uploads `/tmp/aegishv-amd-lab` logs for review. It is separate from normal PR and push CI.
+
 ## Deterministic Replay
 
 Use `--deterministic-replay` only with `--replay` when generating golden JSONL fixtures. It freezes event timestamps, monotonic time, event sequence, event IDs, action IDs, and host/sensor/tenant IDs. Live tracefs runs reject this flag; AegisHV does not fake deterministic timing for live runtime output.

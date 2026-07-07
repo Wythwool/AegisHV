@@ -135,3 +135,41 @@ fn vmx_lab_docs_and_script_keep_hardware_scope_explicit() {
     assert!(testing.contains("aegishv-arch-x86::vmx"));
     assert!(testing.contains("do not execute privileged VMX instructions"));
 }
+
+#[test]
+fn svm_lab_docs_and_script_keep_hardware_scope_explicit() {
+    let doc = read_repo_file("docs/SVM_LAB.md");
+    let script = read_repo_file("scripts/svm-amd-lab-smoke.sh");
+    let testing = read_repo_file("docs/TESTING.md");
+
+    for required in [
+        "AMD SVM Lab Boundary",
+        "does not ship a bootable type-1 image",
+        "VMCB control and state-save structures",
+        "Required Intercept Coverage",
+        "nested page fault",
+        "SEV, SEV-ES, and SEV-SNP",
+        "does not prove that AegisHV boots as a type-1 hypervisor",
+    ] {
+        assert!(doc.contains(required), "SVM lab doc is missing: {required}");
+    }
+
+    for required in [
+        "AEGISHV_TYPE1_BOOT_IMAGE",
+        "AEGISHV_SVM_LAB_KERNEL",
+        "AEGISHV_SVM_LAB_REQUIRE_KVM",
+        "CPU flags do not report AMD SVM",
+        "/dev/kvm is required",
+        "host,+svm",
+        "exit 78",
+    ] {
+        assert!(
+            script.contains(required),
+            "SVM AMD lab script is missing: {required}"
+        );
+    }
+
+    assert!(testing.contains("aegishv-arch-x86::svm"));
+    assert!(testing.contains("do not execute privileged SVM instructions"));
+    assert!(testing.contains(".github/workflows/amd-hardware.yml"));
+}

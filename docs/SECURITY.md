@@ -28,6 +28,7 @@
 - cargo-deny policy in `deny.toml` for advisories, yanked crates, duplicate versions, wildcard dependency requirements, licenses, registries, and git sources.
 - Release workflow with checksums, SBOM generation, Sigstore bundle signing, and GitHub SLSA provenance attestations.
 - Event output redaction policy in `docs/EVENT_REDACTION.md`; runtime redaction is not implemented.
+- AMD SEV, SEV-ES, and SEV-SNP are treated as confidentiality and integrity boundaries. The SVM lab model must report degraded or unsupported visibility when encrypted guest state prevents inspection; it must not claim a bypass.
 
 ## Still missing for a regulated deployment
 
@@ -35,6 +36,7 @@
 - mTLS/authn/authz for remote outputs.
 - Tamper-evident local audit log.
 - Runtime event redaction controls.
+- Live encrypted-guest handling policy for SEV, SEV-ES, SEV-SNP, TDX, and similar protections.
 - Full secret-management story.
 - Reproducible build verification beyond CI.
 - Third-party dependency license review beyond cargo-deny's configured checks.
