@@ -125,3 +125,93 @@ fn hardware_workflow_does_not_claim_unimplemented_coverage() {
         );
     }
 }
+
+#[test]
+fn amd_hardware_workflow_is_manual_and_uploads_review_logs() {
+    let amd = read_repo_file(".github/workflows/amd-hardware.yml");
+    let ci = read_repo_file(".github/workflows/ci.yml");
+    let testing = read_repo_file("docs/TESTING.md");
+
+    for required in [
+        "name: opt-in AMD SVM checks",
+        "workflow_dispatch:",
+        "runner_label:",
+        "default: \"aegishv-hardware-amd\"",
+        "run_svm_host_check:",
+        "default: true",
+        "permissions:",
+        "contents: read",
+        "runs-on: ${{ inputs.runner_label }}",
+        "cargo test --locked -p aegishv-arch-x86 --all-features svm::",
+        "scripts/svm-amd-lab-smoke.sh --check-host",
+        "actions/upload-artifact@v4",
+        "aegishv-amd-lab-logs",
+    ] {
+        assert!(
+            amd.contains(required),
+            "AMD hardware workflow is missing manual guard, check, or upload: {required}"
+        );
+    }
+
+    for forbidden in ["pull_request:", "push:", "schedule:", "workflow_run:"] {
+        assert!(
+            !amd.contains(forbidden),
+            "AMD hardware workflow must not run from normal CI events: {forbidden}"
+        );
+    }
+
+    assert!(
+        !ci.contains("amd-hardware.yml")
+            && !ci.contains("aegishv-hardware-amd")
+            && !ci.contains("svm-amd-lab-smoke.sh"),
+        "normal PR CI must not depend on AMD hardware workflow"
+    );
+
+    for required in [
+        "manual AMD workflow",
+        "`workflow_dispatch` only",
+        "self-hosted AMD runner",
+        "uploads `/tmp/aegishv-amd-lab` logs",
+        "separate from normal PR and push CI",
+    ] {
+        assert!(
+            testing.contains(required),
+            "docs/TESTING.md is missing AMD workflow guidance: {required}"
+        );
+    }
+}
+
+#[test]
+fn amd_docs_record_sev_limits_without_bypass_claims() {
+    let compatibility = read_repo_file("docs/COMPATIBILITY.md");
+    let security = read_repo_file("docs/SECURITY.md");
+    let combined = format!("{compatibility}\n{security}");
+
+    for required in [
+        "SEV, SEV-ES, SEV-SNP guest inspection",
+        "Degraded or unsupported; no bypass is claimed",
+        "SEV can make guest memory unavailable",
+        "SEV-ES can make register state unavailable",
+        "SEV-SNP adds integrity and isolation checks",
+        "must not claim a bypass",
+    ] {
+        assert!(
+            combined.contains(required),
+            "AMD SEV limits are missing required wording: {required}"
+        );
+    }
+
+    for forbidden in [
+        "bypasses SEV",
+        "bypasses SEV-ES",
+        "bypasses SEV-SNP",
+        "decrypts SEV memory",
+        "guaranteed AMD hardware support",
+        "normal PR CI requires AMD hardware",
+    ] {
+        assert!(
+            !combined.contains(forbidden),
+            "AMD docs contain an unsafe encrypted-guest or hardware claim: {forbidden}"
+        );
+    }
+}
