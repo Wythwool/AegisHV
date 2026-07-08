@@ -15,6 +15,9 @@ pub const SERIAL_LIMINE_EXECUTABLE_MISSING_MARKER: &str = "aegishv:type1:limine-
 pub const SERIAL_LIMINE_EXECUTABLE_REVISION_MARKER: &str =
     "aegishv:type1:limine-executable-revision";
 pub const SERIAL_LIMINE_EXECUTABLE_EMPTY_MARKER: &str = "aegishv:type1:limine-executable-empty";
+pub const SERIAL_LIMINE_EXECUTABLE_PHYSICAL_MARKER: &str =
+    "aegishv:type1:limine-executable-physical";
+pub const SERIAL_LIMINE_EXECUTABLE_VIRTUAL_MARKER: &str = "aegishv:type1:limine-executable-virtual";
 pub const LIMINE_BASE_REVISION: u64 = 6;
 pub const LIMINE_REQUEST_COUNT: usize = 6;
 pub const LIMINE_RESPONSE_REVISION_OFFSET: usize = 0;
@@ -151,6 +154,8 @@ pub enum LimineHandoffStatus {
     ExecutableAddressResponseMissing,
     ExecutableAddressRevisionUnsupported,
     ExecutableAddressEmpty,
+    ExecutablePhysicalBaseMismatch,
+    ExecutableVirtualBaseMismatch,
 }
 
 impl LimineHandoffStatus {
@@ -172,6 +177,8 @@ impl LimineHandoffStatus {
             Self::ExecutableAddressResponseMissing => SERIAL_LIMINE_EXECUTABLE_MISSING_MARKER,
             Self::ExecutableAddressRevisionUnsupported => SERIAL_LIMINE_EXECUTABLE_REVISION_MARKER,
             Self::ExecutableAddressEmpty => SERIAL_LIMINE_EXECUTABLE_EMPTY_MARKER,
+            Self::ExecutablePhysicalBaseMismatch => SERIAL_LIMINE_EXECUTABLE_PHYSICAL_MARKER,
+            Self::ExecutableVirtualBaseMismatch => SERIAL_LIMINE_EXECUTABLE_VIRTUAL_MARKER,
         }
     }
 }
@@ -209,6 +216,12 @@ pub const fn limine_minimal_handoff_status(handoff: LimineMinimalHandoff) -> Lim
     }
     if handoff.executable_physical_base == 0 || handoff.executable_virtual_base == 0 {
         return LimineHandoffStatus::ExecutableAddressEmpty;
+    }
+    if handoff.executable_physical_base != aegishv_type1_boot::layout::KERNEL_PHYSICAL_BASE {
+        return LimineHandoffStatus::ExecutablePhysicalBaseMismatch;
+    }
+    if handoff.executable_virtual_base != aegishv_type1_boot::layout::KERNEL_VIRTUAL_BASE {
+        return LimineHandoffStatus::ExecutableVirtualBaseMismatch;
     }
     LimineHandoffStatus::Ready
 }
@@ -324,6 +337,14 @@ mod tests {
             LimineHandoffStatus::ExecutableAddressEmpty.serial_marker(),
             "aegishv:type1:limine-executable-empty"
         );
+        assert_eq!(
+            LimineHandoffStatus::ExecutablePhysicalBaseMismatch.serial_marker(),
+            "aegishv:type1:limine-executable-physical"
+        );
+        assert_eq!(
+            LimineHandoffStatus::ExecutableVirtualBaseMismatch.serial_marker(),
+            "aegishv:type1:limine-executable-virtual"
+        );
     }
 
     #[test]
@@ -403,7 +424,7 @@ mod tests {
             memmap_entries: 0xffff_8000_0010_0000,
             executable_address_response: 1,
             executable_address_revision: 0,
-            executable_physical_base: 0x200000,
+            executable_physical_base: aegishv_type1_boot::layout::KERNEL_PHYSICAL_BASE,
             executable_virtual_base: 0xffff_ffff_8020_0000,
         };
 
@@ -485,6 +506,20 @@ mod tests {
                 ..READY_HANDOFF
             }),
             LimineHandoffStatus::ExecutableAddressEmpty
+        );
+        assert_eq!(
+            limine_minimal_handoff_status(LimineMinimalHandoff {
+                executable_physical_base: 0x30_0000,
+                ..READY_HANDOFF
+            }),
+            LimineHandoffStatus::ExecutablePhysicalBaseMismatch
+        );
+        assert_eq!(
+            limine_minimal_handoff_status(LimineMinimalHandoff {
+                executable_virtual_base: 0xffff_ffff_8030_0000,
+                ..READY_HANDOFF
+            }),
+            LimineHandoffStatus::ExecutableVirtualBaseMismatch
         );
     }
 }

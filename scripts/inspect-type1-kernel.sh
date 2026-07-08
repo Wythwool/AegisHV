@@ -21,6 +21,8 @@ limine_failure_markers=(
   "aegishv:type1:limine-executable-missing"
   "aegishv:type1:limine-executable-revision"
   "aegishv:type1:limine-executable-empty"
+  "aegishv:type1:limine-executable-physical"
+  "aegishv:type1:limine-executable-virtual"
 )
 
 usage() {

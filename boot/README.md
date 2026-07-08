@@ -15,7 +15,7 @@ The artifacts are not wired into a bootable image build yet. The normal binary r
 
 `scripts/plan-type1-image.sh` validates the checked-in boot inputs and writes the current kernel ELF, output image, and QEMU serial-marker contract to `target/type1/aegishv-type1-image-plan.txt`. That manifest is not QEMU boot evidence.
 
-`scripts/build-type1-kernel.sh` builds the minimal `x86_64-unknown-none` kernel ELF to `target/type1/aegishv-type1.elf`. The ELF writes the early success marker only after the minimal Limine handoff fields, including response revisions, HHDM offset, memory-map entries pointer, and executable address bases, are present; otherwise it writes a missing-handoff marker plus a status-specific marker and halts. It is not packaged as a bootable ISO yet.
+`scripts/build-type1-kernel.sh` builds the minimal `x86_64-unknown-none` kernel ELF to `target/type1/aegishv-type1.elf`. The ELF writes the early success marker only after the minimal Limine handoff fields, including response revisions, HHDM offset, memory-map entries pointer, and executable address bases matching the linker layout, are present; otherwise it writes a missing-handoff marker plus a status-specific marker and halts. It is not packaged as a bootable ISO yet.
 
 `scripts/inspect-type1-kernel.sh` checks the built ELF for the expected entry address and `.limine_requests` section when `llvm-readobj` is available, and always checks that the success marker, missing-handoff marker, and status-specific handoff markers are present.
 

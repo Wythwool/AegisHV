@@ -35,6 +35,8 @@ fn kernel_inspection_script_checks_entry_and_serial_marker() {
             "aegishv:type1:limine-memmap-entries",
             "aegishv:type1:limine-executable-revision",
             "aegishv:type1:limine-executable-empty",
+            "aegishv:type1:limine-executable-physical",
+            "aegishv:type1:limine-executable-virtual",
             "limine_missing_marker_present=true",
             "limine_failure_markers_present=true",
             "not QEMU boot evidence",
