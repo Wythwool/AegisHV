@@ -1,6 +1,8 @@
 #![cfg_attr(target_os = "none", no_std)]
 #![cfg_attr(target_os = "none", no_main)]
 
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+use core::arch::x86_64::__cpuid_count;
 #[cfg(target_os = "none")]
 use core::arch::{asm, global_asm};
 #[cfg(target_os = "none")]
@@ -92,14 +94,77 @@ pub extern "C" fn aegishv_type1_rust_entry() -> ! {
 
 #[cfg(target_os = "none")]
 fn runtime_backend_marker(handoff: aegishv_type1_kernel::LimineMinimalHandoff) -> &'static str {
+    let capability_report = aegishv_type1_kernel::type1_capabilities_from_snapshot(unsafe {
+        read_type1_cpu_snapshot()
+    });
     match aegishv_type1_kernel::plan_type1_runtime(
         handoff,
         aegishv_type1_kernel::Type1BackendRequest::Auto,
-        aegishv_type1_kernel::Type1ArchCapabilities::none(),
+        capability_report.capabilities,
     ) {
         Ok(plan) => plan.backend.serial_marker(),
         Err(_) => aegishv_type1_kernel::SERIAL_RUNTIME_PLAN_ERROR_MARKER,
     }
+}
+
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+unsafe fn read_type1_cpu_snapshot() -> aegishv_type1_kernel::Type1CpuSnapshot {
+    let vendor_leaf = __cpuid_count(aegishv_type1_kernel::CPUID_VENDOR_LEAF, 0);
+    let vendor = aegishv_type1_kernel::Type1CpuVendor::from_cpuid0(
+        vendor_leaf.ebx,
+        vendor_leaf.ecx,
+        vendor_leaf.edx,
+    );
+    let feature_leaf = __cpuid_count(aegishv_type1_kernel::CPUID_FEATURE_LEAF, 0);
+    let feature_control_msr = if vendor == aegishv_type1_kernel::Type1CpuVendor::Intel
+        && feature_leaf.ecx & aegishv_arch_x86::vmx::features::CPUID_LEAF1_ECX_VMX != 0
+    {
+        read_msr(aegishv_type1_kernel::IA32_FEATURE_CONTROL_MSR)
+    } else {
+        0
+    };
+
+    let extended_limit = __cpuid_count(aegishv_type1_kernel::CPUID_EXTENDED_LIMIT_LEAF, 0);
+    let extended_feature =
+        if extended_limit.eax >= aegishv_type1_kernel::CPUID_EXTENDED_FEATURE_LEAF {
+            __cpuid_count(aegishv_type1_kernel::CPUID_EXTENDED_FEATURE_LEAF, 0)
+        } else {
+            __cpuid_count(0, 0)
+        };
+    let svm_leaf = if extended_limit.eax >= aegishv_type1_kernel::CPUID_SVM_FEATURE_LEAF {
+        __cpuid_count(aegishv_type1_kernel::CPUID_SVM_FEATURE_LEAF, 0)
+    } else {
+        __cpuid_count(0, 0)
+    };
+
+    aegishv_type1_kernel::Type1CpuSnapshot::from_raw(
+        vendor,
+        feature_leaf.ecx,
+        feature_control_msr,
+        extended_limit.eax,
+        extended_feature.ecx,
+        svm_leaf.ebx,
+        svm_leaf.edx,
+    )
+}
+
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+unsafe fn read_msr(msr: u32) -> u64 {
+    let low: u32;
+    let high: u32;
+    asm!(
+        "rdmsr",
+        in("ecx") msr,
+        out("eax") low,
+        out("edx") high,
+        options(nomem, nostack, preserves_flags)
+    );
+    ((high as u64) << 32) | low as u64
+}
+
+#[cfg(all(target_os = "none", not(target_arch = "x86_64")))]
+unsafe fn read_type1_cpu_snapshot() -> aegishv_type1_kernel::Type1CpuSnapshot {
+    aegishv_type1_kernel::Type1CpuSnapshot::empty()
 }
 
 #[cfg(target_os = "none")]
