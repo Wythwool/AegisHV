@@ -9,7 +9,7 @@ This document records the planned type-1 boot boundary now present in the reposi
 - `boot/linker/x86_64-type1.ld` records the planned x86_64 ELF layout, Limine request section, and boot stack symbols.
 - `boot/x86_64/entry.S` records the first entry symbol, masks interrupts, clears direction state, zeroes `.bss`, aligns the boot stack, and keeps a halt-loop fallback for early bring-up.
 - `scripts/build-type1-skeleton.sh` validates the boot crate and writes a review manifest under `target/type1`.
-- `scripts/plan-type1-image.sh` validates the current image inputs and records the QEMU serial-marker contract.
+- `scripts/plan-type1-image.sh` validates the current image inputs and records the QEMU serial-marker and kernel-base contract.
 - `crates/aegishv-type1-kernel` builds a minimal `x86_64-unknown-none` kernel ELF that carries the first Limine request block, writes the planned success marker only after the minimal Limine handoff has accepted base revision, response revisions, HHDM offset, nonempty memory-map with entries pointer, and executable-address bases matching the linker layout, writes specific fallback markers for incomplete handoffs, and halts when its entry path is reached.
 - `scripts/build-type1-kernel.sh` writes `target/type1/aegishv-type1.elf` and a kernel build manifest.
 - `scripts/inspect-type1-kernel.sh` records local ELF inspection for the expected entry address, section layout, boot stack size, success marker bytes, missing-handoff marker bytes, and status-specific handoff marker bytes.

@@ -54,6 +54,8 @@ fn image_plan_script_writes_review_manifest_without_boot_claims() {
             "kernel_elf_present=false",
             "output_image=target/type1/aegishv-type1.iso",
             "qemu_expected_serial=aegishv:type1:halt",
+            "expected_kernel_physical_base=0x00200000",
+            "expected_kernel_virtual_base=0xFFFFFFFF80200000",
             "not a boot evidence record",
         ],
     );

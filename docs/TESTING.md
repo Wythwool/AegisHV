@@ -65,7 +65,7 @@ They cover memory-map validation, physical page allocation, page ownership, huge
 
 `scripts/build-type1-skeleton.sh` validates the planned boot handoff crate and writes `target/type1/aegishv-type1-build-plan.txt`. The manifest is review material only and does not prove type-1 support.
 
-`scripts/plan-type1-image.sh` validates the checked-in Limine config, linker script, and entry stub, then writes `target/type1/aegishv-type1-image-plan.txt`. The helper records the future kernel ELF path, output image path, and `AEGISHV_TYPE1_EXPECTED_SERIAL` marker. It exits with code 66 when `--require-kernel` is used before the kernel ELF exists.
+`scripts/plan-type1-image.sh` validates the checked-in Limine config, linker script, and entry stub, then writes `target/type1/aegishv-type1-image-plan.txt`. The helper records the future kernel ELF path, output image path, expected kernel bases, and `AEGISHV_TYPE1_EXPECTED_SERIAL` marker. It exits with code 66 when `--require-kernel` is used before the kernel ELF exists.
 
 `scripts/build-type1-kernel.sh` builds the minimal `x86_64-unknown-none` kernel ELF and writes `target/type1/aegishv-type1-kernel-build.txt`. It requires the Rust `x86_64-unknown-none` target, builds with static relocation and the kernel code model, and records `bootable_image=false` and `qemu_evidence=false`; the output is not a bootable ISO. The kernel emits the configured success marker only after Limine base revision is accepted and HHDM, memory-map, and executable-address responses have revision `0` plus the required offset, entries pointer, count, and executable bases matching the linker layout. Failed handoff checks emit the generic missing-handoff marker followed by a status-specific marker.
 

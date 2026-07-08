@@ -8,6 +8,8 @@ out_dir="${AEGISHV_TYPE1_OUT:-target/type1}"
 kernel_elf="${AEGISHV_TYPE1_KERNEL_ELF:-$out_dir/aegishv-type1.elf}"
 manifest="$out_dir/aegishv-type1-kernel-build.txt"
 linker_script="boot/linker/x86_64-type1.ld"
+expected_kernel_physical_base="${AEGISHV_TYPE1_EXPECTED_PHYSICAL_BASE:-0x00200000}"
+expected_kernel_virtual_base="${AEGISHV_TYPE1_EXPECTED_VIRTUAL_BASE:-0xFFFFFFFF80200000}"
 
 usage() {
   cat >&2 <<'USAGE'
@@ -66,6 +68,8 @@ kernel_elf=$kernel_elf
 kernel_elf_present=true
 target=$target
 linker_script=$linker_script
+expected_kernel_physical_base=$expected_kernel_physical_base
+expected_kernel_virtual_base=$expected_kernel_virtual_base
 relocation_model=static
 code_model=kernel
 serial_marker=aegishv:type1:halt

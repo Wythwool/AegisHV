@@ -21,6 +21,8 @@ limine_config="boot/limine/limine.conf"
 linker_script="boot/linker/x86_64-type1.ld"
 entry_stub="boot/x86_64/entry.S"
 expected_serial="${AEGISHV_TYPE1_EXPECTED_SERIAL:-aegishv:type1:halt}"
+expected_kernel_physical_base="${AEGISHV_TYPE1_EXPECTED_PHYSICAL_BASE:-0x00200000}"
+expected_kernel_virtual_base="${AEGISHV_TYPE1_EXPECTED_VIRTUAL_BASE:-0xFFFFFFFF80200000}"
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -86,6 +88,8 @@ require_nonempty "$manifest" "manifest path"
 require_nonempty "$kernel_elf" "kernel ELF path"
 require_nonempty "$output_image" "output image path"
 require_nonempty "$expected_serial" "expected serial marker"
+require_nonempty "$expected_kernel_physical_base" "expected physical base"
+require_nonempty "$expected_kernel_virtual_base" "expected virtual base"
 
 require_suffix "$kernel_elf" ".elf" "kernel ELF path"
 require_suffix "$output_image" ".iso" "output image path"
@@ -117,6 +121,8 @@ linker_script=$linker_script
 x86_entry_stub=$entry_stub
 qemu_smoke=scripts/type1-qemu-smoke.sh
 qemu_expected_serial=$expected_serial
+expected_kernel_physical_base=$expected_kernel_physical_base
+expected_kernel_virtual_base=$expected_kernel_virtual_base
 
 This manifest records the current image inputs and QEMU evidence contract. It is not a boot evidence record.
 PLAN
