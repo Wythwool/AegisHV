@@ -47,6 +47,7 @@ fn kernel_entry_records_serial_marker_and_halt_path() {
             "LIMINE_MEMMAP_REQUEST_ID",
             "LIMINE_EXECUTABLE_ADDRESS_REQUEST_ID",
             "LimineRequest",
+            "LimineMinimalHandoff",
             "marker_line",
         ],
     );
@@ -61,6 +62,7 @@ fn kernel_entry_records_serial_marker_and_halt_path() {
             "aegishv_type1_rust_entry",
             "limine_minimal_handoff_present",
             "limine_minimal_handoff_status",
+            "LIMINE_HHDM_OFFSET_OFFSET",
             "LIMINE_MEMMAP_ENTRY_COUNT_OFFSET",
             "LIMINE_EXECUTABLE_PHYSICAL_BASE_OFFSET",
             "LIMINE_EXECUTABLE_VIRTUAL_BASE_OFFSET",

@@ -120,6 +120,14 @@ unsafe fn limine_minimal_handoff_present() -> bool {
     let executable_address_response =
         core::ptr::addr_of!(LIMINE_EXECUTABLE_ADDRESS_REQUEST.response).read_volatile();
 
+    let hhdm_offset = if hhdm_response == 0 {
+        0
+    } else {
+        read_limine_response_u64(
+            hhdm_response,
+            aegishv_type1_kernel::LIMINE_HHDM_OFFSET_OFFSET,
+        )
+    };
     let memmap_entry_count = if memmap_response == 0 {
         0
     } else {
@@ -146,13 +154,16 @@ unsafe fn limine_minimal_handoff_present() -> bool {
     };
 
     aegishv_type1_kernel::limine_minimal_handoff_status(
-        base_revision,
-        hhdm_response,
-        memmap_response,
-        memmap_entry_count,
-        executable_address_response,
-        executable_physical_base,
-        executable_virtual_base,
+        aegishv_type1_kernel::LimineMinimalHandoff {
+            base_revision_value: base_revision,
+            hhdm_response,
+            hhdm_offset,
+            memmap_response,
+            memmap_entry_count,
+            executable_address_response,
+            executable_physical_base,
+            executable_virtual_base,
+        },
     )
     .is_ready()
 }
