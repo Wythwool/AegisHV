@@ -67,7 +67,7 @@ They cover memory-map validation, physical page allocation, page ownership, huge
 
 `scripts/plan-type1-image.sh` validates the checked-in Limine config, linker script, and entry stub, then writes `target/type1/aegishv-type1-image-plan.txt`. The helper records the future kernel ELF path, output image path, and `AEGISHV_TYPE1_EXPECTED_SERIAL` marker. It exits with code 66 when `--require-kernel` is used before the kernel ELF exists.
 
-`scripts/build-type1-kernel.sh` builds the minimal `x86_64-unknown-none` kernel ELF and writes `target/type1/aegishv-type1-kernel-build.txt`. It requires the Rust `x86_64-unknown-none` target and records `bootable_image=false` and `qemu_evidence=false`; the output is not a bootable ISO. The kernel emits the configured success marker only after Limine base-revision, HHDM, memory-map, and executable-address responses are present.
+`scripts/build-type1-kernel.sh` builds the minimal `x86_64-unknown-none` kernel ELF and writes `target/type1/aegishv-type1-kernel-build.txt`. It requires the Rust `x86_64-unknown-none` target, builds with static relocation and the kernel code model, and records `bootable_image=false` and `qemu_evidence=false`; the output is not a bootable ISO. The kernel emits the configured success marker only after Limine base-revision, HHDM, memory-map, and executable-address responses are present.
 
 `scripts/inspect-type1-kernel.sh` checks the built kernel ELF. When `llvm-readobj` is available it verifies the expected entry address and the `.limine_requests` section, and it always checks the `aegishv:type1:halt` marker bytes. It writes `target/type1/aegishv-type1-kernel-inspect.txt`.
 

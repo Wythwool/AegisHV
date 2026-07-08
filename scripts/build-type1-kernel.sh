@@ -44,6 +44,8 @@ cargo rustc \
   --release \
   -- \
   -C panic=abort \
+  -C relocation-model=static \
+  -C code-model=kernel \
   -C strip=none \
   -C link-arg=-T"$linker_script"
 
@@ -64,6 +66,8 @@ kernel_elf=$kernel_elf
 kernel_elf_present=true
 target=$target
 linker_script=$linker_script
+relocation_model=static
+code_model=kernel
 serial_marker=aegishv:type1:halt
 inspect_manifest=$inspect_manifest
 bootable_image=false
