@@ -35,7 +35,9 @@ fn workspace_includes_boot_handoff_crate_and_lockfile_entry() {
             "TYPE1_BOOT_ABI_VERSION",
             "TYPE1_BOOT_MAGIC",
             "pub mod handoff",
+            "pub mod image",
             "pub mod limine",
+            "validate_boot_image_plan",
             "#![deny(unsafe_code)]",
         ],
     );
@@ -98,6 +100,8 @@ fn boot_skeleton_script_writes_manifest_without_claiming_image_output() {
             "bootable_image=false",
             "runtime_backend=false",
             "aegishv-type1-build-plan.txt",
+            "plan-type1-image.sh",
+            "image_plan_manifest=",
             "not a bootable hypervisor image",
         ],
     );

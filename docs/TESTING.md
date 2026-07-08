@@ -65,6 +65,8 @@ They cover memory-map validation, physical page allocation, page ownership, huge
 
 `scripts/build-type1-skeleton.sh` validates the planned boot handoff crate and writes `target/type1/aegishv-type1-build-plan.txt`. The manifest is review material only and does not prove type-1 support.
 
+`scripts/plan-type1-image.sh` validates the checked-in Limine config, linker script, and entry stub, then writes `target/type1/aegishv-type1-image-plan.txt`. The helper records the future kernel ELF path, output image path, and `AEGISHV_TYPE1_EXPECTED_SERIAL` marker. It exits with code 66 when `--require-kernel` is used before the kernel ELF exists.
+
 Device model tests are also normal locked Rust tests:
 
 ```bash
@@ -73,13 +75,14 @@ cargo test --locked -p aegishv-devices --all-features
 
 They cover virtio-mmio feature negotiation and queue validation, bounded virtio-console queues, read-only virtio-blk bounds checks, write refusal, and virtio-net quarantine decisions. They do not execute MMIO exits or run a service VM.
 
-`scripts/type1-qemu-smoke.sh` is opt-in lab plumbing for a boot image once one exists. The repository does not currently ship `./target/type1/aegishv-type1.elf`.
+`scripts/type1-qemu-smoke.sh` is opt-in lab plumbing for a boot image once one exists. The repository does not currently ship `./target/type1/aegishv-type1.elf`. A successful future smoke must capture the configured serial marker, defaulting to `aegishv:type1:halt`.
 
 ```bash
+AEGISHV_TYPE1_EXPECTED_SERIAL=aegishv:type1:halt \
 scripts/type1-qemu-smoke.sh --print-command ./target/type1/aegishv-type1.elf
 ```
 
-The script exits with a clear error when the image is missing. It is not wired into normal CI.
+The script exits with a clear error when the image is missing, when QEMU is missing, or when the serial marker is not observed. It is not wired into normal CI.
 
 ## Intel VMX Lab Models
 

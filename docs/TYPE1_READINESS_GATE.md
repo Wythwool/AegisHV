@@ -6,6 +6,7 @@ This gate prevents a planned type-1 path from being described as implemented too
 
 - Bootable image and linker layout.
 - CPU entry path for at least one architecture.
+- Serial marker evidence from an opt-in QEMU boot path.
 - Early allocator and per-CPU state.
 - VM creation and vCPU entry path.
 - Controlled guest exit and shutdown path.
@@ -25,7 +26,7 @@ This gate prevents a planned type-1 path from being described as implemented too
 
 ## Current Result
 
-The current repository does not pass this gate. It has useful no-std model crates, lab model tests, device isolation models, opt-in scripts, and a planned boot skeleton, but no bootable type-1 runtime.
+The current repository does not pass this gate. It has useful no-std model crates, lab model tests, device isolation models, opt-in scripts, a planned boot skeleton, and a type-1 image-plan manifest, but no bootable type-1 runtime.
 
 ## Wording Rule
 

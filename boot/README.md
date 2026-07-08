@@ -11,3 +11,5 @@ The artifacts are not wired into a bootable image build yet. The normal binary r
 - `x86_64/entry.S` records the first entry symbol and a halt loop for early bring-up.
 
 `scripts/build-type1-skeleton.sh` validates the boot handoff crate and writes a manifest under `target/type1`. That manifest is review material, not a bootable hypervisor image.
+
+`scripts/plan-type1-image.sh` validates the checked-in boot inputs and writes the current kernel ELF, output image, and QEMU serial-marker contract to `target/type1/aegishv-type1-image-plan.txt`. That manifest is not QEMU boot evidence.

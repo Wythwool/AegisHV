@@ -6,8 +6,9 @@ The type-1 lab milestone is blocked until `docs/TYPE1_READINESS_GATE.md` passes.
 
 - boot image path and checksum;
 - boot boundary manifest from `scripts/build-type1-skeleton.sh`;
+- image input manifest from `scripts/plan-type1-image.sh`;
 - QEMU command line;
-- serial log;
+- serial log containing the expected marker;
 - VM-exit trace;
 - shutdown or crash record;
 - host CPU, firmware, and QEMU versions;

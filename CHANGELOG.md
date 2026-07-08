@@ -7,6 +7,7 @@
 - Added benchmark helper scripts for replay ingest, W^X state handling, offline VMI translation, and synthetic trap transitions.
 - Added hardware, performance, security, release, VMI alpha, and type-1 readiness gate documents.
 - Added planned type-1 boot boundary artifacts: boot handoff crate, Limine config, x86_64 linker script, x86_64 entry symbol, and build-plan helper.
+- Added type-1 image input planning and a QEMU serial-marker evidence contract for future boot smoke runs.
 - Expanded synthetic Linux and Windows VMI fixture corpus.
 
 ## 0.4.0
