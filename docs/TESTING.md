@@ -116,7 +116,7 @@ The Intel VMX model code lives in `aegishv-arch-x86::vmx` and is covered by norm
 cargo test --locked -p aegishv-arch-x86 --all-features
 ```
 
-The tests cover VMX feature gates, VMXON and VMCS region validation, VMCS lifecycle transitions, control-field adjustment, CPUID/MSR/CR/HLT exit handling, EPT mapping and violation decisions, VPID validation, execute/write trap windows, Monitor Trap Flag fallback behavior, and minimal Linux lab coverage validation. They do not execute privileged VMX instructions.
+The tests cover VMX feature gates, VMXON and VMCS region validation, VMCS lifecycle transitions through VMLAUNCH/VMRESUME, hardware-instruction status decoding, runtime sequencing, control-field adjustment, CPUID/MSR/CR/HLT exit handling, EPT mapping and violation decisions, VPID validation, execute/write trap windows, Monitor Trap Flag fallback behavior, and minimal Linux lab coverage validation. They do not execute privileged VMX instructions.
 
 `scripts/vmx-linux-lab-smoke.sh` is opt-in lab plumbing for a future boot image and Linux guest kernel:
 

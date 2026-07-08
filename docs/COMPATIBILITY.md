@@ -15,7 +15,7 @@
 | QEMU QMP actions | Supported for mapped sockets |
 | PMU fallback heartbeat | Supported as host-thread target discovery with unavailable hardware counters reported as `null` |
 | Guest memory introspection | Not implemented |
-| VMX/SVM/EL2 backends | Not implemented |
+| VMX/SVM/EL2 backends | Intel VMX has an instruction executor and runtime sequencing library; boot wiring and SVM/EL2 backends are not implemented |
 | EPT/NPT/Stage-2 permission enforcement | Not implemented |
 | AMD SVM lab models | Implemented as library models; bare-metal execution is not implemented |
 | SEV, SEV-ES, SEV-SNP guest inspection | Degraded or unsupported; no bypass is claimed |

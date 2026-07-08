@@ -39,14 +39,14 @@ This tree is a hardened host-side KVM sensor and a cleaner platform for the next
 - `no_std` workspace crates for type-1 boundary models: core IDs, memory-map validation, physical page allocation, crash records, per-CPU state, event and command ABI rings, VM lifecycle, vCPU scheduling, x86 serial logging, x86 page-table plans, and AP startup plan validation.
 - Planned type-1 boot skeleton artifacts: a no-std boot handoff crate, minimal x86_64 kernel ELF crate with a Limine request block, checked base-revision, response revision, HHDM offset, memory-map, executable-address response state checked against the linker layout, status-specific handoff markers, and ELF section-layout inspection, Limine config, x86_64 linker script, x86_64 entry symbol stub, image-plan helper, QEMU serial-marker contract, kernel-build helper, ISO-root staging helper, lab-tool probe, tool-gated Limine ISO builder, QEMU evidence wrapper, opt-in lab runner, and build-plan helper. Default CI does not produce a bootable image.
 - Device isolation model code for physical page ownership, huge-page split/merge planning, DMA domains, PCI inventory, ACPI DMAR/IVRS parsing, virtio-mmio state, bounded console queues, read-only block images, and virtio-net quarantine decisions.
-- Intel VMX lab models for feature detection, VMXON/VMCS region checks, VMCS lifecycle, VMX control adjustment, explicit exit handlers, EPT mapping plans, VPID/INVEPT invalidation plans, execute/write traps, Monitor Trap Flag fallback behavior, and minimal Linux lab coverage validation.
+- Intel VMX lab models for feature detection, VMXON/VMCS region checks, VMCS lifecycle, VMX control adjustment, explicit exit handlers, EPT mapping plans, VPID/INVEPT invalidation plans, execute/write traps, Monitor Trap Flag fallback behavior, minimal Linux lab coverage validation, x86_64 VMX instruction execution wrappers, and a VMXON/VMCLEAR/VMPTRLD/VMLAUNCH/VMRESUME sequencing layer.
 - AMD SVM lab models for feature detection, EFER.SVME value handling, VMCB layout checks, VMRUN/VMLOAD/VMSAVE/INVLPGA instruction facades, explicit intercept handlers, NPT map plans, nested page fault routing, ASID management, execute/write traps, and tiny guest lab validation.
 - ARM64 EL2 lab models for capability decoding, vector table validation, 4K Stage-2 map plans, VTCR/VTTBR construction, ESR/FAR/HPFAR abort decode, TLBI planning, HVC/SMC/WFI/WFE traps, execute/write traps, GIC virtualization planning, virtual timer state, and toy guest coverage validation.
 
 ## Still not implemented as runtime code
 
-- Bare-metal VMXON/VMLAUNCH/VMRESUME hypervisor backend.
-- Bare-metal execution of the Intel VMX lab models is not implemented.
+- The Intel VMX instruction/runtime layer is not wired into the type-1 kernel entry path or backed by QEMU/hardware evidence.
+- Bare-metal guest execution through the Intel VMX lab models is not implemented.
 - AMD VMRUN/VMCB backend.
 - Bare-metal execution of the AMD SVM lab models is not implemented.
 - ARM64 EL2 runtime and vectors.

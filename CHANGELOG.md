@@ -24,6 +24,7 @@
 - Recorded expected type-1 kernel bases in image-plan and kernel-build manifests.
 - Made the type-1 kernel build use static relocation and the x86_64 kernel code model explicitly.
 - Tightened the x86_64 type-1 entry stub by clearing direction state and zeroing `.bss` before the Rust entry.
+- Added Intel VMX VMLAUNCH/VMRESUME lifecycle handling, an x86_64 hardware instruction executor, and a VMX runtime sequencing layer.
 - Expanded synthetic Linux and Windows VMI fixture corpus.
 
 ## 0.4.0
