@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<'USAGE'
-usage: scripts/type1-qemu-smoke.sh [--print-command] BOOT_IMAGE
+usage: scripts/type1-qemu-smoke.sh [--print-command] [--expect-serial TEXT] BOOT_IMAGE
 
 BOOT_IMAGE may also be supplied through AEGISHV_TYPE1_BOOT_IMAGE.
 This script is opt-in lab plumbing. It does not build a boot image.
@@ -12,12 +12,17 @@ USAGE
 
 print_command=false
 image="${AEGISHV_TYPE1_BOOT_IMAGE:-}"
+expected_serial="${AEGISHV_TYPE1_EXPECTED_SERIAL:-aegishv:type1:halt}"
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --print-command)
       print_command=true
       shift
+      ;;
+    --expect-serial)
+      expected_serial="${2:-}"
+      shift 2
       ;;
     --help|-h)
       usage
@@ -32,6 +37,11 @@ done
 
 if [ -z "$image" ]; then
   usage
+  exit 64
+fi
+
+if [ -z "$expected_serial" ]; then
+  echo "type1 qemu smoke: expected serial marker is empty" >&2
   exit 64
 fi
 
@@ -67,8 +77,25 @@ if [ "$print_command" = true ]; then
   exit 0
 fi
 
+rm -f "$serial_log"
+status=0
 if command -v timeout >/dev/null 2>&1; then
-  timeout "$timeout_seconds" "${cmd[@]}"
+  timeout "$timeout_seconds" "${cmd[@]}" || status=$?
 else
-  "${cmd[@]}"
+  "${cmd[@]}" || status=$?
+fi
+
+if [ ! -f "$serial_log" ]; then
+  echo "type1 qemu smoke: serial log was not written: $serial_log" >&2
+  exit 70
+fi
+
+if ! grep -Fq "$expected_serial" "$serial_log"; then
+  echo "type1 qemu smoke: expected serial marker was not observed: $expected_serial" >&2
+  exit 70
+fi
+
+if [ "$status" -ne 0 ] && [ "$status" -ne 124 ]; then
+  echo "type1 qemu smoke: qemu exited before marker review with status $status" >&2
+  exit "$status"
 fi
