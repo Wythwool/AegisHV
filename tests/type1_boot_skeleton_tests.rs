@@ -71,6 +71,10 @@ fn boot_artifacts_define_limine_linker_and_entry_boundaries() {
         &entry,
         &[
             ".global aegishv_type1_start",
+            "cld",
+            "__aegishv_bss_start",
+            "__aegishv_bss_end",
+            "rep stosb",
             "lea __aegishv_boot_stack_top",
             "call aegishv_type1_rust_entry",
             ".Lhalt",

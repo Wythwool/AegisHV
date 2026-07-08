@@ -4,6 +4,14 @@
 
 aegishv_type1_start:
     cli
+    cld
+
+    lea __aegishv_bss_start(%rip), %rdi
+    lea __aegishv_bss_end(%rip), %rcx
+    subq %rdi, %rcx
+    xorl %eax, %eax
+    rep stosb
+
     lea __aegishv_boot_stack_top(%rip), %rsp
     andq $-16, %rsp
     call aegishv_type1_rust_entry
