@@ -69,7 +69,7 @@ They cover memory-map validation, physical page allocation, page ownership, huge
 
 `scripts/build-type1-kernel.sh` builds the minimal `x86_64-unknown-none` kernel ELF and writes `target/type1/aegishv-type1-kernel-build.txt`. It requires the Rust `x86_64-unknown-none` target and records `bootable_image=false` and `qemu_evidence=false`; the output is not a bootable ISO.
 
-`scripts/inspect-type1-kernel.sh` checks the built kernel ELF. When `llvm-readobj` is available it verifies the expected entry address, and it always checks the `aegishv:type1:halt` marker bytes. It writes `target/type1/aegishv-type1-kernel-inspect.txt`.
+`scripts/inspect-type1-kernel.sh` checks the built kernel ELF. When `llvm-readobj` is available it verifies the expected entry address and the `.limine_requests` section, and it always checks the `aegishv:type1:halt` marker bytes. It writes `target/type1/aegishv-type1-kernel-inspect.txt`.
 
 `scripts/stage-type1-limine-iso.sh` stages the kernel ELF and Limine config into `target/type1/limine-iso-root` and writes `target/type1/aegishv-type1-iso-stage.txt`. It records whether `limine` and `xorriso` are present, but the staged root is not a bootable ISO.
 

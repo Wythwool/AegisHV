@@ -24,6 +24,8 @@ fn kernel_inspection_script_checks_entry_and_serial_marker() {
             "llvm-readobj --file-headers",
             "expected_entry",
             "0xFFFFFFFF80200000",
+            "limine_requests_section=",
+            ".limine_requests section was not found",
             "grep -Fqa",
             "serial_marker_present=true",
             "not QEMU boot evidence",

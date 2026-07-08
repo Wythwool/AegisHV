@@ -14,6 +14,7 @@
 - Added a type-1 lab tool probe for reviewed ISO and QEMU prerequisites.
 - Added a QEMU smoke evidence wrapper that records boot image digest, serial marker state, and smoke exit status.
 - Added an opt-in type-1 lab runner that chains tool checks, Limine ISO build, and QEMU evidence capture.
+- Added the first kernel-side Limine request block and ELF inspection for the `.limine_requests` section.
 - Tightened the x86_64 type-1 entry stub by clearing direction state and zeroing `.bss` before the Rust entry.
 - Expanded synthetic Linux and Windows VMI fixture corpus.
 

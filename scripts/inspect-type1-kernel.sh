@@ -14,7 +14,8 @@ usage() {
 usage: scripts/inspect-type1-kernel.sh [KERNEL_ELF]
 
 Checks the minimal type-1 kernel ELF artifact for the expected entry address
-when llvm-readobj is available and always checks the serial marker bytes.
+and Limine request section when llvm-readobj is available. It always checks
+the serial marker bytes.
 USAGE
 }
 
@@ -30,11 +31,17 @@ fi
 
 entry_value="unavailable"
 entry_check="skipped"
+limine_requests_section="skipped"
 if command -v llvm-readobj >/dev/null 2>&1; then
   entry_value="$(llvm-readobj --file-headers "$kernel_elf" | awk '/Entry:/ {print $2; exit}')"
   entry_check="passed"
   if [ "$entry_value" != "$expected_entry" ]; then
     echo "type1 kernel inspect: unexpected entry address: $entry_value" >&2
+    exit 70
+  fi
+  limine_requests_section="present"
+  if ! llvm-readobj --sections "$kernel_elf" | grep -Fq ".limine_requests"; then
+    echo "type1 kernel inspect: .limine_requests section was not found" >&2
     exit 70
   fi
 fi
@@ -52,6 +59,7 @@ kernel_elf=$kernel_elf
 entry_value=$entry_value
 entry_check=$entry_check
 expected_entry=$expected_entry
+limine_requests_section=$limine_requests_section
 serial_marker=$expected_serial
 serial_marker_present=true
 bootable_image=false
