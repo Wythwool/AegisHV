@@ -2342,20 +2342,30 @@ mod tests {
 
     #[test]
     fn resolver_enriches_guest_vcpu_from_known_host_tid_mapping() {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/libvirt");
-        let cfg = Identity {
-            libvirt_xml_dir: dir.display().to_string(),
-            ..Identity::default()
-        };
-        let resolver = VmIdentityResolver::new(cfg).unwrap();
+        let host_pid = 2_000_000_042;
+        let host_tid = 2_000_000_043;
+        let mut domain = domain_with_task_start(host_tid, None);
+        domain.name = "mapped-vcpu".to_string();
+        domain.uuid = "11111111-2222-3333-4444-555555555555".to_string();
+        domain.qemu_pids = vec![host_pid];
+        domain.qemu_tids = vec![host_tid];
+        domain.vcpu_threads = vec![QemuVcpuThread {
+            tid: host_tid,
+            vcpu_id: 0,
+        }];
+
+        let resolver = VmIdentityResolver::new(Identity::default()).unwrap();
+        *resolver.libvirt.lock().unwrap() =
+            Some(LibvirtDomainDiscovery::from_domains(vec![domain]));
+
         let mut ev = Event::base(
             Category::Exit,
             Severity::Info,
             "2026-01-01T00:00:00Z".to_string(),
             "qemu-system-x86".to_string(),
         );
-        ev.host_pid = Some(4242);
-        ev.host_tid = Some(4243);
+        ev.host_pid = Some(host_pid);
+        ev.host_tid = Some(host_tid);
         ev.host_cpu = Some(7);
 
         let enrichment = resolver.enrich_event(&mut ev);
