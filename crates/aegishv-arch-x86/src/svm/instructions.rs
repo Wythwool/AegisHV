@@ -100,6 +100,11 @@ pub mod tests_support {
         pub last_vmload: Option<HostPhysical>,
         pub last_vmsave: Option<HostPhysical>,
         pub last_invlpga: Option<(u64, u32)>,
+        pub enable_count: u64,
+        pub vmrun_count: u64,
+        pub vmload_count: u64,
+        pub vmsave_count: u64,
+        pub invlpga_count: u64,
         pub next_failure: Option<SvmInstruction>,
     }
 
@@ -124,30 +129,35 @@ pub mod tests_support {
         unsafe fn enable_svme(&mut self, efer: EferValue) -> Result<EferValue, SvmError> {
             self.maybe_fail(SvmInstruction::EnableSvme)?;
             self.svme_enabled = true;
+            self.enable_count += 1;
             Ok(efer.with_svme())
         }
 
         unsafe fn vmrun(&mut self, vmcb: HostPhysical) -> Result<(), SvmError> {
             self.maybe_fail(SvmInstruction::Vmrun)?;
             self.last_vmrun = Some(vmcb);
+            self.vmrun_count += 1;
             Ok(())
         }
 
         unsafe fn vmload(&mut self, vmcb: HostPhysical) -> Result<(), SvmError> {
             self.maybe_fail(SvmInstruction::Vmload)?;
             self.last_vmload = Some(vmcb);
+            self.vmload_count += 1;
             Ok(())
         }
 
         unsafe fn vmsave(&mut self, vmcb: HostPhysical) -> Result<(), SvmError> {
             self.maybe_fail(SvmInstruction::Vmsave)?;
             self.last_vmsave = Some(vmcb);
+            self.vmsave_count += 1;
             Ok(())
         }
 
         unsafe fn invlpga(&mut self, guest_virtual: u64, asid: u32) -> Result<(), SvmError> {
             self.maybe_fail(SvmInstruction::Invlpga)?;
             self.last_invlpga = Some((guest_virtual, asid));
+            self.invlpga_count += 1;
             Ok(())
         }
     }
@@ -175,6 +185,8 @@ mod tests {
 
         assert_eq!(executor.last_vmrun.unwrap().get(), 0x8000);
         assert_eq!(executor.last_invlpga, Some((0xfeed_0000, 9)));
+        assert_eq!(executor.vmrun_count, 1);
+        assert_eq!(executor.invlpga_count, 1);
     }
 
     #[test]
