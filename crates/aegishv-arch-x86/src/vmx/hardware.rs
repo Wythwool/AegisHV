@@ -244,8 +244,8 @@ mod tests {
 
     #[test]
     fn vmx_status_reports_vmfail_invalid_before_vmfail_valid() {
-        let err = finish_instruction_status(VmxInstruction::Vmresume, RFLAGS_CF | RFLAGS_ZF)
-            .unwrap_err();
+        let err =
+            finish_instruction_status(VmxInstruction::Vmresume, RFLAGS_CF | RFLAGS_ZF).unwrap_err();
 
         assert_eq!(err.kind, VmxErrorKind::InstructionFailed);
         assert_eq!(err.message, "VMRESUME failed with VMfailInvalid");

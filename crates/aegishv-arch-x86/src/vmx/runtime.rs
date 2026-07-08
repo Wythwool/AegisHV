@@ -156,16 +156,14 @@ mod tests {
     }
 
     fn runtime() -> VmxRuntime {
-        let vmxon =
-            VmxonRegion::new(HostPhysical::new(0x4000).unwrap(), revision()).unwrap();
+        let vmxon = VmxonRegion::new(HostPhysical::new(0x4000).unwrap(), revision()).unwrap();
         let vmcs = VmcsRegion::allocate(HostPhysical::new(0x8000).unwrap(), revision()).unwrap();
         VmxRuntime::new(vmxon, vmcs).unwrap()
     }
 
     #[test]
     fn runtime_requires_matching_revision_ids() {
-        let vmxon =
-            VmxonRegion::new(HostPhysical::new(0x4000).unwrap(), revision()).unwrap();
+        let vmxon = VmxonRegion::new(HostPhysical::new(0x4000).unwrap(), revision()).unwrap();
         let vmcs = VmcsRegion::allocate(
             HostPhysical::new(0x8000).unwrap(),
             VmxRevisionId::new(0x44).unwrap(),
