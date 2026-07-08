@@ -73,6 +73,7 @@ expected_kernel_virtual_base=$expected_kernel_virtual_base
 relocation_model=static
 code_model=kernel
 serial_marker=aegishv:type1:halt
+runtime_backend_marker=aegishv:type1:backend-none
 inspect_manifest=$inspect_manifest
 bootable_image=false
 qemu_evidence=false

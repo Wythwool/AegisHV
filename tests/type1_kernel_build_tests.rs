@@ -25,6 +25,8 @@ fn workspace_and_lockfile_include_minimal_type1_kernel_crate() {
         &[
             "name = \"aegishv-type1-kernel\"",
             "minimal no_std AegisHV type-1 kernel entry artifact",
+            "aegishv-arch-x86",
+            "aegishv-hypervisor-core",
             "aegishv-type1-boot",
         ],
     );
@@ -41,6 +43,8 @@ fn kernel_entry_records_serial_marker_and_halt_path() {
         &[
             "SERIAL_READY_MARKER",
             "aegishv:type1:halt",
+            "SERIAL_RUNTIME_BACKEND_NONE_MARKER",
+            "aegishv:type1:backend-none",
             "SERIAL_PANIC_MARKER",
             "SERIAL_LIMINE_MISSING_MARKER",
             "SERIAL_LIMINE_MEMMAP_EMPTY_MARKER",
@@ -52,6 +56,9 @@ fn kernel_entry_records_serial_marker_and_halt_path() {
             "LIMINE_EXECUTABLE_ADDRESS_REQUEST_ID",
             "LimineRequest",
             "LimineMinimalHandoff",
+            "Type1RuntimePlan",
+            "build_vmx_runtime",
+            "build_svm_runtime",
             "serial_marker",
             "marker_line",
         ],
@@ -66,6 +73,9 @@ fn kernel_entry_records_serial_marker_and_halt_path() {
             ".limine_requests_end",
             "aegishv_type1_rust_entry",
             "read_limine_handoff_status",
+            "read_limine_minimal_handoff",
+            "runtime_backend_marker",
+            "plan_type1_runtime",
             "limine_minimal_handoff_status",
             "LIMINE_RESPONSE_REVISION_OFFSET",
             "LIMINE_HHDM_OFFSET_OFFSET",
@@ -86,6 +96,7 @@ fn kernel_entry_records_serial_marker_and_halt_path() {
 #[test]
 fn kernel_build_script_and_ci_keep_boot_evidence_boundary() {
     let script = read_repo_file("scripts/build-type1-kernel.sh");
+    let inspect = read_repo_file("scripts/inspect-type1-kernel.sh");
     let ci = read_repo_file(".github/workflows/ci.yml");
     let testing = read_repo_file("docs/TESTING.md");
 
@@ -109,9 +120,19 @@ fn kernel_build_script_and_ci_keep_boot_evidence_boundary() {
             "expected_kernel_virtual_base=",
             "relocation_model=static",
             "code_model=kernel",
+            "runtime_backend_marker=aegishv:type1:backend-none",
             "bootable_image=false",
             "qemu_evidence=false",
             "not a bootable ISO",
+        ],
+    );
+    assert_contains_all(
+        &inspect,
+        &[
+            "AEGISHV_TYPE1_EXPECTED_RUNTIME_BACKEND",
+            "aegishv:type1:backend-none",
+            "runtime backend marker was not found",
+            "runtime_backend_marker_present=true",
         ],
     );
     assert_contains_all(

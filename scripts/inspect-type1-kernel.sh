@@ -8,6 +8,7 @@ out_dir="${AEGISHV_TYPE1_OUT:-target/type1}"
 manifest="${AEGISHV_TYPE1_INSPECT_MANIFEST:-$out_dir/aegishv-type1-kernel-inspect.txt}"
 expected_entry="${AEGISHV_TYPE1_EXPECTED_ENTRY:-0xFFFFFFFF80200000}"
 expected_serial="${AEGISHV_TYPE1_EXPECTED_SERIAL:-aegishv:type1:halt}"
+expected_runtime_backend="${AEGISHV_TYPE1_EXPECTED_RUNTIME_BACKEND:-aegishv:type1:backend-none}"
 expected_limine_missing="${AEGISHV_TYPE1_LIMINE_MISSING_SERIAL:-aegishv:type1:limine-missing}"
 limine_failure_markers=(
   "aegishv:type1:limine-base-revision"
@@ -107,6 +108,11 @@ if ! grep -Fqa "$expected_serial" "$kernel_elf"; then
   exit 70
 fi
 
+if ! grep -Fqa "$expected_runtime_backend" "$kernel_elf"; then
+  echo "type1 kernel inspect: runtime backend marker was not found: $expected_runtime_backend" >&2
+  exit 70
+fi
+
 if ! grep -Fqa "$expected_limine_missing" "$kernel_elf"; then
   echo "type1 kernel inspect: Limine fallback marker was not found: $expected_limine_missing" >&2
   exit 70
@@ -132,6 +138,8 @@ layout_section_check=$layout_section_check
 layout_section_count=${#required_layout_sections[@]}
 serial_marker=$expected_serial
 serial_marker_present=true
+runtime_backend_marker=$expected_runtime_backend
+runtime_backend_marker_present=true
 limine_missing_marker=$expected_limine_missing
 limine_missing_marker_present=true
 limine_failure_marker_count=${#limine_failure_markers[@]}
