@@ -84,7 +84,9 @@ pub extern "C" fn aegishv_type1_rust_entry() -> ! {
     let status = aegishv_type1_kernel::limine_minimal_handoff_status(handoff);
     if status.is_ready() {
         serial_write_line(status.serial_marker());
-        serial_write_line(runtime_backend_marker(handoff));
+        let (backend_marker, preflight_marker) = runtime_markers(handoff);
+        serial_write_line(backend_marker);
+        serial_write_line(preflight_marker);
     } else {
         serial_write_line(aegishv_type1_kernel::SERIAL_LIMINE_MISSING_MARKER);
         serial_write_line(status.serial_marker());
@@ -93,7 +95,9 @@ pub extern "C" fn aegishv_type1_rust_entry() -> ! {
 }
 
 #[cfg(target_os = "none")]
-fn runtime_backend_marker(handoff: aegishv_type1_kernel::LimineMinimalHandoff) -> &'static str {
+fn runtime_markers(
+    handoff: aegishv_type1_kernel::LimineMinimalHandoff,
+) -> (&'static str, &'static str) {
     let capability_report = aegishv_type1_kernel::type1_capabilities_from_snapshot(unsafe {
         read_type1_cpu_snapshot()
     });
@@ -102,8 +106,20 @@ fn runtime_backend_marker(handoff: aegishv_type1_kernel::LimineMinimalHandoff) -
         aegishv_type1_kernel::Type1BackendRequest::Auto,
         capability_report.capabilities,
     ) {
-        Ok(plan) => plan.backend.serial_marker(),
-        Err(_) => aegishv_type1_kernel::SERIAL_RUNTIME_PLAN_ERROR_MARKER,
+        Ok(plan) => {
+            let backend_marker = plan.backend.serial_marker();
+            let controls = unsafe { read_type1_control_snapshot(plan.backend) };
+            let preflight_marker =
+                match aegishv_type1_kernel::plan_type1_runtime_preflight(plan, controls) {
+                    Ok(_) => aegishv_type1_kernel::SERIAL_RUNTIME_PREFLIGHT_OK_MARKER,
+                    Err(_) => aegishv_type1_kernel::SERIAL_RUNTIME_PREFLIGHT_ERROR_MARKER,
+                };
+            (backend_marker, preflight_marker)
+        }
+        Err(_) => (
+            aegishv_type1_kernel::SERIAL_RUNTIME_PLAN_ERROR_MARKER,
+            aegishv_type1_kernel::SERIAL_RUNTIME_PREFLIGHT_ERROR_MARKER,
+        ),
     }
 }
 
@@ -162,9 +178,64 @@ unsafe fn read_msr(msr: u32) -> u64 {
     ((high as u64) << 32) | low as u64
 }
 
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+unsafe fn read_type1_control_snapshot(
+    backend: aegishv_type1_kernel::Type1RuntimeBackend,
+) -> aegishv_type1_kernel::Type1ControlSnapshot {
+    let (vmx_cr0_fixed0, vmx_cr0_fixed1, vmx_cr4_fixed0, vmx_cr4_fixed1) =
+        if backend == aegishv_type1_kernel::Type1RuntimeBackend::IntelVmx {
+            (
+                read_msr(aegishv_type1_kernel::IA32_VMX_CR0_FIXED0_MSR),
+                read_msr(aegishv_type1_kernel::IA32_VMX_CR0_FIXED1_MSR),
+                read_msr(aegishv_type1_kernel::IA32_VMX_CR4_FIXED0_MSR),
+                read_msr(aegishv_type1_kernel::IA32_VMX_CR4_FIXED1_MSR),
+            )
+        } else {
+            (0, u64::MAX, 0, u64::MAX)
+        };
+    aegishv_type1_kernel::Type1ControlSnapshot {
+        cr0: read_cr0(),
+        cr4: read_cr4(),
+        efer: read_msr(aegishv_type1_kernel::IA32_EFER_MSR),
+        vmx_cr0_fixed0,
+        vmx_cr0_fixed1,
+        vmx_cr4_fixed0,
+        vmx_cr4_fixed1,
+    }
+}
+
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+unsafe fn read_cr0() -> u64 {
+    let value: u64;
+    asm!(
+        "mov {}, cr0",
+        out(reg) value,
+        options(nomem, nostack, preserves_flags)
+    );
+    value
+}
+
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+unsafe fn read_cr4() -> u64 {
+    let value: u64;
+    asm!(
+        "mov {}, cr4",
+        out(reg) value,
+        options(nomem, nostack, preserves_flags)
+    );
+    value
+}
+
 #[cfg(all(target_os = "none", not(target_arch = "x86_64")))]
 unsafe fn read_type1_cpu_snapshot() -> aegishv_type1_kernel::Type1CpuSnapshot {
     aegishv_type1_kernel::Type1CpuSnapshot::empty()
+}
+
+#[cfg(all(target_os = "none", not(target_arch = "x86_64")))]
+unsafe fn read_type1_control_snapshot(
+    _backend: aegishv_type1_kernel::Type1RuntimeBackend,
+) -> aegishv_type1_kernel::Type1ControlSnapshot {
+    aegishv_type1_kernel::Type1ControlSnapshot::empty()
 }
 
 #[cfg(target_os = "none")]
