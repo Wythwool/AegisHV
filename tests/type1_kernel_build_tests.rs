@@ -72,7 +72,6 @@ fn kernel_entry_records_serial_marker_and_halt_path() {
             ".limine_requests",
             ".limine_requests_end",
             "aegishv_type1_rust_entry",
-            "read_limine_handoff_status",
             "read_limine_minimal_handoff",
             "runtime_backend_marker",
             "plan_type1_runtime",

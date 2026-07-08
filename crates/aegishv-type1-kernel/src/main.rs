@@ -125,11 +125,6 @@ fn serial_write_line(text: &str) {
 }
 
 #[cfg(target_os = "none")]
-unsafe fn read_limine_handoff_status() -> aegishv_type1_kernel::LimineHandoffStatus {
-    aegishv_type1_kernel::limine_minimal_handoff_status(read_limine_minimal_handoff())
-}
-
-#[cfg(target_os = "none")]
 unsafe fn read_limine_minimal_handoff() -> aegishv_type1_kernel::LimineMinimalHandoff {
     let base_revision = core::ptr::addr_of!(LIMINE_BASE_REVISION_TAG)
         .cast::<u64>()
