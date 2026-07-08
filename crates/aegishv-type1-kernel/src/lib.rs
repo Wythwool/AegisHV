@@ -1,8 +1,12 @@
 #![no_std]
 
+use aegishv_arch_x86::svm::features::EferValue;
 use aegishv_arch_x86::svm::features::{SvmCpuidExt1, SvmCpuidLeaf, SvmErrorKind, SvmFeatureSet};
 use aegishv_arch_x86::svm::runtime::SvmRuntime;
-use aegishv_arch_x86::vmx::features::{CpuidLeaf1, FeatureControlMsr, VmxErrorKind, VmxFeatureSet};
+use aegishv_arch_x86::vmx::features::{
+    validate_control_register, CpuidLeaf1, CrFixedBits, FeatureControlMsr, VmxErrorKind,
+    VmxFeatureSet,
+};
 use aegishv_arch_x86::vmx::region::{VmxRevisionId, VmxonRegion};
 use aegishv_arch_x86::vmx::runtime::VmxRuntime;
 use aegishv_arch_x86::vmx::vmcs::VmcsRegion;
@@ -15,6 +19,8 @@ pub const SERIAL_RUNTIME_BACKEND_NONE_MARKER: &str = "aegishv:type1:backend-none
 pub const SERIAL_RUNTIME_BACKEND_VMX_MARKER: &str = "aegishv:type1:backend-vmx";
 pub const SERIAL_RUNTIME_BACKEND_SVM_MARKER: &str = "aegishv:type1:backend-svm";
 pub const SERIAL_RUNTIME_PLAN_ERROR_MARKER: &str = "aegishv:type1:runtime-plan-error";
+pub const SERIAL_RUNTIME_PREFLIGHT_OK_MARKER: &str = "aegishv:type1:runtime-preflight-ok";
+pub const SERIAL_RUNTIME_PREFLIGHT_ERROR_MARKER: &str = "aegishv:type1:runtime-preflight-error";
 pub const SERIAL_LIMINE_BASE_REVISION_MARKER: &str = "aegishv:type1:limine-base-revision";
 pub const SERIAL_LIMINE_HHDM_MISSING_MARKER: &str = "aegishv:type1:limine-hhdm-missing";
 pub const SERIAL_LIMINE_HHDM_REVISION_MARKER: &str = "aegishv:type1:limine-hhdm-revision";
@@ -51,6 +57,12 @@ pub const CPUID_EXTENDED_LIMIT_LEAF: u32 = 0x8000_0000;
 pub const CPUID_EXTENDED_FEATURE_LEAF: u32 = 0x8000_0001;
 pub const CPUID_SVM_FEATURE_LEAF: u32 = 0x8000_000a;
 pub const IA32_FEATURE_CONTROL_MSR: u32 = 0x0000_003a;
+pub const IA32_VMX_CR0_FIXED0_MSR: u32 = 0x0000_0486;
+pub const IA32_VMX_CR0_FIXED1_MSR: u32 = 0x0000_0487;
+pub const IA32_VMX_CR4_FIXED0_MSR: u32 = 0x0000_0488;
+pub const IA32_VMX_CR4_FIXED1_MSR: u32 = 0x0000_0489;
+pub const IA32_EFER_MSR: u32 = 0xc000_0080;
+pub const TYPE1_CR4_VMXE: u64 = 1 << 13;
 
 pub const LIMINE_REQUESTS_START_MARKER: [u64; 4] = [
     0xf6b8_f4b3_9de7_d1ae,
@@ -569,6 +581,109 @@ pub fn build_svm_runtime(plan: Type1RuntimePlan) -> Result<SvmRuntime, Type1Runt
     }
     SvmRuntime::new(host_physical(plan.memory.svm_vmcb_physical)?)
         .map_err(|err| Type1RuntimePlanError::Svm(err.kind))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Type1ControlSnapshot {
+    pub cr0: u64,
+    pub cr4: u64,
+    pub efer: u64,
+    pub vmx_cr0_fixed0: u64,
+    pub vmx_cr0_fixed1: u64,
+    pub vmx_cr4_fixed0: u64,
+    pub vmx_cr4_fixed1: u64,
+}
+
+impl Type1ControlSnapshot {
+    pub const fn empty() -> Self {
+        Self {
+            cr0: 0,
+            cr4: 0,
+            efer: 0,
+            vmx_cr0_fixed0: 0,
+            vmx_cr0_fixed1: u64::MAX,
+            vmx_cr4_fixed0: 0,
+            vmx_cr4_fixed1: u64::MAX,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Type1RuntimePreflight {
+    pub backend: Type1RuntimeBackend,
+    pub cr0_before: u64,
+    pub cr0_after: u64,
+    pub cr4_before: u64,
+    pub cr4_after: u64,
+    pub efer_before: u64,
+    pub efer_after: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Type1RuntimePreflightError {
+    BackendMismatch,
+    Vmx(VmxErrorKind),
+    Svm(SvmErrorKind),
+}
+
+pub fn plan_type1_runtime_preflight(
+    plan: Type1RuntimePlan,
+    controls: Type1ControlSnapshot,
+) -> Result<Type1RuntimePreflight, Type1RuntimePreflightError> {
+    match plan.backend {
+        Type1RuntimeBackend::None => Ok(Type1RuntimePreflight {
+            backend: Type1RuntimeBackend::None,
+            cr0_before: controls.cr0,
+            cr0_after: controls.cr0,
+            cr4_before: controls.cr4,
+            cr4_after: controls.cr4,
+            efer_before: controls.efer,
+            efer_after: controls.efer,
+        }),
+        Type1RuntimeBackend::IntelVmx => plan_vmx_preflight(controls),
+        Type1RuntimeBackend::AmdSvm => Ok(plan_svm_preflight(controls)),
+    }
+}
+
+fn plan_vmx_preflight(
+    controls: Type1ControlSnapshot,
+) -> Result<Type1RuntimePreflight, Type1RuntimePreflightError> {
+    let cr0_fixed = CrFixedBits::new(controls.vmx_cr0_fixed0, controls.vmx_cr0_fixed1);
+    let cr4_fixed = CrFixedBits::new(controls.vmx_cr4_fixed0, controls.vmx_cr4_fixed1);
+    let cr0_after = (controls.cr0 | controls.vmx_cr0_fixed0) & controls.vmx_cr0_fixed1;
+    let cr4_after =
+        (controls.cr4 | TYPE1_CR4_VMXE | controls.vmx_cr4_fixed0) & controls.vmx_cr4_fixed1;
+    validate_control_register(cr0_after, cr0_fixed, "CR0 does not satisfy VMX fixed bits")
+        .map_err(|err| Type1RuntimePreflightError::Vmx(err.kind))?;
+    validate_control_register(cr4_after, cr4_fixed, "CR4 does not satisfy VMX fixed bits")
+        .map_err(|err| Type1RuntimePreflightError::Vmx(err.kind))?;
+    if cr4_after & TYPE1_CR4_VMXE == 0 {
+        return Err(Type1RuntimePreflightError::Vmx(
+            VmxErrorKind::UnsupportedCapability,
+        ));
+    }
+    Ok(Type1RuntimePreflight {
+        backend: Type1RuntimeBackend::IntelVmx,
+        cr0_before: controls.cr0,
+        cr0_after,
+        cr4_before: controls.cr4,
+        cr4_after,
+        efer_before: controls.efer,
+        efer_after: controls.efer,
+    })
+}
+
+fn plan_svm_preflight(controls: Type1ControlSnapshot) -> Type1RuntimePreflight {
+    let efer_after = EferValue::new(controls.efer).with_svme().raw();
+    Type1RuntimePreflight {
+        backend: Type1RuntimeBackend::AmdSvm,
+        cr0_before: controls.cr0,
+        cr0_after: controls.cr0,
+        cr4_before: controls.cr4,
+        cr4_after: controls.cr4,
+        efer_before: controls.efer,
+        efer_after,
+    }
 }
 
 fn host_physical(raw: u64) -> Result<HostPhysical, Type1RuntimePlanError> {
@@ -1104,5 +1219,111 @@ mod tests {
         let runtime = build_svm_runtime(plan).unwrap();
 
         assert_eq!(runtime.vmcb_physical_address().get(), 0x28_2000);
+    }
+
+    #[test]
+    fn runtime_preflight_keeps_no_backend_registers_unchanged() {
+        let preflight = plan_type1_runtime_preflight(
+            Type1RuntimePlan {
+                backend: Type1RuntimeBackend::None,
+                memory: Type1RuntimeMemoryPlan::from_executable_base(
+                    aegishv_type1_boot::layout::KERNEL_PHYSICAL_BASE,
+                )
+                .unwrap(),
+            },
+            Type1ControlSnapshot {
+                cr0: 0x8000_0011,
+                cr4: 0x20,
+                efer: 0x500,
+                ..Type1ControlSnapshot::empty()
+            },
+        )
+        .unwrap();
+
+        assert_eq!(preflight.backend, Type1RuntimeBackend::None);
+        assert_eq!(preflight.cr0_after, 0x8000_0011);
+        assert_eq!(preflight.cr4_after, 0x20);
+        assert_eq!(preflight.efer_after, 0x500);
+    }
+
+    #[test]
+    fn runtime_preflight_sets_vmx_fixed_bits_and_vmxe() {
+        let preflight = plan_type1_runtime_preflight(
+            plan_type1_runtime(
+                ready_handoff(),
+                Type1BackendRequest::IntelVmx,
+                Type1ArchCapabilities::intel_vmx(),
+            )
+            .unwrap(),
+            Type1ControlSnapshot {
+                cr0: 0x8000_0011,
+                cr4: 0,
+                efer: 0x500,
+                vmx_cr0_fixed0: 0x8000_0031,
+                vmx_cr0_fixed1: u64::MAX,
+                vmx_cr4_fixed0: 0,
+                vmx_cr4_fixed1: u64::MAX,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(preflight.backend, Type1RuntimeBackend::IntelVmx);
+        assert_eq!(preflight.cr0_after & 0x8000_0031, 0x8000_0031);
+        assert_ne!(preflight.cr4_before & TYPE1_CR4_VMXE, TYPE1_CR4_VMXE);
+        assert_eq!(preflight.cr4_after & TYPE1_CR4_VMXE, TYPE1_CR4_VMXE);
+        assert_eq!(preflight.efer_after, 0x500);
+    }
+
+    #[test]
+    fn runtime_preflight_rejects_vmx_when_vmxe_is_forbidden() {
+        let err = plan_type1_runtime_preflight(
+            plan_type1_runtime(
+                ready_handoff(),
+                Type1BackendRequest::IntelVmx,
+                Type1ArchCapabilities::intel_vmx(),
+            )
+            .unwrap(),
+            Type1ControlSnapshot {
+                cr0: 0x8000_0011,
+                cr4: 0,
+                efer: 0,
+                vmx_cr0_fixed0: 0,
+                vmx_cr0_fixed1: u64::MAX,
+                vmx_cr4_fixed0: 0,
+                vmx_cr4_fixed1: !TYPE1_CR4_VMXE,
+            },
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            err,
+            Type1RuntimePreflightError::Vmx(VmxErrorKind::UnsupportedCapability)
+        );
+    }
+
+    #[test]
+    fn runtime_preflight_enables_svm_svme_bit() {
+        let preflight = plan_type1_runtime_preflight(
+            plan_type1_runtime(
+                ready_handoff(),
+                Type1BackendRequest::AmdSvm,
+                Type1ArchCapabilities::amd_svm(),
+            )
+            .unwrap(),
+            Type1ControlSnapshot {
+                cr0: 0x8000_0011,
+                cr4: 0x20,
+                efer: 0x500,
+                ..Type1ControlSnapshot::empty()
+            },
+        )
+        .unwrap();
+
+        assert_eq!(preflight.backend, Type1RuntimeBackend::AmdSvm);
+        assert_eq!(preflight.cr0_after, 0x8000_0011);
+        assert_eq!(
+            preflight.efer_after & aegishv_arch_x86::svm::features::EFER_SVME,
+            aegishv_arch_x86::svm::features::EFER_SVME
+        );
     }
 }
