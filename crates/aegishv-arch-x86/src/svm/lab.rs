@@ -3,6 +3,7 @@ use aegishv_hypervisor_core::ids::HostPhysical;
 use super::exits::{handle_hlt, GeneralRegisters, SvmExitAction, SvmExitCode};
 use super::features::{EferValue, SvmError, SvmErrorKind, SvmFeatureSet};
 use super::instructions::SvmInstructionExecutor;
+use super::runtime::SvmRuntime;
 use super::vmcb::{Vmcb, INTERCEPT_HLT};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -92,11 +93,12 @@ impl SvmTinyGuestPlan {
         regs: &mut GeneralRegisters,
     ) -> Result<SvmExitAction, SvmError> {
         vmcb.require_hlt_intercept()?;
+        let mut runtime = SvmRuntime::new(self.vmcb_physical)?;
         unsafe {
-            executor.enable_svme(EferValue::new(vmcb.state.efer()))?;
-            executor.vmload(self.vmcb_physical)?;
-            executor.vmrun(self.vmcb_physical)?;
-            executor.vmsave(self.vmcb_physical)?;
+            runtime.enable_svme(executor, EferValue::new(vmcb.state.efer()))?;
+            runtime.load_vmcb(executor)?;
+            runtime.run_guest_once(executor)?;
+            runtime.save_host_state(executor)?;
         }
         match SvmExitCode::from_raw(vmcb.control.exit_code()) {
             SvmExitCode::Hlt => handle_hlt(regs, 1),
@@ -170,5 +172,30 @@ mod tests {
         assert_eq!(action, SvmExitAction::HaltGuest);
         assert_eq!(regs.rip, 0x1001);
         assert_eq!(executor.last_vmrun.unwrap().get(), 0x8000);
+        assert_eq!(executor.vmsave_count, 1);
+    }
+
+    #[test]
+    fn tiny_guest_run_stops_when_vmrun_fails() {
+        let plan = SvmTinyGuestPlan::new(
+            features(),
+            RequiredInterceptCoverage::tiny_guest(),
+            HostPhysical::new(0x8000).unwrap(),
+        )
+        .unwrap();
+        let mut vmcb = prepare_tiny_hlt_vmcb(1, HostPhysical::new(0x9000).unwrap());
+        vmcb.control
+            .set_exit_code(super::super::exits::SVM_EXIT_HLT);
+        let mut regs = GeneralRegisters {
+            rip: 0x1000,
+            ..Default::default()
+        };
+        let mut executor = MockSvmInstructions::default();
+        executor.fail_next(crate::svm::instructions::SvmInstruction::Vmrun);
+
+        let err = unsafe { plan.run_once_with(&mut executor, &mut vmcb, &mut regs) }.unwrap_err();
+
+        assert_eq!(err.kind, SvmErrorKind::InstructionFailed);
+        assert_eq!(executor.vmsave_count, 0);
     }
 }
