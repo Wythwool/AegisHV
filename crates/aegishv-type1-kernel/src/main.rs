@@ -121,6 +121,14 @@ unsafe fn read_limine_handoff_status() -> aegishv_type1_kernel::LimineHandoffSta
     let executable_address_response =
         core::ptr::addr_of!(LIMINE_EXECUTABLE_ADDRESS_REQUEST.response).read_volatile();
 
+    let hhdm_revision = if hhdm_response == 0 {
+        0
+    } else {
+        read_limine_response_u64(
+            hhdm_response,
+            aegishv_type1_kernel::LIMINE_RESPONSE_REVISION_OFFSET,
+        )
+    };
     let hhdm_offset = if hhdm_response == 0 {
         0
     } else {
@@ -129,12 +137,36 @@ unsafe fn read_limine_handoff_status() -> aegishv_type1_kernel::LimineHandoffSta
             aegishv_type1_kernel::LIMINE_HHDM_OFFSET_OFFSET,
         )
     };
+    let memmap_revision = if memmap_response == 0 {
+        0
+    } else {
+        read_limine_response_u64(
+            memmap_response,
+            aegishv_type1_kernel::LIMINE_RESPONSE_REVISION_OFFSET,
+        )
+    };
     let memmap_entry_count = if memmap_response == 0 {
         0
     } else {
         read_limine_response_u64(
             memmap_response,
             aegishv_type1_kernel::LIMINE_MEMMAP_ENTRY_COUNT_OFFSET,
+        )
+    };
+    let memmap_entries = if memmap_response == 0 {
+        0
+    } else {
+        read_limine_response_u64(
+            memmap_response,
+            aegishv_type1_kernel::LIMINE_MEMMAP_ENTRIES_OFFSET,
+        )
+    };
+    let executable_address_revision = if executable_address_response == 0 {
+        0
+    } else {
+        read_limine_response_u64(
+            executable_address_response,
+            aegishv_type1_kernel::LIMINE_RESPONSE_REVISION_OFFSET,
         )
     };
     let executable_physical_base = if executable_address_response == 0 {
@@ -158,10 +190,14 @@ unsafe fn read_limine_handoff_status() -> aegishv_type1_kernel::LimineHandoffSta
         aegishv_type1_kernel::LimineMinimalHandoff {
             base_revision_value: base_revision,
             hhdm_response,
+            hhdm_revision,
             hhdm_offset,
             memmap_response,
+            memmap_revision,
             memmap_entry_count,
+            memmap_entries,
             executable_address_response,
+            executable_address_revision,
             executable_physical_base,
             executable_virtual_base,
         },

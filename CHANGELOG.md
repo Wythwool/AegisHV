@@ -18,6 +18,7 @@
 - Made the early type-1 kernel success marker depend on the minimal Limine handoff being present.
 - Tightened the minimal Limine handoff gate to check HHDM offset, nonempty memory-map, and executable-address response fields before the ready marker.
 - Added status-specific serial markers for incomplete Limine handoff checks.
+- Checked Limine response revisions and memory-map entries pointer before the ready marker.
 - Made the type-1 kernel build use static relocation and the x86_64 kernel code model explicitly.
 - Tightened the x86_64 type-1 entry stub by clearing direction state and zeroing `.bss` before the Rust entry.
 - Expanded synthetic Linux and Windows VMI fixture corpus.

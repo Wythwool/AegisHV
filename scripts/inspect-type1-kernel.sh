@@ -12,10 +12,14 @@ expected_limine_missing="${AEGISHV_TYPE1_LIMINE_MISSING_SERIAL:-aegishv:type1:li
 limine_failure_markers=(
   "aegishv:type1:limine-base-revision"
   "aegishv:type1:limine-hhdm-missing"
+  "aegishv:type1:limine-hhdm-revision"
   "aegishv:type1:limine-hhdm-offset"
   "aegishv:type1:limine-memmap-missing"
+  "aegishv:type1:limine-memmap-revision"
   "aegishv:type1:limine-memmap-empty"
+  "aegishv:type1:limine-memmap-entries"
   "aegishv:type1:limine-executable-missing"
+  "aegishv:type1:limine-executable-revision"
   "aegishv:type1:limine-executable-empty"
 )
 

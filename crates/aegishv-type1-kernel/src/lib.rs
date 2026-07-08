@@ -5,10 +5,15 @@ pub const SERIAL_PANIC_MARKER: &str = "aegishv:type1:panic";
 pub const SERIAL_LIMINE_MISSING_MARKER: &str = "aegishv:type1:limine-missing";
 pub const SERIAL_LIMINE_BASE_REVISION_MARKER: &str = "aegishv:type1:limine-base-revision";
 pub const SERIAL_LIMINE_HHDM_MISSING_MARKER: &str = "aegishv:type1:limine-hhdm-missing";
+pub const SERIAL_LIMINE_HHDM_REVISION_MARKER: &str = "aegishv:type1:limine-hhdm-revision";
 pub const SERIAL_LIMINE_HHDM_OFFSET_MARKER: &str = "aegishv:type1:limine-hhdm-offset";
 pub const SERIAL_LIMINE_MEMMAP_MISSING_MARKER: &str = "aegishv:type1:limine-memmap-missing";
+pub const SERIAL_LIMINE_MEMMAP_REVISION_MARKER: &str = "aegishv:type1:limine-memmap-revision";
 pub const SERIAL_LIMINE_MEMMAP_EMPTY_MARKER: &str = "aegishv:type1:limine-memmap-empty";
+pub const SERIAL_LIMINE_MEMMAP_ENTRIES_MARKER: &str = "aegishv:type1:limine-memmap-entries";
 pub const SERIAL_LIMINE_EXECUTABLE_MISSING_MARKER: &str = "aegishv:type1:limine-executable-missing";
+pub const SERIAL_LIMINE_EXECUTABLE_REVISION_MARKER: &str =
+    "aegishv:type1:limine-executable-revision";
 pub const SERIAL_LIMINE_EXECUTABLE_EMPTY_MARKER: &str = "aegishv:type1:limine-executable-empty";
 pub const LIMINE_BASE_REVISION: u64 = 6;
 pub const LIMINE_REQUEST_COUNT: usize = 6;
@@ -120,10 +125,14 @@ pub struct LimineExecutableAddressResponse {
 pub struct LimineMinimalHandoff {
     pub base_revision_value: u64,
     pub hhdm_response: u64,
+    pub hhdm_revision: u64,
     pub hhdm_offset: u64,
     pub memmap_response: u64,
+    pub memmap_revision: u64,
     pub memmap_entry_count: u64,
+    pub memmap_entries: u64,
     pub executable_address_response: u64,
+    pub executable_address_revision: u64,
     pub executable_physical_base: u64,
     pub executable_virtual_base: u64,
 }
@@ -133,10 +142,14 @@ pub enum LimineHandoffStatus {
     Ready,
     BaseRevisionUnsupported,
     HhdmResponseMissing,
+    HhdmRevisionUnsupported,
     HhdmOffsetMissing,
     MemmapResponseMissing,
+    MemmapRevisionUnsupported,
     MemmapEmpty,
+    MemmapEntriesMissing,
     ExecutableAddressResponseMissing,
+    ExecutableAddressRevisionUnsupported,
     ExecutableAddressEmpty,
 }
 
@@ -150,10 +163,14 @@ impl LimineHandoffStatus {
             Self::Ready => SERIAL_READY_MARKER,
             Self::BaseRevisionUnsupported => SERIAL_LIMINE_BASE_REVISION_MARKER,
             Self::HhdmResponseMissing => SERIAL_LIMINE_HHDM_MISSING_MARKER,
+            Self::HhdmRevisionUnsupported => SERIAL_LIMINE_HHDM_REVISION_MARKER,
             Self::HhdmOffsetMissing => SERIAL_LIMINE_HHDM_OFFSET_MARKER,
             Self::MemmapResponseMissing => SERIAL_LIMINE_MEMMAP_MISSING_MARKER,
+            Self::MemmapRevisionUnsupported => SERIAL_LIMINE_MEMMAP_REVISION_MARKER,
             Self::MemmapEmpty => SERIAL_LIMINE_MEMMAP_EMPTY_MARKER,
+            Self::MemmapEntriesMissing => SERIAL_LIMINE_MEMMAP_ENTRIES_MARKER,
             Self::ExecutableAddressResponseMissing => SERIAL_LIMINE_EXECUTABLE_MISSING_MARKER,
+            Self::ExecutableAddressRevisionUnsupported => SERIAL_LIMINE_EXECUTABLE_REVISION_MARKER,
             Self::ExecutableAddressEmpty => SERIAL_LIMINE_EXECUTABLE_EMPTY_MARKER,
         }
     }
@@ -166,17 +183,29 @@ pub const fn limine_minimal_handoff_status(handoff: LimineMinimalHandoff) -> Lim
     if handoff.hhdm_response == 0 {
         return LimineHandoffStatus::HhdmResponseMissing;
     }
+    if handoff.hhdm_revision != 0 {
+        return LimineHandoffStatus::HhdmRevisionUnsupported;
+    }
     if handoff.hhdm_offset == 0 {
         return LimineHandoffStatus::HhdmOffsetMissing;
     }
     if handoff.memmap_response == 0 {
         return LimineHandoffStatus::MemmapResponseMissing;
     }
+    if handoff.memmap_revision != 0 {
+        return LimineHandoffStatus::MemmapRevisionUnsupported;
+    }
     if handoff.memmap_entry_count == 0 {
         return LimineHandoffStatus::MemmapEmpty;
     }
+    if handoff.memmap_entries == 0 {
+        return LimineHandoffStatus::MemmapEntriesMissing;
+    }
     if handoff.executable_address_response == 0 {
         return LimineHandoffStatus::ExecutableAddressResponseMissing;
+    }
+    if handoff.executable_address_revision != 0 {
+        return LimineHandoffStatus::ExecutableAddressRevisionUnsupported;
     }
     if handoff.executable_physical_base == 0 || handoff.executable_virtual_base == 0 {
         return LimineHandoffStatus::ExecutableAddressEmpty;
@@ -260,6 +289,10 @@ mod tests {
             "aegishv:type1:limine-hhdm-missing"
         );
         assert_eq!(
+            LimineHandoffStatus::HhdmRevisionUnsupported.serial_marker(),
+            "aegishv:type1:limine-hhdm-revision"
+        );
+        assert_eq!(
             LimineHandoffStatus::HhdmOffsetMissing.serial_marker(),
             "aegishv:type1:limine-hhdm-offset"
         );
@@ -268,12 +301,24 @@ mod tests {
             "aegishv:type1:limine-memmap-missing"
         );
         assert_eq!(
+            LimineHandoffStatus::MemmapRevisionUnsupported.serial_marker(),
+            "aegishv:type1:limine-memmap-revision"
+        );
+        assert_eq!(
             LimineHandoffStatus::MemmapEmpty.serial_marker(),
             "aegishv:type1:limine-memmap-empty"
         );
         assert_eq!(
+            LimineHandoffStatus::MemmapEntriesMissing.serial_marker(),
+            "aegishv:type1:limine-memmap-entries"
+        );
+        assert_eq!(
             LimineHandoffStatus::ExecutableAddressResponseMissing.serial_marker(),
             "aegishv:type1:limine-executable-missing"
+        );
+        assert_eq!(
+            LimineHandoffStatus::ExecutableAddressRevisionUnsupported.serial_marker(),
+            "aegishv:type1:limine-executable-revision"
         );
         assert_eq!(
             LimineHandoffStatus::ExecutableAddressEmpty.serial_marker(),
@@ -350,10 +395,14 @@ mod tests {
         const READY_HANDOFF: LimineMinimalHandoff = LimineMinimalHandoff {
             base_revision_value: 0,
             hhdm_response: 1,
+            hhdm_revision: 0,
             hhdm_offset: 0xffff_8000_0000_0000,
             memmap_response: 1,
+            memmap_revision: 0,
             memmap_entry_count: 1,
+            memmap_entries: 0xffff_8000_0010_0000,
             executable_address_response: 1,
+            executable_address_revision: 0,
             executable_physical_base: 0x200000,
             executable_virtual_base: 0xffff_ffff_8020_0000,
         };
@@ -376,6 +425,13 @@ mod tests {
         );
         assert_eq!(
             limine_minimal_handoff_status(LimineMinimalHandoff {
+                hhdm_revision: 1,
+                ..READY_HANDOFF
+            }),
+            LimineHandoffStatus::HhdmRevisionUnsupported
+        );
+        assert_eq!(
+            limine_minimal_handoff_status(LimineMinimalHandoff {
                 hhdm_offset: 0,
                 ..READY_HANDOFF
             }),
@@ -390,6 +446,13 @@ mod tests {
         );
         assert_eq!(
             limine_minimal_handoff_status(LimineMinimalHandoff {
+                memmap_revision: 1,
+                ..READY_HANDOFF
+            }),
+            LimineHandoffStatus::MemmapRevisionUnsupported
+        );
+        assert_eq!(
+            limine_minimal_handoff_status(LimineMinimalHandoff {
                 memmap_entry_count: 0,
                 ..READY_HANDOFF
             }),
@@ -397,10 +460,24 @@ mod tests {
         );
         assert_eq!(
             limine_minimal_handoff_status(LimineMinimalHandoff {
+                memmap_entries: 0,
+                ..READY_HANDOFF
+            }),
+            LimineHandoffStatus::MemmapEntriesMissing
+        );
+        assert_eq!(
+            limine_minimal_handoff_status(LimineMinimalHandoff {
                 executable_address_response: 0,
                 ..READY_HANDOFF
             }),
             LimineHandoffStatus::ExecutableAddressResponseMissing
+        );
+        assert_eq!(
+            limine_minimal_handoff_status(LimineMinimalHandoff {
+                executable_address_revision: 1,
+                ..READY_HANDOFF
+            }),
+            LimineHandoffStatus::ExecutableAddressRevisionUnsupported
         );
         assert_eq!(
             limine_minimal_handoff_status(LimineMinimalHandoff {
