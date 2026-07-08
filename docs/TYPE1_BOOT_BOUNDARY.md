@@ -12,6 +12,8 @@ This document records the planned type-1 boot boundary now present in the reposi
 - `scripts/plan-type1-image.sh` validates the current image inputs and records the QEMU serial-marker contract.
 - `crates/aegishv-type1-kernel` builds a minimal `x86_64-unknown-none` kernel ELF that writes the planned serial marker and halts when its entry path is reached.
 - `scripts/build-type1-kernel.sh` writes `target/type1/aegishv-type1.elf` and a kernel build manifest.
+- `scripts/inspect-type1-kernel.sh` records local ELF inspection for the expected entry address and serial marker bytes.
+- `scripts/stage-type1-limine-iso.sh` stages the kernel ELF and Limine config into an ISO-root directory without claiming boot evidence.
 
 ## Not Present Yet
 
@@ -23,4 +25,4 @@ This document records the planned type-1 boot boundary now present in the reposi
 
 ## Next Gate
 
-The next milestone should package the kernel ELF with a bootloader path that emits `aegishv:type1:halt` under QEMU and halts in a controlled path. That milestone still needs ISO packaging, a captured serial log, and negative tests before any runtime claim is made.
+The next milestone should add real Limine/xorriso packaging around the staged ISO root, then emit `aegishv:type1:halt` under QEMU and halt in a controlled path. That milestone still needs a bootable ISO, a captured serial log, and negative tests before any runtime claim is made.

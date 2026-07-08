@@ -69,6 +69,10 @@ They cover memory-map validation, physical page allocation, page ownership, huge
 
 `scripts/build-type1-kernel.sh` builds the minimal `x86_64-unknown-none` kernel ELF and writes `target/type1/aegishv-type1-kernel-build.txt`. It requires the Rust `x86_64-unknown-none` target and records `bootable_image=false` and `qemu_evidence=false`; the output is not a bootable ISO.
 
+`scripts/inspect-type1-kernel.sh` checks the built kernel ELF. When `llvm-readobj` is available it verifies the expected entry address, and it always checks the `aegishv:type1:halt` marker bytes. It writes `target/type1/aegishv-type1-kernel-inspect.txt`.
+
+`scripts/stage-type1-limine-iso.sh` stages the kernel ELF and Limine config into `target/type1/limine-iso-root` and writes `target/type1/aegishv-type1-iso-stage.txt`. It records whether `limine` and `xorriso` are present, but the staged root is not a bootable ISO.
+
 Device model tests are also normal locked Rust tests:
 
 ```bash
@@ -167,7 +171,7 @@ sudo ./scripts/live-tracefs-smoke.sh --timeout 30
 The script enables `events/kvm/kvm_exit`, writes a trace marker, and waits for a `kvm_exit` line from `trace_pipe` after that marker. It restores the previous `kvm_exit/enable` and `tracing_on` values before exiting. It fails if tracefs is missing, permissions are insufficient, the tracepoint metadata is not readable, or no live KVM exit is observed within the timeout. This smoke is separate from replay and golden fixture tests, and it does not prove type-1 support, VMI, EPT/NPT enforcement, syscall-path integrity, or hardware PMU sampling.
 
 CI additionally runs nextest, Docker build smoke, cargo-audit, cargo-deny, and x86_64/aarch64 glibc/musl cross-builds.
-The MSRV CI job also builds the minimal type-1 kernel ELF, but it does not run QEMU.
+The MSRV CI job also builds and inspects the minimal type-1 kernel ELF and stages the Limine ISO root, but it does not build a bootable ISO or run QEMU.
 
 ## Opt-In Hardware Workflow
 

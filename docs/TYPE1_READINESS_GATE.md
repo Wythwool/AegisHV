@@ -26,7 +26,7 @@ This gate prevents a planned type-1 path from being described as implemented too
 
 ## Current Result
 
-The current repository does not pass this gate. It has useful no-std model crates, lab model tests, device isolation models, opt-in scripts, a planned boot skeleton, a minimal type-1 kernel ELF build path, and a type-1 image-plan manifest, but no bootable type-1 runtime.
+The current repository does not pass this gate. It has useful no-std model crates, lab model tests, device isolation models, opt-in scripts, a planned boot skeleton, a minimal type-1 kernel ELF build path, local ELF inspection, ISO-root staging, and a type-1 image-plan manifest, but no bootable type-1 runtime.
 
 ## Wording Rule
 
