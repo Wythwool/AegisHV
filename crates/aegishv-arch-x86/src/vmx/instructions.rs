@@ -8,6 +8,8 @@ pub enum VmxInstruction {
     Vmxoff,
     Vmptrld,
     Vmclear,
+    Vmlaunch,
+    Vmresume,
     Vmread,
     Vmwrite,
 }
@@ -19,6 +21,8 @@ impl VmxInstruction {
             Self::Vmxoff => "VMXOFF",
             Self::Vmptrld => "VMPTRLD",
             Self::Vmclear => "VMCLEAR",
+            Self::Vmlaunch => "VMLAUNCH",
+            Self::Vmresume => "VMRESUME",
             Self::Vmread => "VMREAD",
             Self::Vmwrite => "VMWRITE",
         }
@@ -53,6 +57,21 @@ pub trait VmxInstructionExecutor {
 
     /// # Safety
     ///
+    /// The caller must have loaded and fully initialized the current VMCS for a
+    /// first entry to VMX non-root operation. Host state, guest state, control
+    /// fields, MSR state, and entry/exit controls must already satisfy the Intel
+    /// VM-entry checks for the current processor.
+    unsafe fn vmlaunch(&mut self) -> Result<(), VmxError>;
+
+    /// # Safety
+    ///
+    /// The caller must resume a VMCS that completed a successful VMLAUNCH on
+    /// the current CPU and must have handled the preceding VM exit before
+    /// re-entering VMX non-root operation.
+    unsafe fn vmresume(&mut self) -> Result<(), VmxError>;
+
+    /// # Safety
+    ///
     /// The caller must ensure a current VMCS is loaded and that `field` is a
     /// supported VMCS field encoding for the current processor.
     unsafe fn vmread(&mut self, field: u64) -> Result<u64, VmxError>;
@@ -84,6 +103,14 @@ impl VmxInstructionExecutor for UnsupportedVmxInstructions {
         unsupported(VmxInstruction::Vmclear)
     }
 
+    unsafe fn vmlaunch(&mut self) -> Result<(), VmxError> {
+        unsupported(VmxInstruction::Vmlaunch)
+    }
+
+    unsafe fn vmresume(&mut self) -> Result<(), VmxError> {
+        unsupported(VmxInstruction::Vmresume)
+    }
+
     unsafe fn vmread(&mut self, _field: u64) -> Result<u64, VmxError> {
         unsupported(VmxInstruction::Vmread)
     }
@@ -99,6 +126,8 @@ const fn unsupported<T>(instruction: VmxInstruction) -> Result<T, VmxError> {
         VmxInstruction::Vmxoff => "VMXOFF execution is not available in this build",
         VmxInstruction::Vmptrld => "VMPTRLD execution is not available in this build",
         VmxInstruction::Vmclear => "VMCLEAR execution is not available in this build",
+        VmxInstruction::Vmlaunch => "VMLAUNCH execution is not available in this build",
+        VmxInstruction::Vmresume => "VMRESUME execution is not available in this build",
         VmxInstruction::Vmread => "VMREAD execution is not available in this build",
         VmxInstruction::Vmwrite => "VMWRITE execution is not available in this build",
     };
@@ -115,6 +144,8 @@ pub mod tests_support {
         pub current_vmcs: Option<HostPhysical>,
         pub cleared_vmcs: Option<HostPhysical>,
         pub last_write: Option<(u64, u64)>,
+        pub launch_count: u64,
+        pub resume_count: u64,
         pub next_failure: Option<VmxInstruction>,
         pub read_value: u64,
     }
@@ -162,6 +193,18 @@ pub mod tests_support {
             Ok(())
         }
 
+        unsafe fn vmlaunch(&mut self) -> Result<(), VmxError> {
+            self.maybe_fail(VmxInstruction::Vmlaunch)?;
+            self.launch_count += 1;
+            Ok(())
+        }
+
+        unsafe fn vmresume(&mut self) -> Result<(), VmxError> {
+            self.maybe_fail(VmxInstruction::Vmresume)?;
+            self.resume_count += 1;
+            Ok(())
+        }
+
         unsafe fn vmread(&mut self, _field: u64) -> Result<u64, VmxError> {
             self.maybe_fail(VmxInstruction::Vmread)?;
             Ok(self.read_value)
@@ -198,5 +241,25 @@ mod tests {
         executor.fail_next(VmxInstruction::Vmread);
         let err = unsafe { executor.vmread(0x6800) }.unwrap_err();
         assert_eq!(err.kind, VmxErrorKind::InstructionFailed);
+    }
+
+    #[test]
+    fn mock_executor_records_launch_and_resume() {
+        let mut executor = MockVmxInstructions::default();
+
+        unsafe { executor.vmlaunch() }.unwrap();
+        unsafe { executor.vmresume() }.unwrap();
+
+        assert_eq!(executor.launch_count, 1);
+        assert_eq!(executor.resume_count, 1);
+    }
+
+    #[test]
+    fn unsupported_launch_returns_typed_error() {
+        let mut executor = UnsupportedVmxInstructions;
+
+        let err = unsafe { executor.vmlaunch() }.unwrap_err();
+
+        assert_eq!(err.kind, VmxErrorKind::UnsupportedCapability);
     }
 }

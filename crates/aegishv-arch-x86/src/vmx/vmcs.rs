@@ -118,6 +118,44 @@ impl VmcsRegion {
         self.state = VmcsLifecycleState::Launched;
         Ok(())
     }
+
+    /// # Safety
+    ///
+    /// The caller must fully initialize the current VMCS and make sure all
+    /// guest, host, control, MSR, and entry/exit fields satisfy the processor's
+    /// VM-entry checks before this method runs VMLAUNCH.
+    pub unsafe fn launch_with<E: VmxInstructionExecutor>(
+        &mut self,
+        executor: &mut E,
+    ) -> Result<(), VmxError> {
+        if self.state != VmcsLifecycleState::Loaded {
+            return Err(VmxError::new(
+                VmxErrorKind::InvalidVmcsState,
+                "VMLAUNCH requires a loaded VMCS",
+            ));
+        }
+        unsafe { executor.vmlaunch()? };
+        self.state = VmcsLifecycleState::Launched;
+        Ok(())
+    }
+
+    /// # Safety
+    ///
+    /// The caller must handle the previous VM exit and restore any host-side
+    /// state required by the processor before resuming VMX non-root operation.
+    pub unsafe fn resume_with<E: VmxInstructionExecutor>(
+        &mut self,
+        executor: &mut E,
+    ) -> Result<(), VmxError> {
+        if self.state != VmcsLifecycleState::Launched {
+            return Err(VmxError::new(
+                VmxErrorKind::InvalidVmcsState,
+                "VMRESUME requires a launched VMCS",
+            ));
+        }
+        unsafe { executor.vmresume()? };
+        Ok(())
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -248,7 +286,50 @@ mod tests {
         assert_eq!(vmcs.state(), VmcsLifecycleState::Cleared);
         unsafe { vmcs.load_with(&mut executor) }.unwrap();
         assert_eq!(vmcs.state(), VmcsLifecycleState::Loaded);
-        vmcs.mark_launched().unwrap();
+        unsafe { vmcs.launch_with(&mut executor) }.unwrap();
+        assert_eq!(vmcs.state(), VmcsLifecycleState::Launched);
+        assert_eq!(executor.launch_count, 1);
+    }
+
+    #[test]
+    fn vmcs_resume_requires_a_launched_vmcs() {
+        let mut vmcs =
+            VmcsRegion::allocate(HostPhysical::new(0x8000).unwrap(), revision()).unwrap();
+        let mut executor = MockVmxInstructions::default();
+
+        let err = unsafe { vmcs.resume_with(&mut executor) }.unwrap_err();
+
+        assert_eq!(err.kind, VmxErrorKind::InvalidVmcsState);
+    }
+
+    #[test]
+    fn vmcs_launch_failure_keeps_loaded_state() {
+        let mut vmcs =
+            VmcsRegion::allocate(HostPhysical::new(0x8000).unwrap(), revision()).unwrap();
+        let mut executor = MockVmxInstructions::default();
+
+        unsafe { vmcs.clear_with(&mut executor) }.unwrap();
+        unsafe { vmcs.load_with(&mut executor) }.unwrap();
+        executor.fail_next(crate::vmx::instructions::VmxInstruction::Vmlaunch);
+
+        let err = unsafe { vmcs.launch_with(&mut executor) }.unwrap_err();
+
+        assert_eq!(err.kind, VmxErrorKind::InstructionFailed);
+        assert_eq!(vmcs.state(), VmcsLifecycleState::Loaded);
+    }
+
+    #[test]
+    fn vmcs_resume_runs_after_launch() {
+        let mut vmcs =
+            VmcsRegion::allocate(HostPhysical::new(0x8000).unwrap(), revision()).unwrap();
+        let mut executor = MockVmxInstructions::default();
+
+        unsafe { vmcs.clear_with(&mut executor) }.unwrap();
+        unsafe { vmcs.load_with(&mut executor) }.unwrap();
+        unsafe { vmcs.launch_with(&mut executor) }.unwrap();
+        unsafe { vmcs.resume_with(&mut executor) }.unwrap();
+
+        assert_eq!(executor.resume_count, 1);
         assert_eq!(vmcs.state(), VmcsLifecycleState::Launched);
     }
 
