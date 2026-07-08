@@ -16,7 +16,7 @@ This document records the Intel VMX model code now present in `aegishv-arch-x86`
 - EPT mapping plans, EPT violation decoding, VPID validation, and INVEPT/VPID invalidation plans.
 - Execute and write trap lifecycle models with temporary write-window reporting and Monitor Trap Flag single-step fallback behavior.
 
-These pieces are library code with tests. Normal tests do not execute privileged VMX instructions, and the hardware executor is not wired into the type-1 boot image or hardware evidence path yet.
+These pieces are library code with tests. Normal tests do not execute privileged VMX instructions. The type-1 kernel can now construct a checked VMX runtime plan, but VMXON/VMLAUNCH/VMRESUME execution is not wired into the boot image or hardware evidence path yet.
 
 ## Required Exit Coverage
 

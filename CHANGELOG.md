@@ -26,6 +26,7 @@
 - Tightened the x86_64 type-1 entry stub by clearing direction state and zeroing `.bss` before the Rust entry.
 - Added Intel VMX VMLAUNCH/VMRESUME lifecycle handling, an x86_64 hardware instruction executor, and a VMX runtime sequencing layer.
 - Added AMD SVM hardware instruction wrappers and a checked runtime sequence for EFER.SVME, VMLOAD, VMRUN, VMSAVE, and INVLPGA.
+- Added a type-1 kernel runtime-planning bridge that constructs Intel VMX and AMD SVM runtime objects from checked, page-aligned kernel-side regions.
 - Expanded synthetic Linux and Windows VMI fixture corpus.
 
 ## 0.4.0

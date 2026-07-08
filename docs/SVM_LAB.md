@@ -17,7 +17,7 @@ This document records the AMD SVM model code now present in `aegishv-arch-x86`. 
 - Execute and write trap lifecycle models using NPT permissions.
 - Tiny SVM guest lab validation that requires explicit intercept coverage before a mock VMRUN path is accepted.
 
-These pieces are library code with tests. Normal tests do not execute privileged SVM instructions, and the hardware executor is not wired into the type-1 boot image or hardware evidence path yet.
+These pieces are library code with tests. Normal tests do not execute privileged SVM instructions. The type-1 kernel can now construct a checked SVM runtime plan, but EFER.SVME/VMRUN execution is not wired into the boot image or hardware evidence path yet.
 
 ## Required Intercept Coverage
 
