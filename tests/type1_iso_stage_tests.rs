@@ -28,6 +28,9 @@ fn kernel_inspection_script_checks_entry_and_serial_marker() {
             ".limine_requests section was not found",
             "grep -Fqa",
             "serial_marker_present=true",
+            "expected_limine_missing",
+            "aegishv:type1:limine-missing",
+            "limine_missing_marker_present=true",
             "not QEMU boot evidence",
         ],
     );

@@ -8,6 +8,7 @@ out_dir="${AEGISHV_TYPE1_OUT:-target/type1}"
 manifest="${AEGISHV_TYPE1_INSPECT_MANIFEST:-$out_dir/aegishv-type1-kernel-inspect.txt}"
 expected_entry="${AEGISHV_TYPE1_EXPECTED_ENTRY:-0xFFFFFFFF80200000}"
 expected_serial="${AEGISHV_TYPE1_EXPECTED_SERIAL:-aegishv:type1:halt}"
+expected_limine_missing="${AEGISHV_TYPE1_LIMINE_MISSING_SERIAL:-aegishv:type1:limine-missing}"
 
 usage() {
   cat >&2 <<'USAGE'
@@ -51,6 +52,11 @@ if ! grep -Fqa "$expected_serial" "$kernel_elf"; then
   exit 70
 fi
 
+if ! grep -Fqa "$expected_limine_missing" "$kernel_elf"; then
+  echo "type1 kernel inspect: Limine fallback marker was not found: $expected_limine_missing" >&2
+  exit 70
+fi
+
 mkdir -p "$(dirname "$manifest")"
 cat > "$manifest" <<PLAN
 aegishv type-1 kernel inspect
@@ -62,6 +68,8 @@ expected_entry=$expected_entry
 limine_requests_section=$limine_requests_section
 serial_marker=$expected_serial
 serial_marker_present=true
+limine_missing_marker=$expected_limine_missing
+limine_missing_marker_present=true
 bootable_image=false
 qemu_evidence=false
 
