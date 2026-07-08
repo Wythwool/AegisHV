@@ -14,10 +14,11 @@ This document records the planned type-1 boot boundary now present in the reposi
 - `scripts/build-type1-kernel.sh` writes `target/type1/aegishv-type1.elf` and a kernel build manifest.
 - `scripts/inspect-type1-kernel.sh` records local ELF inspection for the expected entry address and serial marker bytes.
 - `scripts/stage-type1-limine-iso.sh` stages the kernel ELF and Limine config into an ISO-root directory without claiming boot evidence.
+- `scripts/build-type1-limine-iso.sh` can build a Limine ISO when external Limine and xorriso tooling is supplied.
 
 ## Not Present Yet
 
-- Bootable type-1 ISO is not produced.
+- Bootable type-1 ISO is not produced by default CI because Limine and xorriso are external reviewed tools.
 - VMXON, VMLAUNCH, VMRESUME, VMRUN, and EL2 entry are not implemented by this milestone.
 - AP startup assembly, APIC routing, IDT/GDT runtime setup, and long-mode transition code are not implemented.
 - QEMU boot evidence is not present.
@@ -25,4 +26,4 @@ This document records the planned type-1 boot boundary now present in the reposi
 
 ## Next Gate
 
-The next milestone should add real Limine/xorriso packaging around the staged ISO root, then emit `aegishv:type1:halt` under QEMU and halt in a controlled path. That milestone still needs a bootable ISO, a captured serial log, and negative tests before any runtime claim is made.
+The next milestone should run the tool-gated Limine ISO builder on a host with reviewed Limine/xorriso inputs, then emit `aegishv:type1:halt` under QEMU and halt in a controlled path. That milestone still needs a captured serial log and negative tests before any runtime claim is made.

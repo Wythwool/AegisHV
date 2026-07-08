@@ -73,6 +73,8 @@ They cover memory-map validation, physical page allocation, page ownership, huge
 
 `scripts/stage-type1-limine-iso.sh` stages the kernel ELF and Limine config into `target/type1/limine-iso-root` and writes `target/type1/aegishv-type1-iso-stage.txt`. It records whether `limine` and `xorriso` are present, but the staged root is not a bootable ISO.
 
+`scripts/build-type1-limine-iso.sh` is the tool-gated ISO builder. It requires `xorriso`, the `limine` command, and `AEGISHV_LIMINE_DIR` containing `limine-bios.sys`, `limine-bios-cd.bin`, and `limine-uefi-cd.bin`. It writes `target/type1/aegishv-type1.iso` and `target/type1/aegishv-type1-iso-build.txt` when those reviewed inputs are present. The script does not run QEMU and the ISO build is not QEMU boot evidence.
+
 Device model tests are also normal locked Rust tests:
 
 ```bash
@@ -81,7 +83,7 @@ cargo test --locked -p aegishv-devices --all-features
 
 They cover virtio-mmio feature negotiation and queue validation, bounded virtio-console queues, read-only virtio-blk bounds checks, write refusal, and virtio-net quarantine decisions. They do not execute MMIO exits or run a service VM.
 
-`scripts/type1-qemu-smoke.sh` is opt-in lab plumbing for a boot image once one exists. The repository does not currently ship `./target/type1/aegishv-type1.elf`. A successful future smoke must capture the configured serial marker, defaulting to `aegishv:type1:halt`.
+`scripts/type1-qemu-smoke.sh` is opt-in lab plumbing for a boot image once one exists. The repository does not currently ship `./target/type1/aegishv-type1.elf`. A successful future smoke must capture the configured serial marker, defaulting to `aegishv:type1:halt`. The script supports kernel ELF input with `-kernel` and ISO input with `-cdrom`/`-boot d`.
 
 ```bash
 AEGISHV_TYPE1_EXPECTED_SERIAL=aegishv:type1:halt \
@@ -171,7 +173,7 @@ sudo ./scripts/live-tracefs-smoke.sh --timeout 30
 The script enables `events/kvm/kvm_exit`, writes a trace marker, and waits for a `kvm_exit` line from `trace_pipe` after that marker. It restores the previous `kvm_exit/enable` and `tracing_on` values before exiting. It fails if tracefs is missing, permissions are insufficient, the tracepoint metadata is not readable, or no live KVM exit is observed within the timeout. This smoke is separate from replay and golden fixture tests, and it does not prove type-1 support, VMI, EPT/NPT enforcement, syscall-path integrity, or hardware PMU sampling.
 
 CI additionally runs nextest, Docker build smoke, cargo-audit, cargo-deny, and x86_64/aarch64 glibc/musl cross-builds.
-The MSRV CI job also builds and inspects the minimal type-1 kernel ELF and stages the Limine ISO root, but it does not build a bootable ISO or run QEMU.
+The MSRV CI job also builds and inspects the minimal type-1 kernel ELF and stages the Limine ISO root, but it does not fetch Limine, build a bootable ISO, or run QEMU.
 
 ## Opt-In Hardware Workflow
 

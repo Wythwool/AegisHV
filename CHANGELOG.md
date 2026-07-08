@@ -10,6 +10,7 @@
 - Added type-1 image input planning and a QEMU serial-marker evidence contract for future boot smoke runs.
 - Added a minimal x86_64 type-1 kernel ELF build path that writes the planned serial marker and records that ISO/QEMU evidence is still absent.
 - Added type-1 kernel ELF inspection and Limine ISO-root staging helpers without claiming bootable ISO or QEMU evidence.
+- Added a tool-gated Limine ISO builder and ISO-aware QEMU smoke command construction.
 - Expanded synthetic Linux and Windows VMI fixture corpus.
 
 ## 0.4.0

@@ -9,6 +9,7 @@ The type-1 lab milestone is blocked until `docs/TYPE1_READINESS_GATE.md` passes.
 - kernel ELF build manifest from `scripts/build-type1-kernel.sh`;
 - kernel ELF inspection manifest from `scripts/inspect-type1-kernel.sh`;
 - ISO-root staging manifest from `scripts/stage-type1-limine-iso.sh`;
+- Limine ISO build manifest from `scripts/build-type1-limine-iso.sh`, when external tools are reviewed and available;
 - image input manifest from `scripts/plan-type1-image.sh`;
 - QEMU command line;
 - serial log containing the expected marker;
