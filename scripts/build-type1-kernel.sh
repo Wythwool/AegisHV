@@ -44,6 +44,7 @@ cargo rustc \
   --release \
   -- \
   -C panic=abort \
+  -C strip=none \
   -C link-arg=-T"$linker_script"
 
 built="target/$target/release/aegishv-type1-kernel"
@@ -54,6 +55,7 @@ fi
 
 cp "$built" "$kernel_elf"
 bash scripts/plan-type1-image.sh --require-kernel --kernel-elf "$kernel_elf" >/dev/null
+inspect_manifest="$(bash scripts/inspect-type1-kernel.sh "$kernel_elf")"
 
 cat > "$manifest" <<PLAN
 aegishv type-1 kernel build
@@ -63,6 +65,7 @@ kernel_elf_present=true
 target=$target
 linker_script=$linker_script
 serial_marker=aegishv:type1:halt
+inspect_manifest=$inspect_manifest
 bootable_image=false
 qemu_evidence=false
 
