@@ -36,4 +36,4 @@ The output reports the requested iteration count, elapsed microseconds, and synt
 
 ## Limits
 
-No code in this layer writes hardware page tables, performs INVEPT/INVLPGA/TLBI, controls VMX/SVM/EL2 execution, or injects real single-step traps. Unsupported capability paths return typed errors or negotiation failures instead of reporting success.
+No code in this trap-engine layer writes hardware page tables, performs INVEPT/INVLPGA/TLBI, controls VMX/SVM/EL2 execution, or injects real single-step traps. Unsupported capability paths return typed errors or negotiation failures instead of reporting success.

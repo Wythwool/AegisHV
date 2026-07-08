@@ -22,7 +22,7 @@ This document records the planned type-1 boot boundary now present in the reposi
 ## Not Present Yet
 
 - Bootable type-1 ISO is not produced by default CI because Limine and xorriso are external reviewed tools.
-- The type-1 kernel does not call the VMXON/VMLAUNCH/VMRESUME library path yet; VMRUN and EL2 entry are not implemented by this milestone.
+- The type-1 kernel does not call the VMXON/VMLAUNCH/VMRESUME or EFER.SVME/VMRUN library paths yet; EL2 entry is not implemented by this milestone.
 - AP startup assembly, APIC routing, IDT/GDT runtime setup, and long-mode transition code are not implemented.
 - QEMU boot evidence is not present.
 - Guest execution, VM exits, EPT/NPT/Stage-2 permission updates, and live VMI are not implemented by this boot boundary.

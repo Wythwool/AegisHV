@@ -21,7 +21,7 @@ This review is deliberately strict. It lists gaps that block stronger release cl
 ## Type-1 Gaps Not Closed
 
 - Bootable type-1 image is not present in this repository.
-- Bare-metal VMX, SVM, or EL2 runtime backend is not present.
+- Boot-integrated VMX, SVM, or EL2 runtime backend evidence is not present.
 - Direct EPT/NPT/Stage-2 enforcement is not implemented.
 - Device isolation is modeled but not programmed into hardware.
 

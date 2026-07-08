@@ -1,6 +1,6 @@
 # AMD SVM Lab Boundary
 
-This document records the AMD SVM model code now present in `aegishv-arch-x86`. The current repository still does not ship a bootable type-1 image, an AMD SVM root runtime, or host hardware evidence.
+This document records the AMD SVM model code now present in `aegishv-arch-x86`. The current repository still does not ship a bootable type-1 image, a wired guest run, or host hardware evidence.
 
 ## Implemented Model Pieces
 
@@ -8,6 +8,8 @@ This document records the AMD SVM model code now present in `aegishv-arch-x86`. 
 - EFER.SVME handling as a typed value model.
 - 4K-aligned VMCB control and state-save structures with layout tests.
 - Typed SVM instruction facade for EFER.SVME, VMRUN, VMLOAD, VMSAVE, and INVLPGA. The default executor returns typed unsupported errors.
+- x86_64 hardware executor wrappers for EFER.SVME, VMRUN, VMLOAD, VMSAVE, and INVLPGA.
+- SVM runtime sequencing for EFER.SVME, VMLOAD, VMRUN, VMSAVE, and INVLPGA around an owned VMCB address.
 - Explicit intercept handlers for CPUID, MSR, CR, IO, HLT, and PAUSE.
 - NPT mapping plans with permission updates and protected hypervisor memory ranges.
 - Nested page fault decoding and routing to the permission-trap model.
@@ -15,7 +17,7 @@ This document records the AMD SVM model code now present in `aegishv-arch-x86`. 
 - Execute and write trap lifecycle models using NPT permissions.
 - Tiny SVM guest lab validation that requires explicit intercept coverage before a mock VMRUN path is accepted.
 
-These pieces are library models with tests. They are not wired to privileged SVM instructions on a live host.
+These pieces are library code with tests. Normal tests do not execute privileged SVM instructions, and the hardware executor is not wired into the type-1 boot image or hardware evidence path yet.
 
 ## Required Intercept Coverage
 

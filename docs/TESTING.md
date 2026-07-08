@@ -136,7 +136,7 @@ The AMD SVM model code lives in `aegishv-arch-x86::svm` and is covered by normal
 cargo test --locked -p aegishv-arch-x86 --all-features svm::
 ```
 
-The tests cover SVM feature gates, EFER.SVME value handling, VMCB layout and accessors, SVM instruction facades, CPUID/MSR/CR/IO/HLT/PAUSE intercept handling, NPT mapping and protected hypervisor ranges, nested page fault routing, ASID allocation, INVLPGA planning, execute/write trap windows, and tiny guest lab validation. They do not execute privileged SVM instructions.
+The tests cover SVM feature gates, EFER.SVME value handling, VMCB layout and accessors, SVM instruction facades, hardware wrapper construction, runtime sequencing, CPUID/MSR/CR/IO/HLT/PAUSE intercept handling, NPT mapping and protected hypervisor ranges, nested page fault routing, ASID allocation, INVLPGA planning, execute/write trap windows, and tiny guest lab validation. They do not execute privileged SVM instructions.
 
 `scripts/svm-amd-lab-smoke.sh` is opt-in lab plumbing for AMD host checks and a future boot image:
 
