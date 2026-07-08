@@ -7,4 +7,6 @@ license = "MIT"
 description = "minimal no_std AegisHV type-1 kernel entry artifact for x86_64 lab bring-up"
 
 [dependencies]
+aegishv-arch-x86 = { path = "../aegishv-arch-x86" }
+aegishv-hypervisor-core = { path = "../aegishv-hypervisor-core" }
 aegishv-type1-boot = { path = "../aegishv-type1-boot" }

@@ -78,14 +78,28 @@ pub extern "C" fn aegishv_type1_rust_entry() -> ! {
     unsafe {
         serial_init(COM1);
     }
-    let status = unsafe { read_limine_handoff_status() };
+    let handoff = unsafe { read_limine_minimal_handoff() };
+    let status = aegishv_type1_kernel::limine_minimal_handoff_status(handoff);
     if status.is_ready() {
         serial_write_line(status.serial_marker());
+        serial_write_line(runtime_backend_marker(handoff));
     } else {
         serial_write_line(aegishv_type1_kernel::SERIAL_LIMINE_MISSING_MARKER);
         serial_write_line(status.serial_marker());
     }
     halt_loop()
+}
+
+#[cfg(target_os = "none")]
+fn runtime_backend_marker(handoff: aegishv_type1_kernel::LimineMinimalHandoff) -> &'static str {
+    match aegishv_type1_kernel::plan_type1_runtime(
+        handoff,
+        aegishv_type1_kernel::Type1BackendRequest::Auto,
+        aegishv_type1_kernel::Type1ArchCapabilities::none(),
+    ) {
+        Ok(plan) => plan.backend.serial_marker(),
+        Err(_) => aegishv_type1_kernel::SERIAL_RUNTIME_PLAN_ERROR_MARKER,
+    }
 }
 
 #[cfg(target_os = "none")]
@@ -112,6 +126,11 @@ fn serial_write_line(text: &str) {
 
 #[cfg(target_os = "none")]
 unsafe fn read_limine_handoff_status() -> aegishv_type1_kernel::LimineHandoffStatus {
+    aegishv_type1_kernel::limine_minimal_handoff_status(read_limine_minimal_handoff())
+}
+
+#[cfg(target_os = "none")]
+unsafe fn read_limine_minimal_handoff() -> aegishv_type1_kernel::LimineMinimalHandoff {
     let base_revision = core::ptr::addr_of!(LIMINE_BASE_REVISION_TAG)
         .cast::<u64>()
         .add(2)
@@ -186,22 +205,20 @@ unsafe fn read_limine_handoff_status() -> aegishv_type1_kernel::LimineHandoffSta
         )
     };
 
-    aegishv_type1_kernel::limine_minimal_handoff_status(
-        aegishv_type1_kernel::LimineMinimalHandoff {
-            base_revision_value: base_revision,
-            hhdm_response,
-            hhdm_revision,
-            hhdm_offset,
-            memmap_response,
-            memmap_revision,
-            memmap_entry_count,
-            memmap_entries,
-            executable_address_response,
-            executable_address_revision,
-            executable_physical_base,
-            executable_virtual_base,
-        },
-    )
+    aegishv_type1_kernel::LimineMinimalHandoff {
+        base_revision_value: base_revision,
+        hhdm_response,
+        hhdm_revision,
+        hhdm_offset,
+        memmap_response,
+        memmap_revision,
+        memmap_entry_count,
+        memmap_entries,
+        executable_address_response,
+        executable_address_revision,
+        executable_physical_base,
+        executable_virtual_base,
+    }
 }
 
 #[cfg(target_os = "none")]

@@ -1,8 +1,20 @@
 #![no_std]
 
+use aegishv_arch_x86::svm::features::SvmErrorKind;
+use aegishv_arch_x86::svm::runtime::SvmRuntime;
+use aegishv_arch_x86::vmx::features::VmxErrorKind;
+use aegishv_arch_x86::vmx::region::{VmxRevisionId, VmxonRegion};
+use aegishv_arch_x86::vmx::runtime::VmxRuntime;
+use aegishv_arch_x86::vmx::vmcs::VmcsRegion;
+use aegishv_hypervisor_core::ids::HostPhysical;
+
 pub const SERIAL_READY_MARKER: &str = "aegishv:type1:halt";
 pub const SERIAL_PANIC_MARKER: &str = "aegishv:type1:panic";
 pub const SERIAL_LIMINE_MISSING_MARKER: &str = "aegishv:type1:limine-missing";
+pub const SERIAL_RUNTIME_BACKEND_NONE_MARKER: &str = "aegishv:type1:backend-none";
+pub const SERIAL_RUNTIME_BACKEND_VMX_MARKER: &str = "aegishv:type1:backend-vmx";
+pub const SERIAL_RUNTIME_BACKEND_SVM_MARKER: &str = "aegishv:type1:backend-svm";
+pub const SERIAL_RUNTIME_PLAN_ERROR_MARKER: &str = "aegishv:type1:runtime-plan-error";
 pub const SERIAL_LIMINE_BASE_REVISION_MARKER: &str = "aegishv:type1:limine-base-revision";
 pub const SERIAL_LIMINE_HHDM_MISSING_MARKER: &str = "aegishv:type1:limine-hhdm-missing";
 pub const SERIAL_LIMINE_HHDM_REVISION_MARKER: &str = "aegishv:type1:limine-hhdm-revision";
@@ -26,6 +38,13 @@ pub const LIMINE_MEMMAP_ENTRY_COUNT_OFFSET: usize = 8;
 pub const LIMINE_MEMMAP_ENTRIES_OFFSET: usize = 16;
 pub const LIMINE_EXECUTABLE_PHYSICAL_BASE_OFFSET: usize = 8;
 pub const LIMINE_EXECUTABLE_VIRTUAL_BASE_OFFSET: usize = 16;
+pub const TYPE1_RUNTIME_REGION_BASE_OFFSET: u64 = 0x80_000;
+pub const TYPE1_RUNTIME_PAGE_SIZE: u64 = 4096;
+pub const TYPE1_VMXON_REGION_OFFSET: u64 = TYPE1_RUNTIME_REGION_BASE_OFFSET;
+pub const TYPE1_VMCS_REGION_OFFSET: u64 =
+    TYPE1_RUNTIME_REGION_BASE_OFFSET + TYPE1_RUNTIME_PAGE_SIZE;
+pub const TYPE1_SVM_VMCB_REGION_OFFSET: u64 =
+    TYPE1_RUNTIME_REGION_BASE_OFFSET + (2 * TYPE1_RUNTIME_PAGE_SIZE);
 
 pub const LIMINE_REQUESTS_START_MARKER: [u64; 4] = [
     0xf6b8_f4b3_9de7_d1ae,
@@ -234,6 +253,202 @@ pub const fn limine_base_revision_tag() -> [u64; 3] {
     ]
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Type1ArchCapabilities {
+    pub intel_vmx: bool,
+    pub amd_svm: bool,
+}
+
+impl Type1ArchCapabilities {
+    pub const fn none() -> Self {
+        Self {
+            intel_vmx: false,
+            amd_svm: false,
+        }
+    }
+
+    pub const fn intel_vmx() -> Self {
+        Self {
+            intel_vmx: true,
+            amd_svm: false,
+        }
+    }
+
+    pub const fn amd_svm() -> Self {
+        Self {
+            intel_vmx: false,
+            amd_svm: true,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Type1BackendRequest {
+    Auto,
+    IntelVmx,
+    AmdSvm,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Type1RuntimeBackend {
+    None,
+    IntelVmx,
+    AmdSvm,
+}
+
+impl Type1RuntimeBackend {
+    pub const fn serial_marker(self) -> &'static str {
+        match self {
+            Self::None => SERIAL_RUNTIME_BACKEND_NONE_MARKER,
+            Self::IntelVmx => SERIAL_RUNTIME_BACKEND_VMX_MARKER,
+            Self::AmdSvm => SERIAL_RUNTIME_BACKEND_SVM_MARKER,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Type1RuntimeMemoryPlan {
+    pub runtime_base: u64,
+    pub vmxon_physical: u64,
+    pub vmcs_physical: u64,
+    pub svm_vmcb_physical: u64,
+}
+
+impl Type1RuntimeMemoryPlan {
+    pub const fn from_executable_base(
+        executable_physical_base: u64,
+    ) -> Result<Self, Type1RuntimePlanError> {
+        let runtime_base =
+            match executable_physical_base.checked_add(TYPE1_RUNTIME_REGION_BASE_OFFSET) {
+                Some(value) => value,
+                None => return Err(Type1RuntimePlanError::RuntimeAddressOverflow),
+            };
+        let vmxon_physical = match executable_physical_base.checked_add(TYPE1_VMXON_REGION_OFFSET) {
+            Some(value) => value,
+            None => return Err(Type1RuntimePlanError::RuntimeAddressOverflow),
+        };
+        let vmcs_physical = match executable_physical_base.checked_add(TYPE1_VMCS_REGION_OFFSET) {
+            Some(value) => value,
+            None => return Err(Type1RuntimePlanError::RuntimeAddressOverflow),
+        };
+        let svm_vmcb_physical =
+            match executable_physical_base.checked_add(TYPE1_SVM_VMCB_REGION_OFFSET) {
+                Some(value) => value,
+                None => return Err(Type1RuntimePlanError::RuntimeAddressOverflow),
+            };
+        if runtime_base % TYPE1_RUNTIME_PAGE_SIZE != 0
+            || vmxon_physical % TYPE1_RUNTIME_PAGE_SIZE != 0
+            || vmcs_physical % TYPE1_RUNTIME_PAGE_SIZE != 0
+            || svm_vmcb_physical % TYPE1_RUNTIME_PAGE_SIZE != 0
+        {
+            return Err(Type1RuntimePlanError::RuntimeAddressMisaligned);
+        }
+        Ok(Self {
+            runtime_base,
+            vmxon_physical,
+            vmcs_physical,
+            svm_vmcb_physical,
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Type1RuntimePlan {
+    pub backend: Type1RuntimeBackend,
+    pub memory: Type1RuntimeMemoryPlan,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Type1RuntimePlanError {
+    Handoff(LimineHandoffStatus),
+    MixedVendorCapabilities,
+    MissingIntelVmx,
+    MissingAmdSvm,
+    RuntimeAddressOverflow,
+    RuntimeAddressMisaligned,
+    InvalidRuntimeAddress,
+    BackendMismatch,
+    Vmx(VmxErrorKind),
+    Svm(SvmErrorKind),
+}
+
+pub const fn select_type1_runtime_backend(
+    request: Type1BackendRequest,
+    capabilities: Type1ArchCapabilities,
+) -> Result<Type1RuntimeBackend, Type1RuntimePlanError> {
+    match request {
+        Type1BackendRequest::Auto => match (capabilities.intel_vmx, capabilities.amd_svm) {
+            (false, false) => Ok(Type1RuntimeBackend::None),
+            (true, false) => Ok(Type1RuntimeBackend::IntelVmx),
+            (false, true) => Ok(Type1RuntimeBackend::AmdSvm),
+            (true, true) => Err(Type1RuntimePlanError::MixedVendorCapabilities),
+        },
+        Type1BackendRequest::IntelVmx => {
+            if capabilities.intel_vmx {
+                Ok(Type1RuntimeBackend::IntelVmx)
+            } else {
+                Err(Type1RuntimePlanError::MissingIntelVmx)
+            }
+        }
+        Type1BackendRequest::AmdSvm => {
+            if capabilities.amd_svm {
+                Ok(Type1RuntimeBackend::AmdSvm)
+            } else {
+                Err(Type1RuntimePlanError::MissingAmdSvm)
+            }
+        }
+    }
+}
+
+pub const fn plan_type1_runtime(
+    handoff: LimineMinimalHandoff,
+    request: Type1BackendRequest,
+    capabilities: Type1ArchCapabilities,
+) -> Result<Type1RuntimePlan, Type1RuntimePlanError> {
+    let status = limine_minimal_handoff_status(handoff);
+    if !status.is_ready() {
+        return Err(Type1RuntimePlanError::Handoff(status));
+    }
+    let memory =
+        match Type1RuntimeMemoryPlan::from_executable_base(handoff.executable_physical_base) {
+            Ok(plan) => plan,
+            Err(err) => return Err(err),
+        };
+    let backend = match select_type1_runtime_backend(request, capabilities) {
+        Ok(backend) => backend,
+        Err(err) => return Err(err),
+    };
+    Ok(Type1RuntimePlan { backend, memory })
+}
+
+pub fn build_vmx_runtime(
+    plan: Type1RuntimePlan,
+    revision_id: u32,
+) -> Result<VmxRuntime, Type1RuntimePlanError> {
+    if plan.backend != Type1RuntimeBackend::IntelVmx {
+        return Err(Type1RuntimePlanError::BackendMismatch);
+    }
+    let revision =
+        VmxRevisionId::new(revision_id).map_err(|err| Type1RuntimePlanError::Vmx(err.kind))?;
+    let vmxon = VmxonRegion::new(host_physical(plan.memory.vmxon_physical)?, revision)
+        .map_err(|err| Type1RuntimePlanError::Vmx(err.kind))?;
+    let vmcs = VmcsRegion::allocate(host_physical(plan.memory.vmcs_physical)?, revision)
+        .map_err(|err| Type1RuntimePlanError::Vmx(err.kind))?;
+    VmxRuntime::new(vmxon, vmcs).map_err(|err| Type1RuntimePlanError::Vmx(err.kind))
+}
+
+pub fn build_svm_runtime(plan: Type1RuntimePlan) -> Result<SvmRuntime, Type1RuntimePlanError> {
+    if plan.backend != Type1RuntimeBackend::AmdSvm {
+        return Err(Type1RuntimePlanError::BackendMismatch);
+    }
+    SvmRuntime::new(host_physical(plan.memory.svm_vmcb_physical)?)
+        .map_err(|err| Type1RuntimePlanError::Svm(err.kind))
+}
+
+fn host_physical(raw: u64) -> Result<HostPhysical, Type1RuntimePlanError> {
+    HostPhysical::new(raw).map_err(|_| Type1RuntimePlanError::InvalidRuntimeAddress)
+}
+
 pub const fn serial_ready_marker() -> &'static str {
     SERIAL_READY_MARKER
 }
@@ -285,6 +500,22 @@ mod tests {
         let len = marker_line(SERIAL_LIMINE_MISSING_MARKER, &mut out).unwrap();
 
         assert_eq!(&out[..len], b"aegishv:type1:limine-missing\n");
+    }
+
+    #[test]
+    fn runtime_backend_markers_fit_serial_line_buffer() {
+        let mut out = [0u8; 64];
+        let len = marker_line(SERIAL_RUNTIME_BACKEND_NONE_MARKER, &mut out).unwrap();
+
+        assert_eq!(&out[..len], b"aegishv:type1:backend-none\n");
+        assert_eq!(
+            Type1RuntimeBackend::IntelVmx.serial_marker(),
+            "aegishv:type1:backend-vmx"
+        );
+        assert_eq!(
+            Type1RuntimeBackend::AmdSvm.serial_marker(),
+            "aegishv:type1:backend-svm"
+        );
     }
 
     #[test]
@@ -521,5 +752,121 @@ mod tests {
             }),
             LimineHandoffStatus::ExecutableVirtualBaseMismatch
         );
+    }
+
+    fn ready_handoff() -> LimineMinimalHandoff {
+        LimineMinimalHandoff {
+            base_revision_value: 0,
+            hhdm_response: 1,
+            hhdm_revision: 0,
+            hhdm_offset: 0xffff_8000_0000_0000,
+            memmap_response: 1,
+            memmap_revision: 0,
+            memmap_entry_count: 1,
+            memmap_entries: 0xffff_8000_0010_0000,
+            executable_address_response: 1,
+            executable_address_revision: 0,
+            executable_physical_base: aegishv_type1_boot::layout::KERNEL_PHYSICAL_BASE,
+            executable_virtual_base: aegishv_type1_boot::layout::KERNEL_VIRTUAL_BASE,
+        }
+    }
+
+    #[test]
+    fn runtime_plan_selects_backend_from_capabilities() {
+        assert_eq!(
+            select_type1_runtime_backend(Type1BackendRequest::Auto, Type1ArchCapabilities::none())
+                .unwrap(),
+            Type1RuntimeBackend::None
+        );
+        assert_eq!(
+            select_type1_runtime_backend(
+                Type1BackendRequest::Auto,
+                Type1ArchCapabilities::intel_vmx()
+            )
+            .unwrap(),
+            Type1RuntimeBackend::IntelVmx
+        );
+        assert_eq!(
+            select_type1_runtime_backend(
+                Type1BackendRequest::Auto,
+                Type1ArchCapabilities::amd_svm()
+            )
+            .unwrap(),
+            Type1RuntimeBackend::AmdSvm
+        );
+        assert_eq!(
+            select_type1_runtime_backend(
+                Type1BackendRequest::Auto,
+                Type1ArchCapabilities {
+                    intel_vmx: true,
+                    amd_svm: true
+                }
+            )
+            .unwrap_err(),
+            Type1RuntimePlanError::MixedVendorCapabilities
+        );
+    }
+
+    #[test]
+    fn runtime_memory_plan_uses_page_aligned_regions_after_kernel() {
+        let plan = plan_type1_runtime(
+            ready_handoff(),
+            Type1BackendRequest::Auto,
+            Type1ArchCapabilities::intel_vmx(),
+        )
+        .unwrap();
+
+        assert_eq!(plan.backend, Type1RuntimeBackend::IntelVmx);
+        assert_eq!(plan.memory.runtime_base, 0x28_0000);
+        assert_eq!(plan.memory.vmxon_physical, 0x28_0000);
+        assert_eq!(plan.memory.vmcs_physical, 0x28_1000);
+        assert_eq!(plan.memory.svm_vmcb_physical, 0x28_2000);
+    }
+
+    #[test]
+    fn runtime_plan_rejects_unready_handoff() {
+        let err = plan_type1_runtime(
+            LimineMinimalHandoff {
+                hhdm_response: 0,
+                ..ready_handoff()
+            },
+            Type1BackendRequest::Auto,
+            Type1ArchCapabilities::intel_vmx(),
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            err,
+            Type1RuntimePlanError::Handoff(LimineHandoffStatus::HhdmResponseMissing)
+        );
+    }
+
+    #[test]
+    fn runtime_plan_builds_vmx_runtime_object() {
+        let plan = plan_type1_runtime(
+            ready_handoff(),
+            Type1BackendRequest::IntelVmx,
+            Type1ArchCapabilities::intel_vmx(),
+        )
+        .unwrap();
+
+        let runtime = build_vmx_runtime(plan, 0x33).unwrap();
+
+        assert_eq!(runtime.vmxon_physical_address().get(), 0x28_0000);
+        assert_eq!(runtime.vmcs_physical_address().get(), 0x28_1000);
+    }
+
+    #[test]
+    fn runtime_plan_builds_svm_runtime_object() {
+        let plan = plan_type1_runtime(
+            ready_handoff(),
+            Type1BackendRequest::AmdSvm,
+            Type1ArchCapabilities::amd_svm(),
+        )
+        .unwrap();
+
+        let runtime = build_svm_runtime(plan).unwrap();
+
+        assert_eq!(runtime.vmcb_physical_address().get(), 0x28_2000);
     }
 }

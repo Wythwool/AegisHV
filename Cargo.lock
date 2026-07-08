@@ -49,5 +49,7 @@ dependencies = [
 name = "aegishv-type1-kernel"
 version = "0.1.0"
 dependencies = [
+ "aegishv-arch-x86",
+ "aegishv-hypervisor-core",
  "aegishv-type1-boot",
 ]
