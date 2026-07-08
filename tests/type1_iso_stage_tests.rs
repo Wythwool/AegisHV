@@ -142,3 +142,25 @@ fn qemu_evidence_script_records_digest_marker_and_exit_status() {
     assert!(ci.contains("bash scripts/type1-qemu-evidence.sh --help"));
     assert!(testing.contains("scripts/type1-qemu-evidence.sh"));
 }
+
+#[test]
+fn opt_in_type1_lab_runner_chains_tools_iso_and_qemu_evidence() {
+    let script = read_repo_file("scripts/run-type1-lab.sh");
+    let ci = read_repo_file(".github/workflows/ci.yml");
+    let testing = read_repo_file("docs/TESTING.md");
+
+    assert_contains_all(
+        &script,
+        &[
+            "AEGISHV_RUN_TYPE1_LAB",
+            "check-type1-lab-tools.sh --require-all",
+            "build-type1-limine-iso.sh --build-kernel",
+            "type1-qemu-evidence.sh --image",
+            "qemu_evidence=",
+            "lab_complete=",
+            "exit \"$qemu_status\"",
+        ],
+    );
+    assert!(ci.contains("bash scripts/run-type1-lab.sh --help"));
+    assert!(testing.contains("scripts/run-type1-lab.sh"));
+}

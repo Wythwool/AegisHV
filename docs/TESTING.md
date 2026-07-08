@@ -100,6 +100,14 @@ The script exits with a clear error when the image is missing, when QEMU is miss
 scripts/type1-qemu-evidence.sh --image ./target/type1/aegishv-type1.iso --timeout 20
 ```
 
+`scripts/run-type1-lab.sh` is the one-command local chain for reviewed lab hosts. It refuses to run unless `AEGISHV_RUN_TYPE1_LAB=1` is set, then runs `check-type1-lab-tools.sh --require-all`, builds the Limine ISO, runs QEMU evidence capture, and writes `target/type1/aegishv-type1-lab-summary.txt`.
+
+```bash
+AEGISHV_RUN_TYPE1_LAB=1 \
+AEGISHV_LIMINE_DIR=/path/to/reviewed-limine \
+scripts/run-type1-lab.sh --timeout 20
+```
+
 ## Intel VMX Lab Models
 
 The Intel VMX model code lives in `aegishv-arch-x86::vmx` and is covered by normal locked Rust tests:

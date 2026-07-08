@@ -17,6 +17,7 @@ This document records the planned type-1 boot boundary now present in the reposi
 - `scripts/build-type1-limine-iso.sh` can build a Limine ISO when external Limine and xorriso tooling is supplied.
 - `scripts/check-type1-lab-tools.sh` records local availability for the reviewed ISO and QEMU lab path.
 - `scripts/type1-qemu-evidence.sh` wraps the opt-in QEMU smoke path and records the local serial-marker evidence result.
+- `scripts/run-type1-lab.sh` chains the local tool gate, Limine ISO build, and QEMU evidence capture behind an explicit lab-run environment flag.
 
 ## Not Present Yet
 
