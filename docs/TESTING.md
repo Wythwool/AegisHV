@@ -75,6 +75,8 @@ They cover memory-map validation, physical page allocation, page ownership, huge
 
 `scripts/build-type1-limine-iso.sh` is the tool-gated ISO builder. It requires `xorriso`, the `limine` command, and `AEGISHV_LIMINE_DIR` containing `limine-bios.sys`, `limine-bios-cd.bin`, and `limine-uefi-cd.bin`. It writes `target/type1/aegishv-type1.iso` and `target/type1/aegishv-type1-iso-build.txt` when those reviewed inputs are present. The script does not run QEMU and the ISO build is not QEMU boot evidence.
 
+`scripts/check-type1-lab-tools.sh` writes `target/type1/aegishv-type1-lab-tools.txt` with local availability for the Rust none target, QEMU, xorriso, the Limine command, and reviewed Limine ISO files. Normal CI runs it without `--require-all` so missing lab tools are recorded, not hidden. Local lab hosts can use `--require-all` before attempting an ISO/QEMU run.
+
 Device model tests are also normal locked Rust tests:
 
 ```bash

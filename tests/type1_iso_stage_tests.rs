@@ -81,6 +81,30 @@ fn limine_iso_build_script_requires_real_tools_and_keeps_qemu_separate() {
 }
 
 #[test]
+fn type1_lab_tool_probe_records_local_prerequisites_without_running_qemu() {
+    let script = read_repo_file("scripts/check-type1-lab-tools.sh");
+    let ci = read_repo_file(".github/workflows/ci.yml");
+    let testing = read_repo_file("docs/TESTING.md");
+
+    assert_contains_all(
+        &script,
+        &[
+            "--require-all",
+            "x86_64-unknown-none",
+            "qemu-system-x86_64",
+            "xorriso",
+            "limine-bios.sys",
+            "limine-bios-cd.bin",
+            "limine-uefi-cd.bin",
+            "lab_ready=",
+            "does not build an ISO or run QEMU",
+        ],
+    );
+    assert!(ci.contains("bash scripts/check-type1-lab-tools.sh"));
+    assert!(testing.contains("scripts/check-type1-lab-tools.sh"));
+}
+
+#[test]
 fn qemu_smoke_supports_iso_boot_media() {
     let script = read_repo_file("scripts/type1-qemu-smoke.sh");
 

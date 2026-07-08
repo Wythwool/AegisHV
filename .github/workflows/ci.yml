@@ -31,6 +31,7 @@ jobs:
         run: cargo build --locked --release
       - name: Type-1 kernel ELF
         run: |
+          bash scripts/check-type1-lab-tools.sh
           bash scripts/build-type1-kernel.sh
           bash scripts/stage-type1-limine-iso.sh
       - name: Validate config

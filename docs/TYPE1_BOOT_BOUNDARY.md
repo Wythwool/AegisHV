@@ -15,6 +15,7 @@ This document records the planned type-1 boot boundary now present in the reposi
 - `scripts/inspect-type1-kernel.sh` records local ELF inspection for the expected entry address and serial marker bytes.
 - `scripts/stage-type1-limine-iso.sh` stages the kernel ELF and Limine config into an ISO-root directory without claiming boot evidence.
 - `scripts/build-type1-limine-iso.sh` can build a Limine ISO when external Limine and xorriso tooling is supplied.
+- `scripts/check-type1-lab-tools.sh` records local availability for the reviewed ISO and QEMU lab path.
 
 ## Not Present Yet
 
