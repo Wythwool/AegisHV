@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+target="x86_64-unknown-none"
+out_dir="${AEGISHV_TYPE1_OUT:-target/type1}"
+kernel_elf="${AEGISHV_TYPE1_KERNEL_ELF:-$out_dir/aegishv-type1.elf}"
+manifest="$out_dir/aegishv-type1-kernel-build.txt"
+linker_script="boot/linker/x86_64-type1.ld"
+
+usage() {
+  cat >&2 <<'USAGE'
+usage: scripts/build-type1-kernel.sh
+
+Builds the minimal x86_64 type-1 kernel ELF artifact. This does not create a
+bootable ISO and does not run QEMU.
+USAGE
+}
+
+if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
+  usage
+  exit 0
+fi
+
+if ! rustup target list --installed | grep -Fxq "$target"; then
+  echo "type1 kernel build: missing Rust target $target" >&2
+  echo "type1 kernel build: run: rustup target add $target" >&2
+  exit 69
+fi
+
+if [ ! -f "$linker_script" ]; then
+  echo "type1 kernel build: missing linker script: $linker_script" >&2
+  exit 66
+fi
+
+mkdir -p "$out_dir"
+
+cargo rustc \
+  --locked \
+  -p aegishv-type1-kernel \
+  --bin aegishv-type1-kernel \
+  --target "$target" \
+  --release \
+  -- \
+  -C panic=abort \
+  -C link-arg=-T"$linker_script"
+
+built="target/$target/release/aegishv-type1-kernel"
+if [ ! -s "$built" ]; then
+  echo "type1 kernel build: expected ELF was not written: $built" >&2
+  exit 70
+fi
+
+cp "$built" "$kernel_elf"
+bash scripts/plan-type1-image.sh --require-kernel --kernel-elf "$kernel_elf" >/dev/null
+
+cat > "$manifest" <<PLAN
+aegishv type-1 kernel build
+
+kernel_elf=$kernel_elf
+kernel_elf_present=true
+target=$target
+linker_script=$linker_script
+serial_marker=aegishv:type1:halt
+bootable_image=false
+qemu_evidence=false
+
+This manifest records a built kernel ELF artifact. It is not a bootable ISO and not QEMU boot evidence.
+PLAN
+
+echo "$kernel_elf"
