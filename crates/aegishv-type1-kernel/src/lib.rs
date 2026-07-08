@@ -21,6 +21,8 @@ pub const SERIAL_RUNTIME_BACKEND_SVM_MARKER: &str = "aegishv:type1:backend-svm";
 pub const SERIAL_RUNTIME_PLAN_ERROR_MARKER: &str = "aegishv:type1:runtime-plan-error";
 pub const SERIAL_RUNTIME_PREFLIGHT_OK_MARKER: &str = "aegishv:type1:runtime-preflight-ok";
 pub const SERIAL_RUNTIME_PREFLIGHT_ERROR_MARKER: &str = "aegishv:type1:runtime-preflight-error";
+pub const SERIAL_RUNTIME_ENABLE_OK_MARKER: &str = "aegishv:type1:runtime-enable-ok";
+pub const SERIAL_RUNTIME_ENABLE_ERROR_MARKER: &str = "aegishv:type1:runtime-enable-error";
 pub const SERIAL_LIMINE_BASE_REVISION_MARKER: &str = "aegishv:type1:limine-base-revision";
 pub const SERIAL_LIMINE_HHDM_MISSING_MARKER: &str = "aegishv:type1:limine-hhdm-missing";
 pub const SERIAL_LIMINE_HHDM_REVISION_MARKER: &str = "aegishv:type1:limine-hhdm-revision";
@@ -626,6 +628,20 @@ pub enum Type1RuntimePreflightError {
     Svm(SvmErrorKind),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Type1RuntimeEnablePlan {
+    pub backend: Type1RuntimeBackend,
+    pub cr0: Option<u64>,
+    pub cr4: Option<u64>,
+    pub efer: Option<u64>,
+}
+
+impl Type1RuntimeEnablePlan {
+    pub const fn has_writes(self) -> bool {
+        self.cr0.is_some() || self.cr4.is_some() || self.efer.is_some()
+    }
+}
+
 pub fn plan_type1_runtime_preflight(
     plan: Type1RuntimePlan,
     controls: Type1ControlSnapshot,
@@ -683,6 +699,27 @@ fn plan_svm_preflight(controls: Type1ControlSnapshot) -> Type1RuntimePreflight {
         cr4_after: controls.cr4,
         efer_before: controls.efer,
         efer_after,
+    }
+}
+
+pub const fn plan_type1_runtime_enable(preflight: Type1RuntimePreflight) -> Type1RuntimeEnablePlan {
+    Type1RuntimeEnablePlan {
+        backend: preflight.backend,
+        cr0: if preflight.cr0_after != preflight.cr0_before {
+            Some(preflight.cr0_after)
+        } else {
+            None
+        },
+        cr4: if preflight.cr4_after != preflight.cr4_before {
+            Some(preflight.cr4_after)
+        } else {
+            None
+        },
+        efer: if preflight.efer_after != preflight.efer_before {
+            Some(preflight.efer_after)
+        } else {
+            None
+        },
     }
 }
 
@@ -1324,6 +1361,89 @@ mod tests {
         assert_eq!(
             preflight.efer_after & aegishv_arch_x86::svm::features::EFER_SVME,
             aegishv_arch_x86::svm::features::EFER_SVME
+        );
+    }
+
+    #[test]
+    fn runtime_enable_plan_has_no_writes_for_no_backend() {
+        let preflight = plan_type1_runtime_preflight(
+            Type1RuntimePlan {
+                backend: Type1RuntimeBackend::None,
+                memory: Type1RuntimeMemoryPlan::from_executable_base(
+                    aegishv_type1_boot::layout::KERNEL_PHYSICAL_BASE,
+                )
+                .unwrap(),
+            },
+            Type1ControlSnapshot {
+                cr0: 0x8000_0011,
+                cr4: 0x20,
+                efer: 0x500,
+                ..Type1ControlSnapshot::empty()
+            },
+        )
+        .unwrap();
+
+        let enable = plan_type1_runtime_enable(preflight);
+
+        assert_eq!(enable.backend, Type1RuntimeBackend::None);
+        assert!(!enable.has_writes());
+    }
+
+    #[test]
+    fn runtime_enable_plan_records_vmx_control_register_writes() {
+        let preflight = plan_type1_runtime_preflight(
+            plan_type1_runtime(
+                ready_handoff(),
+                Type1BackendRequest::IntelVmx,
+                Type1ArchCapabilities::intel_vmx(),
+            )
+            .unwrap(),
+            Type1ControlSnapshot {
+                cr0: 0x8000_0011,
+                cr4: 0,
+                efer: 0x500,
+                vmx_cr0_fixed0: 0x8000_0031,
+                vmx_cr0_fixed1: u64::MAX,
+                vmx_cr4_fixed0: 0,
+                vmx_cr4_fixed1: u64::MAX,
+            },
+        )
+        .unwrap();
+
+        let enable = plan_type1_runtime_enable(preflight);
+
+        assert_eq!(enable.backend, Type1RuntimeBackend::IntelVmx);
+        assert_eq!(enable.cr0, Some(0x8000_0031));
+        assert_eq!(enable.cr4, Some(TYPE1_CR4_VMXE));
+        assert_eq!(enable.efer, None);
+    }
+
+    #[test]
+    fn runtime_enable_plan_records_svm_efer_write() {
+        let preflight = plan_type1_runtime_preflight(
+            plan_type1_runtime(
+                ready_handoff(),
+                Type1BackendRequest::AmdSvm,
+                Type1ArchCapabilities::amd_svm(),
+            )
+            .unwrap(),
+            Type1ControlSnapshot {
+                cr0: 0x8000_0011,
+                cr4: 0x20,
+                efer: 0x500,
+                ..Type1ControlSnapshot::empty()
+            },
+        )
+        .unwrap();
+
+        let enable = plan_type1_runtime_enable(preflight);
+
+        assert_eq!(enable.backend, Type1RuntimeBackend::AmdSvm);
+        assert_eq!(enable.cr0, None);
+        assert_eq!(enable.cr4, None);
+        assert_eq!(
+            enable.efer,
+            Some(0x500 | aegishv_arch_x86::svm::features::EFER_SVME)
         );
     }
 }
