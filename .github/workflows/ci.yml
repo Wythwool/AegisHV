@@ -30,7 +30,9 @@ jobs:
       - name: Build
         run: cargo build --locked --release
       - name: Type-1 kernel ELF
-        run: bash scripts/build-type1-kernel.sh
+        run: |
+          bash scripts/build-type1-kernel.sh
+          bash scripts/stage-type1-limine-iso.sh
       - name: Validate config
         run: cargo run --locked -- validate-config --config config.example.toml
       - name: Validate schemas are parseable
