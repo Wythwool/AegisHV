@@ -20,6 +20,7 @@
 - Added status-specific serial markers for incomplete Limine handoff checks.
 - Checked Limine response revisions and memory-map entries pointer before the ready marker.
 - Checked executable-address response bases against the type-1 linker layout before the ready marker.
+- Added ELF inspection for type-1 section layout and boot stack size.
 - Made the type-1 kernel build use static relocation and the x86_64 kernel code model explicitly.
 - Tightened the x86_64 type-1 entry stub by clearing direction state and zeroing `.bss` before the Rust entry.
 - Expanded synthetic Linux and Windows VMI fixture corpus.

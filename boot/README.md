@@ -17,7 +17,7 @@ The artifacts are not wired into a bootable image build yet. The normal binary r
 
 `scripts/build-type1-kernel.sh` builds the minimal `x86_64-unknown-none` kernel ELF to `target/type1/aegishv-type1.elf`. The ELF writes the early success marker only after the minimal Limine handoff fields, including response revisions, HHDM offset, memory-map entries pointer, and executable address bases matching the linker layout, are present; otherwise it writes a missing-handoff marker plus a status-specific marker and halts. It is not packaged as a bootable ISO yet.
 
-`scripts/inspect-type1-kernel.sh` checks the built ELF for the expected entry address and `.limine_requests` section when `llvm-readobj` is available, and always checks that the success marker, missing-handoff marker, and status-specific handoff markers are present.
+`scripts/inspect-type1-kernel.sh` checks the built ELF for the expected entry address, section layout, `.limine_requests` section, and boot stack size when `llvm-readobj` is available, and always checks that the success marker, missing-handoff marker, and status-specific handoff markers are present.
 
 `scripts/stage-type1-limine-iso.sh` copies the kernel ELF and `limine.conf` into `target/type1/limine-iso-root`. It records whether `limine` and `xorriso` are available, but it does not create a bootable ISO yet.
 

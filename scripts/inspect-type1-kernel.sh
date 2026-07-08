@@ -24,6 +24,38 @@ limine_failure_markers=(
   "aegishv:type1:limine-executable-physical"
   "aegishv:type1:limine-executable-virtual"
 )
+required_layout_sections=(
+  ".text"
+  ".rodata"
+  ".limine_requests"
+  ".data"
+  ".bss"
+  ".boot_stack"
+)
+
+section_block() {
+  local section="$1"
+  printf '%s\n' "$sections" | awk -v section="$section" '
+    index($0, "Name: " section " ") { capture = 1 }
+    capture { print }
+    capture && $0 ~ /^    }/ { exit }
+  '
+}
+
+require_section_field() {
+  local section="$1"
+  local expected="$2"
+  local block
+  block="$(section_block "$section")"
+  if [ -z "$block" ]; then
+    echo "type1 kernel inspect: section was not found: $section" >&2
+    exit 70
+  fi
+  if ! printf '%s\n' "$block" | grep -Fq "$expected"; then
+    echo "type1 kernel inspect: section $section did not contain expected field: $expected" >&2
+    exit 70
+  fi
+}
 
 usage() {
   cat >&2 <<'USAGE'
@@ -48,6 +80,7 @@ fi
 entry_value="unavailable"
 entry_check="skipped"
 limine_requests_section="skipped"
+layout_section_check="skipped"
 if command -v llvm-readobj >/dev/null 2>&1; then
   entry_value="$(llvm-readobj --file-headers "$kernel_elf" | awk '/Entry:/ {print $2; exit}')"
   entry_check="passed"
@@ -60,6 +93,13 @@ if command -v llvm-readobj >/dev/null 2>&1; then
     echo "type1 kernel inspect: .limine_requests section was not found" >&2
     exit 70
   fi
+  layout_section_check="passed"
+  sections="$(llvm-readobj --sections "$kernel_elf")"
+  for section in "${required_layout_sections[@]}"; do
+    require_section_field "$section" "Name: $section"
+  done
+  require_section_field ".text" "Address: $expected_entry"
+  require_section_field ".boot_stack" "Size: 65536"
 fi
 
 if ! grep -Fqa "$expected_serial" "$kernel_elf"; then
@@ -88,6 +128,8 @@ entry_value=$entry_value
 entry_check=$entry_check
 expected_entry=$expected_entry
 limine_requests_section=$limine_requests_section
+layout_section_check=$layout_section_check
+layout_section_count=${#required_layout_sections[@]}
 serial_marker=$expected_serial
 serial_marker_present=true
 limine_missing_marker=$expected_limine_missing
