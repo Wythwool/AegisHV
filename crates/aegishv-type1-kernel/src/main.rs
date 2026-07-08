@@ -84,9 +84,10 @@ pub extern "C" fn aegishv_type1_rust_entry() -> ! {
     let status = aegishv_type1_kernel::limine_minimal_handoff_status(handoff);
     if status.is_ready() {
         serial_write_line(status.serial_marker());
-        let (backend_marker, preflight_marker) = runtime_markers(handoff);
+        let (backend_marker, preflight_marker, enable_marker) = runtime_markers(handoff);
         serial_write_line(backend_marker);
         serial_write_line(preflight_marker);
+        serial_write_line(enable_marker);
     } else {
         serial_write_line(aegishv_type1_kernel::SERIAL_LIMINE_MISSING_MARKER);
         serial_write_line(status.serial_marker());
@@ -97,7 +98,7 @@ pub extern "C" fn aegishv_type1_rust_entry() -> ! {
 #[cfg(target_os = "none")]
 fn runtime_markers(
     handoff: aegishv_type1_kernel::LimineMinimalHandoff,
-) -> (&'static str, &'static str) {
+) -> (&'static str, &'static str, &'static str) {
     let capability_report = aegishv_type1_kernel::type1_capabilities_from_snapshot(unsafe {
         read_type1_cpu_snapshot()
     });
@@ -109,16 +110,30 @@ fn runtime_markers(
         Ok(plan) => {
             let backend_marker = plan.backend.serial_marker();
             let controls = unsafe { read_type1_control_snapshot(plan.backend) };
-            let preflight_marker =
-                match aegishv_type1_kernel::plan_type1_runtime_preflight(plan, controls) {
-                    Ok(_) => aegishv_type1_kernel::SERIAL_RUNTIME_PREFLIGHT_OK_MARKER,
-                    Err(_) => aegishv_type1_kernel::SERIAL_RUNTIME_PREFLIGHT_ERROR_MARKER,
-                };
-            (backend_marker, preflight_marker)
+            match aegishv_type1_kernel::plan_type1_runtime_preflight(plan, controls) {
+                Ok(preflight) => {
+                    let enable_plan = aegishv_type1_kernel::plan_type1_runtime_enable(preflight);
+                    let enable_marker = match unsafe { apply_type1_enable_plan(enable_plan) } {
+                        Ok(()) => aegishv_type1_kernel::SERIAL_RUNTIME_ENABLE_OK_MARKER,
+                        Err(()) => aegishv_type1_kernel::SERIAL_RUNTIME_ENABLE_ERROR_MARKER,
+                    };
+                    (
+                        backend_marker,
+                        aegishv_type1_kernel::SERIAL_RUNTIME_PREFLIGHT_OK_MARKER,
+                        enable_marker,
+                    )
+                }
+                Err(_) => (
+                    backend_marker,
+                    aegishv_type1_kernel::SERIAL_RUNTIME_PREFLIGHT_ERROR_MARKER,
+                    aegishv_type1_kernel::SERIAL_RUNTIME_ENABLE_ERROR_MARKER,
+                ),
+            }
         }
         Err(_) => (
             aegishv_type1_kernel::SERIAL_RUNTIME_PLAN_ERROR_MARKER,
             aegishv_type1_kernel::SERIAL_RUNTIME_PREFLIGHT_ERROR_MARKER,
+            aegishv_type1_kernel::SERIAL_RUNTIME_ENABLE_ERROR_MARKER,
         ),
     }
 }
@@ -226,6 +241,53 @@ unsafe fn read_cr4() -> u64 {
     value
 }
 
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+unsafe fn apply_type1_enable_plan(
+    plan: aegishv_type1_kernel::Type1RuntimeEnablePlan,
+) -> Result<(), ()> {
+    if let Some(value) = plan.cr0 {
+        write_cr0(value);
+    }
+    if let Some(value) = plan.cr4 {
+        write_cr4(value);
+    }
+    if let Some(value) = plan.efer {
+        write_msr(aegishv_type1_kernel::IA32_EFER_MSR, value);
+    }
+    Ok(())
+}
+
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+unsafe fn write_cr0(value: u64) {
+    asm!(
+        "mov cr0, {}",
+        in(reg) value,
+        options(nostack, preserves_flags)
+    );
+}
+
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+unsafe fn write_cr4(value: u64) {
+    asm!(
+        "mov cr4, {}",
+        in(reg) value,
+        options(nostack, preserves_flags)
+    );
+}
+
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+unsafe fn write_msr(msr: u32, value: u64) {
+    let low = value as u32;
+    let high = (value >> 32) as u32;
+    asm!(
+        "wrmsr",
+        in("ecx") msr,
+        in("eax") low,
+        in("edx") high,
+        options(nostack, preserves_flags)
+    );
+}
+
 #[cfg(all(target_os = "none", not(target_arch = "x86_64")))]
 unsafe fn read_type1_cpu_snapshot() -> aegishv_type1_kernel::Type1CpuSnapshot {
     aegishv_type1_kernel::Type1CpuSnapshot::empty()
@@ -236,6 +298,17 @@ unsafe fn read_type1_control_snapshot(
     _backend: aegishv_type1_kernel::Type1RuntimeBackend,
 ) -> aegishv_type1_kernel::Type1ControlSnapshot {
     aegishv_type1_kernel::Type1ControlSnapshot::empty()
+}
+
+#[cfg(all(target_os = "none", not(target_arch = "x86_64")))]
+unsafe fn apply_type1_enable_plan(
+    plan: aegishv_type1_kernel::Type1RuntimeEnablePlan,
+) -> Result<(), ()> {
+    if plan.has_writes() {
+        Err(())
+    } else {
+        Ok(())
+    }
 }
 
 #[cfg(target_os = "none")]
