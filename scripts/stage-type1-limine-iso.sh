@@ -51,9 +51,11 @@ if [ ! -f "$limine_config" ]; then
 fi
 
 rm -rf "$iso_root"
-mkdir -p "$iso_root"
+mkdir -p "$iso_root/boot/limine" "$iso_root/EFI/BOOT"
 cp "$kernel_elf" "$iso_root/aegishv-type1.elf"
+cp "$kernel_elf" "$iso_root/boot/aegishv-type1.elf"
 cp "$limine_config" "$iso_root/limine.conf"
+cp "$limine_config" "$iso_root/boot/limine/limine.conf"
 
 limine_available=false
 xorriso_available=false
@@ -70,8 +72,10 @@ aegishv type-1 Limine ISO stage
 iso_root=$iso_root
 kernel_source=$kernel_elf
 kernel_staged=$iso_root/aegishv-type1.elf
+kernel_staged_boot=$iso_root/boot/aegishv-type1.elf
 limine_config_source=$limine_config
 limine_config_staged=$iso_root/limine.conf
+limine_config_staged_boot=$iso_root/boot/limine/limine.conf
 limine_available=$limine_available
 xorriso_available=$xorriso_available
 bootable_iso=false

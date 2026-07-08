@@ -44,7 +44,9 @@ fn limine_iso_stage_script_copies_current_inputs_without_claiming_boot() {
         &[
             "limine-iso-root",
             "aegishv-type1.elf",
+            "boot/aegishv-type1.elf",
             "limine.conf",
+            "boot/limine/limine.conf",
             "limine_available=",
             "xorriso_available=",
             "bootable_iso=false",
@@ -54,4 +56,42 @@ fn limine_iso_stage_script_copies_current_inputs_without_claiming_boot() {
     );
     assert!(ci.contains("bash scripts/stage-type1-limine-iso.sh"));
     assert!(testing.contains("scripts/stage-type1-limine-iso.sh"));
+}
+
+#[test]
+fn limine_iso_build_script_requires_real_tools_and_keeps_qemu_separate() {
+    let script = read_repo_file("scripts/build-type1-limine-iso.sh");
+    let testing = read_repo_file("docs/TESTING.md");
+
+    assert_contains_all(
+        &script,
+        &[
+            "AEGISHV_LIMINE_DIR",
+            "xorriso -as mkisofs",
+            "limine bios-install",
+            "limine-bios.sys",
+            "limine-bios-cd.bin",
+            "limine-uefi-cd.bin",
+            "bootable_iso=true",
+            "qemu_evidence=false",
+            "not QEMU boot evidence",
+        ],
+    );
+    assert!(testing.contains("scripts/build-type1-limine-iso.sh"));
+}
+
+#[test]
+fn qemu_smoke_supports_iso_boot_media() {
+    let script = read_repo_file("scripts/type1-qemu-smoke.sh");
+
+    assert_contains_all(
+        &script,
+        &[
+            "boot_mode=\"iso\"",
+            "-cdrom \"$image\"",
+            "-boot d",
+            "-kernel \"$image\"",
+            "expected serial marker was not observed",
+        ],
+    );
 }
