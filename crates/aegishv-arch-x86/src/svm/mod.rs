@@ -5,6 +5,7 @@ pub mod hardware;
 pub mod instructions;
 pub mod lab;
 pub mod npt;
+pub mod runtime;
 pub mod traps;
 pub mod vmcb;
 
