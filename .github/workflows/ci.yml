@@ -34,6 +34,7 @@ jobs:
           bash scripts/check-type1-lab-tools.sh
           bash scripts/build-type1-kernel.sh
           bash scripts/stage-type1-limine-iso.sh
+          bash scripts/type1-qemu-evidence.sh --help
       - name: Validate config
         run: cargo run --locked -- validate-config --config config.example.toml
       - name: Validate schemas are parseable

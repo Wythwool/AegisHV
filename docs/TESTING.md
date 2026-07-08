@@ -94,6 +94,12 @@ scripts/type1-qemu-smoke.sh --print-command ./target/type1/aegishv-type1.elf
 
 The script exits with a clear error when the image is missing, when QEMU is missing, or when the serial marker is not observed. It is not wired into normal CI.
 
+`scripts/type1-qemu-evidence.sh` wraps the QEMU smoke script for local lab runs and writes `target/type1/aegishv-type1-qemu-evidence.txt`. The manifest includes the boot image digest, QEMU version, serial log path, expected marker, observed marker state, smoke exit code, and `qemu_evidence=true` only when the marker is captured.
+
+```bash
+scripts/type1-qemu-evidence.sh --image ./target/type1/aegishv-type1.iso --timeout 20
+```
+
 ## Intel VMX Lab Models
 
 The Intel VMX model code lives in `aegishv-arch-x86::vmx` and is covered by normal locked Rust tests:

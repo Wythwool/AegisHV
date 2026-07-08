@@ -119,3 +119,26 @@ fn qemu_smoke_supports_iso_boot_media() {
         ],
     );
 }
+
+#[test]
+fn qemu_evidence_script_records_digest_marker_and_exit_status() {
+    let script = read_repo_file("scripts/type1-qemu-evidence.sh");
+    let ci = read_repo_file(".github/workflows/ci.yml");
+    let testing = read_repo_file("docs/TESTING.md");
+
+    assert_contains_all(
+        &script,
+        &[
+            "type1-qemu-smoke.sh",
+            "boot_image_sha256=",
+            "serial_marker_observed=",
+            "qemu_smoke_exit_status=",
+            "qemu_evidence=",
+            "AEGISHV_QEMU_SERIAL_LOG",
+            "exit \"$smoke_status\"",
+            "This manifest records a local QEMU smoke attempt",
+        ],
+    );
+    assert!(ci.contains("bash scripts/type1-qemu-evidence.sh --help"));
+    assert!(testing.contains("scripts/type1-qemu-evidence.sh"));
+}

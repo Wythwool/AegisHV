@@ -12,6 +12,7 @@
 - Added type-1 kernel ELF inspection and Limine ISO-root staging helpers without claiming bootable ISO or QEMU evidence.
 - Added a tool-gated Limine ISO builder and ISO-aware QEMU smoke command construction.
 - Added a type-1 lab tool probe for reviewed ISO and QEMU prerequisites.
+- Added a QEMU smoke evidence wrapper that records boot image digest, serial marker state, and smoke exit status.
 - Tightened the x86_64 type-1 entry stub by clearing direction state and zeroing `.bss` before the Rust entry.
 - Expanded synthetic Linux and Windows VMI fixture corpus.
 

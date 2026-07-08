@@ -14,6 +14,7 @@ The type-1 lab milestone is blocked until `docs/TYPE1_READINESS_GATE.md` passes.
 - image input manifest from `scripts/plan-type1-image.sh`;
 - QEMU command line;
 - serial log containing the expected marker;
+- QEMU smoke evidence manifest from `scripts/type1-qemu-evidence.sh`;
 - VM-exit trace;
 - shutdown or crash record;
 - host CPU, firmware, and QEMU versions;

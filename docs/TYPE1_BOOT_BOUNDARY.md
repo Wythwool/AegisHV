@@ -16,6 +16,7 @@ This document records the planned type-1 boot boundary now present in the reposi
 - `scripts/stage-type1-limine-iso.sh` stages the kernel ELF and Limine config into an ISO-root directory without claiming boot evidence.
 - `scripts/build-type1-limine-iso.sh` can build a Limine ISO when external Limine and xorriso tooling is supplied.
 - `scripts/check-type1-lab-tools.sh` records local availability for the reviewed ISO and QEMU lab path.
+- `scripts/type1-qemu-evidence.sh` wraps the opt-in QEMU smoke path and records the local serial-marker evidence result.
 
 ## Not Present Yet
 
@@ -27,4 +28,4 @@ This document records the planned type-1 boot boundary now present in the reposi
 
 ## Next Gate
 
-The next milestone should run the tool-gated Limine ISO builder on a host with reviewed Limine/xorriso inputs, then emit `aegishv:type1:halt` under QEMU and halt in a controlled path. That milestone still needs a captured serial log and negative tests before any runtime claim is made.
+The next milestone should run the tool-gated Limine ISO builder on a host with reviewed Limine/xorriso inputs, then emit `aegishv:type1:halt` under QEMU and halt in a controlled path. That milestone still needs a checked serial log, a true QEMU evidence manifest, and negative tests before any runtime claim is made.
