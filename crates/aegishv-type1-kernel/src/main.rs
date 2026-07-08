@@ -115,11 +115,54 @@ unsafe fn limine_minimal_handoff_present() -> bool {
         .cast::<u64>()
         .add(2)
         .read_volatile();
+    let hhdm_response = core::ptr::addr_of!(LIMINE_HHDM_REQUEST.response).read_volatile();
+    let memmap_response = core::ptr::addr_of!(LIMINE_MEMMAP_REQUEST.response).read_volatile();
+    let executable_address_response =
+        core::ptr::addr_of!(LIMINE_EXECUTABLE_ADDRESS_REQUEST.response).read_volatile();
 
-    base_revision == 0
-        && core::ptr::addr_of!(LIMINE_HHDM_REQUEST.response).read_volatile() != 0
-        && core::ptr::addr_of!(LIMINE_MEMMAP_REQUEST.response).read_volatile() != 0
-        && core::ptr::addr_of!(LIMINE_EXECUTABLE_ADDRESS_REQUEST.response).read_volatile() != 0
+    let memmap_entry_count = if memmap_response == 0 {
+        0
+    } else {
+        read_limine_response_u64(
+            memmap_response,
+            aegishv_type1_kernel::LIMINE_MEMMAP_ENTRY_COUNT_OFFSET,
+        )
+    };
+    let executable_physical_base = if executable_address_response == 0 {
+        0
+    } else {
+        read_limine_response_u64(
+            executable_address_response,
+            aegishv_type1_kernel::LIMINE_EXECUTABLE_PHYSICAL_BASE_OFFSET,
+        )
+    };
+    let executable_virtual_base = if executable_address_response == 0 {
+        0
+    } else {
+        read_limine_response_u64(
+            executable_address_response,
+            aegishv_type1_kernel::LIMINE_EXECUTABLE_VIRTUAL_BASE_OFFSET,
+        )
+    };
+
+    aegishv_type1_kernel::limine_minimal_handoff_status(
+        base_revision,
+        hhdm_response,
+        memmap_response,
+        memmap_entry_count,
+        executable_address_response,
+        executable_physical_base,
+        executable_virtual_base,
+    )
+    .is_ready()
+}
+
+#[cfg(target_os = "none")]
+unsafe fn read_limine_response_u64(response: u64, offset: usize) -> u64 {
+    (response as usize as *const u8)
+        .add(offset)
+        .cast::<u64>()
+        .read_volatile()
 }
 
 #[cfg(target_os = "none")]
