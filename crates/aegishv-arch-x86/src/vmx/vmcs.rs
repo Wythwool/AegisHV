@@ -63,6 +63,10 @@ impl VmcsRegion {
         self.region.physical_address()
     }
 
+    pub const fn revision_id(&self) -> VmxRevisionId {
+        self.region.revision_id()
+    }
+
     pub const fn state(&self) -> VmcsLifecycleState {
         self.state
     }
