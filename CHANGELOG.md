@@ -27,6 +27,7 @@
 - Added Intel VMX VMLAUNCH/VMRESUME lifecycle handling, an x86_64 hardware instruction executor, and a VMX runtime sequencing layer.
 - Added AMD SVM hardware instruction wrappers and a checked runtime sequence for EFER.SVME, VMLOAD, VMRUN, VMSAVE, and INVLPGA.
 - Added a type-1 kernel runtime-planning bridge that constructs Intel VMX and AMD SVM runtime objects from checked, page-aligned kernel-side regions.
+- Added type-1 kernel CPU capability snapshots so the runtime backend marker can be selected from CPUID/MSR data before privileged VM entry is wired.
 - Expanded synthetic Linux and Windows VMI fixture corpus.
 
 ## 0.4.0
