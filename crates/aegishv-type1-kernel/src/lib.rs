@@ -1,8 +1,8 @@
 #![no_std]
 
-use aegishv_arch_x86::svm::features::SvmErrorKind;
+use aegishv_arch_x86::svm::features::{SvmCpuidExt1, SvmCpuidLeaf, SvmErrorKind, SvmFeatureSet};
 use aegishv_arch_x86::svm::runtime::SvmRuntime;
-use aegishv_arch_x86::vmx::features::VmxErrorKind;
+use aegishv_arch_x86::vmx::features::{CpuidLeaf1, FeatureControlMsr, VmxErrorKind, VmxFeatureSet};
 use aegishv_arch_x86::vmx::region::{VmxRevisionId, VmxonRegion};
 use aegishv_arch_x86::vmx::runtime::VmxRuntime;
 use aegishv_arch_x86::vmx::vmcs::VmcsRegion;
@@ -45,6 +45,12 @@ pub const TYPE1_VMCS_REGION_OFFSET: u64 =
     TYPE1_RUNTIME_REGION_BASE_OFFSET + TYPE1_RUNTIME_PAGE_SIZE;
 pub const TYPE1_SVM_VMCB_REGION_OFFSET: u64 =
     TYPE1_RUNTIME_REGION_BASE_OFFSET + (2 * TYPE1_RUNTIME_PAGE_SIZE);
+pub const CPUID_VENDOR_LEAF: u32 = 0;
+pub const CPUID_FEATURE_LEAF: u32 = 1;
+pub const CPUID_EXTENDED_LIMIT_LEAF: u32 = 0x8000_0000;
+pub const CPUID_EXTENDED_FEATURE_LEAF: u32 = 0x8000_0001;
+pub const CPUID_SVM_FEATURE_LEAF: u32 = 0x8000_000a;
+pub const IA32_FEATURE_CONTROL_MSR: u32 = 0x0000_003a;
 
 pub const LIMINE_REQUESTS_START_MARKER: [u64; 4] = [
     0xf6b8_f4b3_9de7_d1ae,
@@ -280,6 +286,126 @@ impl Type1ArchCapabilities {
             amd_svm: true,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Type1CpuVendor {
+    Unknown,
+    Intel,
+    Amd,
+}
+
+impl Type1CpuVendor {
+    pub const fn from_cpuid0(ebx: u32, ecx: u32, edx: u32) -> Self {
+        match (ebx, ecx, edx) {
+            (0x756e_6547, 0x6c65_746e, 0x4965_6e69) => Self::Intel,
+            (0x6874_7541, 0x444d_4163, 0x6974_6e65) => Self::Amd,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Type1CpuSnapshot {
+    pub vendor: Type1CpuVendor,
+    pub cpuid_leaf1_ecx: u32,
+    pub feature_control_msr: u64,
+    pub max_extended_leaf: u32,
+    pub cpuid_ext1_ecx: u32,
+    pub svm_leaf_ebx: u32,
+    pub svm_leaf_edx: u32,
+}
+
+impl Type1CpuSnapshot {
+    pub const fn empty() -> Self {
+        Self {
+            vendor: Type1CpuVendor::Unknown,
+            cpuid_leaf1_ecx: 0,
+            feature_control_msr: 0,
+            max_extended_leaf: 0,
+            cpuid_ext1_ecx: 0,
+            svm_leaf_ebx: 0,
+            svm_leaf_edx: 0,
+        }
+    }
+
+    pub const fn from_raw(
+        vendor: Type1CpuVendor,
+        cpuid_leaf1_ecx: u32,
+        feature_control_msr: u64,
+        max_extended_leaf: u32,
+        cpuid_ext1_ecx: u32,
+        svm_leaf_ebx: u32,
+        svm_leaf_edx: u32,
+    ) -> Self {
+        Self {
+            vendor,
+            cpuid_leaf1_ecx,
+            feature_control_msr,
+            max_extended_leaf,
+            cpuid_ext1_ecx,
+            svm_leaf_ebx,
+            svm_leaf_edx,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Type1CapabilityReport {
+    pub vendor: Type1CpuVendor,
+    pub capabilities: Type1ArchCapabilities,
+    pub vmx_error: Option<VmxErrorKind>,
+    pub svm_error: Option<SvmErrorKind>,
+    pub svm_leaf_available: bool,
+}
+
+pub fn type1_capabilities_from_snapshot(snapshot: Type1CpuSnapshot) -> Type1CapabilityReport {
+    let mut report = Type1CapabilityReport {
+        vendor: snapshot.vendor,
+        capabilities: Type1ArchCapabilities::none(),
+        vmx_error: None,
+        svm_error: None,
+        svm_leaf_available: snapshot.max_extended_leaf >= CPUID_SVM_FEATURE_LEAF,
+    };
+
+    match snapshot.vendor {
+        Type1CpuVendor::Intel => {
+            match VmxFeatureSet::from_registers(
+                CpuidLeaf1 {
+                    ecx: snapshot.cpuid_leaf1_ecx,
+                },
+                FeatureControlMsr::new(snapshot.feature_control_msr),
+            )
+            .validate_non_smx()
+            {
+                Ok(_) => report.capabilities.intel_vmx = true,
+                Err(err) => report.vmx_error = Some(err.kind),
+            }
+        }
+        Type1CpuVendor::Amd => {
+            if report.svm_leaf_available {
+                match SvmFeatureSet::from_cpuid(
+                    SvmCpuidExt1 {
+                        ecx: snapshot.cpuid_ext1_ecx,
+                    },
+                    SvmCpuidLeaf {
+                        ebx: snapshot.svm_leaf_ebx,
+                        edx: snapshot.svm_leaf_edx,
+                    },
+                )
+                .validate_for_npt_lab()
+                {
+                    Ok(_) => report.capabilities.amd_svm = true,
+                    Err(err) => report.svm_error = Some(err.kind),
+                }
+            } else {
+                report.svm_error = Some(SvmErrorKind::MissingCpuidBit);
+            }
+        }
+        Type1CpuVendor::Unknown => {}
+    }
+
+    report
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -769,6 +895,116 @@ mod tests {
             executable_physical_base: aegishv_type1_boot::layout::KERNEL_PHYSICAL_BASE,
             executable_virtual_base: aegishv_type1_boot::layout::KERNEL_VIRTUAL_BASE,
         }
+    }
+
+    #[test]
+    fn cpu_vendor_id_recognizes_x86_vendors() {
+        assert_eq!(
+            Type1CpuVendor::from_cpuid0(0x756e_6547, 0x6c65_746e, 0x4965_6e69),
+            Type1CpuVendor::Intel
+        );
+        assert_eq!(
+            Type1CpuVendor::from_cpuid0(0x6874_7541, 0x444d_4163, 0x6974_6e65),
+            Type1CpuVendor::Amd
+        );
+        assert_eq!(
+            Type1CpuVendor::from_cpuid0(0, 0, 0),
+            Type1CpuVendor::Unknown
+        );
+    }
+
+    #[test]
+    fn cpu_snapshot_accepts_locked_intel_vmx() {
+        let report = type1_capabilities_from_snapshot(Type1CpuSnapshot::from_raw(
+            Type1CpuVendor::Intel,
+            aegishv_arch_x86::vmx::features::CPUID_LEAF1_ECX_VMX,
+            aegishv_arch_x86::vmx::features::IA32_FEATURE_CONTROL_LOCK
+                | aegishv_arch_x86::vmx::features::IA32_FEATURE_CONTROL_VMX_OUTSIDE_SMX,
+            CPUID_EXTENDED_LIMIT_LEAF,
+            0,
+            0,
+            0,
+        ));
+
+        assert_eq!(report.vendor, Type1CpuVendor::Intel);
+        assert_eq!(report.capabilities, Type1ArchCapabilities::intel_vmx());
+        assert_eq!(report.vmx_error, None);
+        assert_eq!(report.svm_error, None);
+    }
+
+    #[test]
+    fn cpu_snapshot_reports_intel_vmx_feature_error() {
+        let report = type1_capabilities_from_snapshot(Type1CpuSnapshot::from_raw(
+            Type1CpuVendor::Intel,
+            aegishv_arch_x86::vmx::features::CPUID_LEAF1_ECX_VMX,
+            aegishv_arch_x86::vmx::features::IA32_FEATURE_CONTROL_LOCK,
+            CPUID_EXTENDED_LIMIT_LEAF,
+            0,
+            0,
+            0,
+        ));
+
+        assert_eq!(report.capabilities, Type1ArchCapabilities::none());
+        assert_eq!(
+            report.vmx_error,
+            Some(aegishv_arch_x86::vmx::features::VmxErrorKind::VmxDisabledOutsideSmx)
+        );
+    }
+
+    #[test]
+    fn cpu_snapshot_accepts_amd_svm_with_npt() {
+        let report = type1_capabilities_from_snapshot(Type1CpuSnapshot::from_raw(
+            Type1CpuVendor::Amd,
+            aegishv_arch_x86::vmx::features::CPUID_LEAF1_ECX_VMX,
+            0,
+            CPUID_SVM_FEATURE_LEAF,
+            aegishv_arch_x86::svm::features::CPUID_EXT1_ECX_SVM,
+            16,
+            aegishv_arch_x86::svm::features::CPUID_SVM_EDX_NPT,
+        ));
+
+        assert_eq!(report.vendor, Type1CpuVendor::Amd);
+        assert_eq!(report.capabilities, Type1ArchCapabilities::amd_svm());
+        assert_eq!(report.vmx_error, None);
+        assert_eq!(report.svm_error, None);
+        assert!(report.svm_leaf_available);
+    }
+
+    #[test]
+    fn cpu_snapshot_uses_vendor_to_avoid_mixed_backends() {
+        let report = type1_capabilities_from_snapshot(Type1CpuSnapshot::from_raw(
+            Type1CpuVendor::Amd,
+            aegishv_arch_x86::vmx::features::CPUID_LEAF1_ECX_VMX,
+            aegishv_arch_x86::vmx::features::IA32_FEATURE_CONTROL_LOCK
+                | aegishv_arch_x86::vmx::features::IA32_FEATURE_CONTROL_VMX_OUTSIDE_SMX,
+            CPUID_SVM_FEATURE_LEAF,
+            aegishv_arch_x86::svm::features::CPUID_EXT1_ECX_SVM,
+            16,
+            aegishv_arch_x86::svm::features::CPUID_SVM_EDX_NPT,
+        ));
+
+        assert_eq!(report.capabilities, Type1ArchCapabilities::amd_svm());
+        assert_eq!(report.vmx_error, None);
+    }
+
+    #[test]
+    fn cpu_snapshot_rejects_missing_svm_leaf() {
+        let report = type1_capabilities_from_snapshot(Type1CpuSnapshot::from_raw(
+            Type1CpuVendor::Amd,
+            0,
+            0,
+            CPUID_EXTENDED_FEATURE_LEAF,
+            aegishv_arch_x86::svm::features::CPUID_EXT1_ECX_SVM,
+            16,
+            aegishv_arch_x86::svm::features::CPUID_SVM_EDX_NPT,
+        ));
+
+        assert_eq!(report.capabilities, Type1ArchCapabilities::none());
+        assert!(!report.svm_leaf_available);
+        assert_eq!(
+            report.svm_error,
+            Some(aegishv_arch_x86::svm::features::SvmErrorKind::MissingCpuidBit)
+        );
     }
 
     #[test]
