@@ -64,6 +64,9 @@ fn boot_artifacts_define_limine_linker_and_entry_boundaries() {
             "ENTRY(aegishv_type1_start)",
             "KERNEL_PHYS_BASE = 0x00200000",
             "__aegishv_boot_stack_top",
+            ".limine_requests",
+            "KEEP(*(.limine_requests_start))",
+            "KEEP(*(.limine_requests_end))",
             "KEEP(*(.text.entry))",
         ],
     );

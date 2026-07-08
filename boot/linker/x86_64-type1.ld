@@ -27,6 +27,13 @@ SECTIONS
     *(.rodata .rodata.*)
   } :rodata
 
+  .limine_requests ALIGN(8) : AT(ADDR(.limine_requests) - KERNEL_VIRT_BASE + KERNEL_PHYS_BASE)
+  {
+    KEEP(*(.limine_requests_start))
+    KEEP(*(.limine_requests))
+    KEEP(*(.limine_requests_end))
+  } :data
+
   .data ALIGN(4K) : AT(ADDR(.data) - KERNEL_VIRT_BASE + KERNEL_PHYS_BASE)
   {
     *(.data .data.*)

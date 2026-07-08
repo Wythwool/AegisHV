@@ -13,6 +13,63 @@ global_asm!(
 );
 
 #[cfg(target_os = "none")]
+#[used]
+#[link_section = ".limine_requests_start"]
+static LIMINE_REQUESTS_START: [u64; 4] = aegishv_type1_kernel::LIMINE_REQUESTS_START_MARKER;
+
+#[cfg(target_os = "none")]
+#[used]
+#[link_section = ".limine_requests"]
+static mut LIMINE_BASE_REVISION_TAG: [u64; 3] = aegishv_type1_kernel::limine_base_revision_tag();
+
+#[cfg(target_os = "none")]
+#[used]
+#[link_section = ".limine_requests"]
+static mut LIMINE_BOOTLOADER_INFO_REQUEST: aegishv_type1_kernel::LimineRequest =
+    aegishv_type1_kernel::LimineRequest::new(
+        aegishv_type1_kernel::LIMINE_BOOTLOADER_INFO_REQUEST_ID,
+    );
+
+#[cfg(target_os = "none")]
+#[used]
+#[link_section = ".limine_requests"]
+static mut LIMINE_EXECUTABLE_CMDLINE_REQUEST: aegishv_type1_kernel::LimineRequest =
+    aegishv_type1_kernel::LimineRequest::new(
+        aegishv_type1_kernel::LIMINE_EXECUTABLE_CMDLINE_REQUEST_ID,
+    );
+
+#[cfg(target_os = "none")]
+#[used]
+#[link_section = ".limine_requests"]
+static mut LIMINE_HHDM_REQUEST: aegishv_type1_kernel::LimineRequest =
+    aegishv_type1_kernel::LimineRequest::new(aegishv_type1_kernel::LIMINE_HHDM_REQUEST_ID);
+
+#[cfg(target_os = "none")]
+#[used]
+#[link_section = ".limine_requests"]
+static mut LIMINE_MEMMAP_REQUEST: aegishv_type1_kernel::LimineRequest =
+    aegishv_type1_kernel::LimineRequest::new(aegishv_type1_kernel::LIMINE_MEMMAP_REQUEST_ID);
+
+#[cfg(target_os = "none")]
+#[used]
+#[link_section = ".limine_requests"]
+static mut LIMINE_RSDP_REQUEST: aegishv_type1_kernel::LimineRequest =
+    aegishv_type1_kernel::LimineRequest::new(aegishv_type1_kernel::LIMINE_RSDP_REQUEST_ID);
+
+#[cfg(target_os = "none")]
+#[used]
+#[link_section = ".limine_requests"]
+static mut LIMINE_EXECUTABLE_ADDRESS_REQUEST: aegishv_type1_kernel::LimineRequest =
+    aegishv_type1_kernel::LimineRequest::new(
+        aegishv_type1_kernel::LIMINE_EXECUTABLE_ADDRESS_REQUEST_ID,
+    );
+
+#[cfg(target_os = "none")]
+#[used]
+#[link_section = ".limine_requests_end"]
+static LIMINE_REQUESTS_END: [u64; 2] = aegishv_type1_kernel::LIMINE_REQUESTS_END_MARKER;
+
+#[cfg(target_os = "none")]
 const COM1: u16 = aegishv_type1_boot::layout::SERIAL_COM1_PORT;
 
 #[cfg(target_os = "none")]

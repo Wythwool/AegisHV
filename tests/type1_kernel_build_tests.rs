@@ -42,6 +42,10 @@ fn kernel_entry_records_serial_marker_and_halt_path() {
             "SERIAL_READY_MARKER",
             "aegishv:type1:halt",
             "SERIAL_PANIC_MARKER",
+            "LIMINE_BASE_REVISION",
+            "LIMINE_MEMMAP_REQUEST_ID",
+            "LIMINE_EXECUTABLE_ADDRESS_REQUEST_ID",
+            "LimineRequest",
             "marker_line",
         ],
     );
@@ -50,6 +54,9 @@ fn kernel_entry_records_serial_marker_and_halt_path() {
         &[
             "global_asm!",
             "options(att_syntax)",
+            ".limine_requests_start",
+            ".limine_requests",
+            ".limine_requests_end",
             "aegishv_type1_rust_entry",
             "serial_init",
             "serial_write_byte",
