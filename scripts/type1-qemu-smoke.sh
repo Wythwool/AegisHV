@@ -6,7 +6,7 @@ usage() {
 usage: scripts/type1-qemu-smoke.sh [--print-command] [--expect-serial TEXT] BOOT_IMAGE
 
 BOOT_IMAGE may also be supplied through AEGISHV_TYPE1_BOOT_IMAGE.
-This script is opt-in lab plumbing. It does not build a boot image.
+BOOT_IMAGE may be a kernel ELF or a bootable ISO. This script does not build it.
 USAGE
 }
 
@@ -58,6 +58,12 @@ fi
 
 serial_log="${AEGISHV_QEMU_SERIAL_LOG:-/tmp/aegishv-type1-serial.log}"
 timeout_seconds="${AEGISHV_QEMU_TIMEOUT_SECONDS:-15}"
+boot_mode="kernel"
+case "$image" in
+  *.iso)
+    boot_mode="iso"
+    ;;
+esac
 
 cmd=(
   "$qemu"
@@ -68,8 +74,13 @@ cmd=(
   -display none
   -no-reboot
   -no-shutdown
-  -kernel "$image"
 )
+
+if [ "$boot_mode" = "iso" ]; then
+  cmd+=(-cdrom "$image" -boot d)
+else
+  cmd+=(-kernel "$image")
+fi
 
 if [ "$print_command" = true ]; then
   printf '%q ' "${cmd[@]}"

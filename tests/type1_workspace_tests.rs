@@ -144,6 +144,8 @@ fn qemu_smoke_script_is_opt_in_and_refuses_missing_boot_images() {
         "command -v \"$qemu\"",
         "qemu-system-x86_64",
         "-kernel \"$image\"",
+        "-cdrom \"$image\"",
+        "-boot d",
     ] {
         assert!(
             script.contains(required),
