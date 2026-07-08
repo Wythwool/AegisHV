@@ -110,7 +110,7 @@ fn boot_skeleton_script_writes_manifest_without_claiming_image_output() {
         &[
             "planned type-1 boot boundary",
             "not a bootable hypervisor image",
-            "Bootable type-1 image is not produced",
+            "Bootable type-1 ISO is not produced",
             "QEMU boot evidence is not present",
         ],
     );

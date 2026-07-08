@@ -16,6 +16,7 @@ fn workspace_lists_no_std_type1_crates() {
         "crates/aegishv-arch-x86",
         "crates/aegishv-arch-arm64",
         "crates/aegishv-devices",
+        "crates/aegishv-type1-kernel",
     ] {
         assert!(cargo.contains(member), "workspace is missing {member}");
     }

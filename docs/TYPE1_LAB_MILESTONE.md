@@ -6,6 +6,7 @@ The type-1 lab milestone is blocked until `docs/TYPE1_READINESS_GATE.md` passes.
 
 - boot image path and checksum;
 - boot boundary manifest from `scripts/build-type1-skeleton.sh`;
+- kernel ELF build manifest from `scripts/build-type1-kernel.sh`;
 - image input manifest from `scripts/plan-type1-image.sh`;
 - QEMU command line;
 - serial log containing the expected marker;

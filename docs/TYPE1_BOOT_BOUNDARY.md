@@ -10,10 +10,12 @@ This document records the planned type-1 boot boundary now present in the reposi
 - `boot/x86_64/entry.S` records the first entry symbol and halt-loop fallback for early bring-up.
 - `scripts/build-type1-skeleton.sh` validates the boot crate and writes a review manifest under `target/type1`.
 - `scripts/plan-type1-image.sh` validates the current image inputs and records the QEMU serial-marker contract.
+- `crates/aegishv-type1-kernel` builds a minimal `x86_64-unknown-none` kernel ELF that writes the planned serial marker and halts when its entry path is reached.
+- `scripts/build-type1-kernel.sh` writes `target/type1/aegishv-type1.elf` and a kernel build manifest.
 
 ## Not Present Yet
 
-- Bootable type-1 image is not produced.
+- Bootable type-1 ISO is not produced.
 - VMXON, VMLAUNCH, VMRESUME, VMRUN, and EL2 entry are not implemented by this milestone.
 - AP startup assembly, APIC routing, IDT/GDT runtime setup, and long-mode transition code are not implemented.
 - QEMU boot evidence is not present.
@@ -21,4 +23,4 @@ This document records the planned type-1 boot boundary now present in the reposi
 
 ## Next Gate
 
-The next milestone should turn the x86_64 entry skeleton into a minimal lab image that emits `aegishv:type1:halt` under QEMU and halts in a controlled path. That milestone still needs a real kernel ELF, a captured serial log, and negative tests before any runtime claim is made.
+The next milestone should package the kernel ELF with a bootloader path that emits `aegishv:type1:halt` under QEMU and halts in a controlled path. That milestone still needs ISO packaging, a captured serial log, and negative tests before any runtime claim is made.

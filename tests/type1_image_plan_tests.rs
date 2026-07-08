@@ -21,6 +21,8 @@ fn image_plan_script_writes_review_manifest_without_boot_claims() {
     let manifest = Path::new("target/tmp/aegishv-type1-image-plan-test.txt");
     let manifest_abs = repo_root().join(manifest);
     let _ = fs::remove_file(&manifest_abs);
+    let missing_kernel = "target/tmp/aegishv-type1-missing.elf";
+    let _ = fs::remove_file(repo_root().join(missing_kernel));
 
     let output = Command::new("bash")
         .current_dir(repo_root())
@@ -28,6 +30,8 @@ fn image_plan_script_writes_review_manifest_without_boot_claims() {
             "scripts/plan-type1-image.sh",
             "--manifest",
             manifest.to_str().unwrap(),
+            "--kernel-elf",
+            missing_kernel,
         ])
         .output()
         .expect("run type1 image plan helper");
@@ -46,7 +50,7 @@ fn image_plan_script_writes_review_manifest_without_boot_claims() {
             "aegishv type-1 image plan",
             "bootable_image=false",
             "runtime_backend=false",
-            "kernel_elf=target/type1/aegishv-type1.elf",
+            "kernel_elf=target/tmp/aegishv-type1-missing.elf",
             "kernel_elf_present=false",
             "output_image=target/type1/aegishv-type1.iso",
             "qemu_expected_serial=aegishv:type1:halt",
@@ -57,9 +61,17 @@ fn image_plan_script_writes_review_manifest_without_boot_claims() {
 
 #[test]
 fn image_plan_script_can_require_the_future_kernel_elf() {
+    let missing_kernel = "target/tmp/aegishv-type1-required-missing.elf";
+    let _ = fs::remove_file(repo_root().join(missing_kernel));
+
     let output = Command::new("bash")
         .current_dir(repo_root())
-        .args(["scripts/plan-type1-image.sh", "--require-kernel"])
+        .args([
+            "scripts/plan-type1-image.sh",
+            "--require-kernel",
+            "--kernel-elf",
+            missing_kernel,
+        ])
         .output()
         .expect("run type1 image plan helper with required kernel");
 
