@@ -30,7 +30,11 @@ fn kernel_inspection_script_checks_entry_and_serial_marker() {
             "serial_marker_present=true",
             "expected_limine_missing",
             "aegishv:type1:limine-missing",
+            "limine_failure_markers=(",
+            "aegishv:type1:limine-base-revision",
+            "aegishv:type1:limine-executable-empty",
             "limine_missing_marker_present=true",
+            "limine_failure_markers_present=true",
             "not QEMU boot evidence",
         ],
     );

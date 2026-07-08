@@ -3,6 +3,13 @@
 pub const SERIAL_READY_MARKER: &str = "aegishv:type1:halt";
 pub const SERIAL_PANIC_MARKER: &str = "aegishv:type1:panic";
 pub const SERIAL_LIMINE_MISSING_MARKER: &str = "aegishv:type1:limine-missing";
+pub const SERIAL_LIMINE_BASE_REVISION_MARKER: &str = "aegishv:type1:limine-base-revision";
+pub const SERIAL_LIMINE_HHDM_MISSING_MARKER: &str = "aegishv:type1:limine-hhdm-missing";
+pub const SERIAL_LIMINE_HHDM_OFFSET_MARKER: &str = "aegishv:type1:limine-hhdm-offset";
+pub const SERIAL_LIMINE_MEMMAP_MISSING_MARKER: &str = "aegishv:type1:limine-memmap-missing";
+pub const SERIAL_LIMINE_MEMMAP_EMPTY_MARKER: &str = "aegishv:type1:limine-memmap-empty";
+pub const SERIAL_LIMINE_EXECUTABLE_MISSING_MARKER: &str = "aegishv:type1:limine-executable-missing";
+pub const SERIAL_LIMINE_EXECUTABLE_EMPTY_MARKER: &str = "aegishv:type1:limine-executable-empty";
 pub const LIMINE_BASE_REVISION: u64 = 6;
 pub const LIMINE_REQUEST_COUNT: usize = 6;
 pub const LIMINE_RESPONSE_REVISION_OFFSET: usize = 0;
@@ -137,6 +144,19 @@ impl LimineHandoffStatus {
     pub const fn is_ready(self) -> bool {
         matches!(self, Self::Ready)
     }
+
+    pub const fn serial_marker(self) -> &'static str {
+        match self {
+            Self::Ready => SERIAL_READY_MARKER,
+            Self::BaseRevisionUnsupported => SERIAL_LIMINE_BASE_REVISION_MARKER,
+            Self::HhdmResponseMissing => SERIAL_LIMINE_HHDM_MISSING_MARKER,
+            Self::HhdmOffsetMissing => SERIAL_LIMINE_HHDM_OFFSET_MARKER,
+            Self::MemmapResponseMissing => SERIAL_LIMINE_MEMMAP_MISSING_MARKER,
+            Self::MemmapEmpty => SERIAL_LIMINE_MEMMAP_EMPTY_MARKER,
+            Self::ExecutableAddressResponseMissing => SERIAL_LIMINE_EXECUTABLE_MISSING_MARKER,
+            Self::ExecutableAddressEmpty => SERIAL_LIMINE_EXECUTABLE_EMPTY_MARKER,
+        }
+    }
 }
 
 pub const fn limine_minimal_handoff_status(handoff: LimineMinimalHandoff) -> LimineHandoffStatus {
@@ -223,6 +243,42 @@ mod tests {
         let len = marker_line(SERIAL_LIMINE_MISSING_MARKER, &mut out).unwrap();
 
         assert_eq!(&out[..len], b"aegishv:type1:limine-missing\n");
+    }
+
+    #[test]
+    fn handoff_statuses_have_stable_serial_markers() {
+        assert_eq!(
+            LimineHandoffStatus::Ready.serial_marker(),
+            "aegishv:type1:halt"
+        );
+        assert_eq!(
+            LimineHandoffStatus::BaseRevisionUnsupported.serial_marker(),
+            "aegishv:type1:limine-base-revision"
+        );
+        assert_eq!(
+            LimineHandoffStatus::HhdmResponseMissing.serial_marker(),
+            "aegishv:type1:limine-hhdm-missing"
+        );
+        assert_eq!(
+            LimineHandoffStatus::HhdmOffsetMissing.serial_marker(),
+            "aegishv:type1:limine-hhdm-offset"
+        );
+        assert_eq!(
+            LimineHandoffStatus::MemmapResponseMissing.serial_marker(),
+            "aegishv:type1:limine-memmap-missing"
+        );
+        assert_eq!(
+            LimineHandoffStatus::MemmapEmpty.serial_marker(),
+            "aegishv:type1:limine-memmap-empty"
+        );
+        assert_eq!(
+            LimineHandoffStatus::ExecutableAddressResponseMissing.serial_marker(),
+            "aegishv:type1:limine-executable-missing"
+        );
+        assert_eq!(
+            LimineHandoffStatus::ExecutableAddressEmpty.serial_marker(),
+            "aegishv:type1:limine-executable-empty"
+        );
     }
 
     #[test]

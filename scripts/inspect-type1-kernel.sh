@@ -9,6 +9,15 @@ manifest="${AEGISHV_TYPE1_INSPECT_MANIFEST:-$out_dir/aegishv-type1-kernel-inspec
 expected_entry="${AEGISHV_TYPE1_EXPECTED_ENTRY:-0xFFFFFFFF80200000}"
 expected_serial="${AEGISHV_TYPE1_EXPECTED_SERIAL:-aegishv:type1:halt}"
 expected_limine_missing="${AEGISHV_TYPE1_LIMINE_MISSING_SERIAL:-aegishv:type1:limine-missing}"
+limine_failure_markers=(
+  "aegishv:type1:limine-base-revision"
+  "aegishv:type1:limine-hhdm-missing"
+  "aegishv:type1:limine-hhdm-offset"
+  "aegishv:type1:limine-memmap-missing"
+  "aegishv:type1:limine-memmap-empty"
+  "aegishv:type1:limine-executable-missing"
+  "aegishv:type1:limine-executable-empty"
+)
 
 usage() {
   cat >&2 <<'USAGE'
@@ -57,6 +66,13 @@ if ! grep -Fqa "$expected_limine_missing" "$kernel_elf"; then
   exit 70
 fi
 
+for marker in "${limine_failure_markers[@]}"; do
+  if ! grep -Fqa "$marker" "$kernel_elf"; then
+    echo "type1 kernel inspect: Limine status marker was not found: $marker" >&2
+    exit 70
+  fi
+done
+
 mkdir -p "$(dirname "$manifest")"
 cat > "$manifest" <<PLAN
 aegishv type-1 kernel inspect
@@ -70,6 +86,8 @@ serial_marker=$expected_serial
 serial_marker_present=true
 limine_missing_marker=$expected_limine_missing
 limine_missing_marker_present=true
+limine_failure_marker_count=${#limine_failure_markers[@]}
+limine_failure_markers_present=true
 bootable_image=false
 qemu_evidence=false
 

@@ -78,12 +78,13 @@ pub extern "C" fn aegishv_type1_rust_entry() -> ! {
     unsafe {
         serial_init(COM1);
     }
-    let marker = if unsafe { limine_minimal_handoff_present() } {
-        aegishv_type1_kernel::SERIAL_READY_MARKER
+    let status = unsafe { read_limine_handoff_status() };
+    if status.is_ready() {
+        serial_write_line(status.serial_marker());
     } else {
-        aegishv_type1_kernel::SERIAL_LIMINE_MISSING_MARKER
-    };
-    serial_write_line(marker);
+        serial_write_line(aegishv_type1_kernel::SERIAL_LIMINE_MISSING_MARKER);
+        serial_write_line(status.serial_marker());
+    }
     halt_loop()
 }
 
@@ -110,7 +111,7 @@ fn serial_write_line(text: &str) {
 }
 
 #[cfg(target_os = "none")]
-unsafe fn limine_minimal_handoff_present() -> bool {
+unsafe fn read_limine_handoff_status() -> aegishv_type1_kernel::LimineHandoffStatus {
     let base_revision = core::ptr::addr_of!(LIMINE_BASE_REVISION_TAG)
         .cast::<u64>()
         .add(2)
@@ -165,7 +166,6 @@ unsafe fn limine_minimal_handoff_present() -> bool {
             executable_virtual_base,
         },
     )
-    .is_ready()
 }
 
 #[cfg(target_os = "none")]
