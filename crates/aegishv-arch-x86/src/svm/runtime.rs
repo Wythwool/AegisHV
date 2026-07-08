@@ -180,15 +180,12 @@ mod tests {
         let mut executor = MockSvmInstructions::default();
         let asid = SvmAsid::new(3).unwrap();
 
-        let enabled =
-            unsafe { runtime.enable_svme(&mut executor, EferValue::new(0x500)) }.unwrap();
+        let enabled = unsafe { runtime.enable_svme(&mut executor, EferValue::new(0x500)) }.unwrap();
         unsafe { runtime.load_vmcb(&mut executor) }.unwrap();
         unsafe { runtime.run_guest_once(&mut executor) }.unwrap();
         unsafe { runtime.save_host_state(&mut executor) }.unwrap();
-        unsafe {
-            runtime.invalidate_address(&mut executor, asid, GuestVirtual::new(0x4000))
-        }
-        .unwrap();
+        unsafe { runtime.invalidate_address(&mut executor, asid, GuestVirtual::new(0x4000)) }
+            .unwrap();
 
         assert!(enabled.svme_enabled());
         assert_eq!(runtime.state(), SvmRuntimeState::HostStateSaved);
