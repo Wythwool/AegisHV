@@ -20,6 +20,10 @@ runtime_preflight_markers=(
   "aegishv:type1:runtime-preflight-ok"
   "aegishv:type1:runtime-preflight-error"
 )
+runtime_enable_markers=(
+  "aegishv:type1:runtime-enable-ok"
+  "aegishv:type1:runtime-enable-error"
+)
 limine_failure_markers=(
   "aegishv:type1:limine-base-revision"
   "aegishv:type1:limine-hhdm-missing"
@@ -137,6 +141,13 @@ for marker in "${runtime_preflight_markers[@]}"; do
   fi
 done
 
+for marker in "${runtime_enable_markers[@]}"; do
+  if ! grep -Fqa "$marker" "$kernel_elf"; then
+    echo "type1 kernel inspect: runtime enable marker was not found: $marker" >&2
+    exit 70
+  fi
+done
+
 if ! grep -Fqa "$expected_limine_missing" "$kernel_elf"; then
   echo "type1 kernel inspect: Limine fallback marker was not found: $expected_limine_missing" >&2
   exit 70
@@ -170,6 +181,9 @@ runtime_backend_markers_present=true
 runtime_preflight=checked
 runtime_preflight_marker_count=${#runtime_preflight_markers[@]}
 runtime_preflight_markers_present=true
+runtime_enable=controlled
+runtime_enable_marker_count=${#runtime_enable_markers[@]}
+runtime_enable_markers_present=true
 limine_missing_marker=$expected_limine_missing
 limine_missing_marker_present=true
 limine_failure_marker_count=${#limine_failure_markers[@]}
