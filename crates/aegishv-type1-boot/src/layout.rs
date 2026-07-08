@@ -1,5 +1,5 @@
 pub const KERNEL_PHYSICAL_BASE: u64 = 0x20_0000;
-pub const KERNEL_VIRTUAL_BASE: u64 = 0xffff_8000_0020_0000;
+pub const KERNEL_VIRTUAL_BASE: u64 = 0xffff_ffff_8020_0000;
 pub const BOOT_STACK_SIZE: u64 = 64 * 1024;
 pub const EARLY_HEAP_SIZE: u64 = 2 * 1024 * 1024;
 pub const AP_TRAMPOLINE_PAGE: u64 = 0x7000;
@@ -85,6 +85,7 @@ mod tests {
     #[test]
     fn planned_x86_layout_passes_basic_link_constraints() {
         validate_link_layout(LinkLayout::planned_x86_64()).unwrap();
+        assert_eq!(KERNEL_VIRTUAL_BASE, 0xffff_ffff_8020_0000);
     }
 
     #[test]

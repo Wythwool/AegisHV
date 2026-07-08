@@ -1,0 +1,10 @@
+[package]
+name = "aegishv-type1-kernel"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.81"
+license = "MIT"
+description = "minimal no_std AegisHV type-1 kernel entry artifact for x86_64 lab bring-up"
+
+[dependencies]
+aegishv-type1-boot = { path = "../aegishv-type1-boot" }
