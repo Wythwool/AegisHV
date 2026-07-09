@@ -23,6 +23,8 @@ pub const SERIAL_RUNTIME_PREFLIGHT_OK_MARKER: &str = "aegishv:type1:runtime-pref
 pub const SERIAL_RUNTIME_PREFLIGHT_ERROR_MARKER: &str = "aegishv:type1:runtime-preflight-error";
 pub const SERIAL_RUNTIME_ENABLE_OK_MARKER: &str = "aegishv:type1:runtime-enable-ok";
 pub const SERIAL_RUNTIME_ENABLE_ERROR_MARKER: &str = "aegishv:type1:runtime-enable-error";
+pub const SERIAL_RUNTIME_REGIONS_OK_MARKER: &str = "aegishv:type1:runtime-regions-ok";
+pub const SERIAL_RUNTIME_REGIONS_ERROR_MARKER: &str = "aegishv:type1:runtime-regions-error";
 pub const SERIAL_LIMINE_BASE_REVISION_MARKER: &str = "aegishv:type1:limine-base-revision";
 pub const SERIAL_LIMINE_HHDM_MISSING_MARKER: &str = "aegishv:type1:limine-hhdm-missing";
 pub const SERIAL_LIMINE_HHDM_REVISION_MARKER: &str = "aegishv:type1:limine-hhdm-revision";
@@ -63,8 +65,10 @@ pub const IA32_VMX_CR0_FIXED0_MSR: u32 = 0x0000_0486;
 pub const IA32_VMX_CR0_FIXED1_MSR: u32 = 0x0000_0487;
 pub const IA32_VMX_CR4_FIXED0_MSR: u32 = 0x0000_0488;
 pub const IA32_VMX_CR4_FIXED1_MSR: u32 = 0x0000_0489;
+pub const IA32_VMX_BASIC_MSR: u32 = 0x0000_0480;
 pub const IA32_EFER_MSR: u32 = 0xc000_0080;
 pub const TYPE1_CR4_VMXE: u64 = 1 << 13;
+pub const TYPE1_VMX_BASIC_REVISION_MASK: u64 = 0x7fff_ffff;
 
 pub const LIMINE_REQUESTS_START_MARKER: [u64; 4] = [
     0xf6b8_f4b3_9de7_d1ae,
@@ -504,6 +508,7 @@ pub enum Type1RuntimePlanError {
     MixedVendorCapabilities,
     MissingIntelVmx,
     MissingAmdSvm,
+    MissingVmxBasic,
     RuntimeAddressOverflow,
     RuntimeAddressMisaligned,
     InvalidRuntimeAddress,
@@ -583,6 +588,87 @@ pub fn build_svm_runtime(plan: Type1RuntimePlan) -> Result<SvmRuntime, Type1Runt
     }
     SvmRuntime::new(host_physical(plan.memory.svm_vmcb_physical)?)
         .map_err(|err| Type1RuntimePlanError::Svm(err.kind))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Type1VmxBasic {
+    pub raw: u64,
+}
+
+impl Type1VmxBasic {
+    pub const fn new(raw: u64) -> Self {
+        Self { raw }
+    }
+
+    pub const fn vmcs_revision_id(self) -> u32 {
+        (self.raw & TYPE1_VMX_BASIC_REVISION_MASK) as u32
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Type1RuntimeRegionMaterialization {
+    pub backend: Type1RuntimeBackend,
+    pub vmxon_physical: u64,
+    pub vmcs_physical: u64,
+    pub svm_vmcb_physical: u64,
+    pub vmxon_revision: Option<u32>,
+    pub vmcs_revision: Option<u32>,
+    pub zeroed_page_count: u8,
+}
+
+impl Type1RuntimeRegionMaterialization {
+    pub const fn uses_vmx_pages(self) -> bool {
+        matches!(self.backend, Type1RuntimeBackend::IntelVmx)
+    }
+
+    pub const fn uses_svm_page(self) -> bool {
+        matches!(self.backend, Type1RuntimeBackend::AmdSvm)
+    }
+}
+
+pub fn plan_type1_runtime_regions(
+    plan: Type1RuntimePlan,
+    vmx_basic: Option<Type1VmxBasic>,
+) -> Result<Type1RuntimeRegionMaterialization, Type1RuntimePlanError> {
+    match plan.backend {
+        Type1RuntimeBackend::None => Ok(Type1RuntimeRegionMaterialization {
+            backend: Type1RuntimeBackend::None,
+            vmxon_physical: plan.memory.vmxon_physical,
+            vmcs_physical: plan.memory.vmcs_physical,
+            svm_vmcb_physical: plan.memory.svm_vmcb_physical,
+            vmxon_revision: None,
+            vmcs_revision: None,
+            zeroed_page_count: 0,
+        }),
+        Type1RuntimeBackend::IntelVmx => {
+            let revision_id = match vmx_basic {
+                Some(value) => value.vmcs_revision_id(),
+                None => return Err(Type1RuntimePlanError::MissingVmxBasic),
+            };
+            let _runtime = build_vmx_runtime(plan, revision_id)?;
+            Ok(Type1RuntimeRegionMaterialization {
+                backend: Type1RuntimeBackend::IntelVmx,
+                vmxon_physical: plan.memory.vmxon_physical,
+                vmcs_physical: plan.memory.vmcs_physical,
+                svm_vmcb_physical: plan.memory.svm_vmcb_physical,
+                vmxon_revision: Some(revision_id),
+                vmcs_revision: Some(revision_id),
+                zeroed_page_count: 2,
+            })
+        }
+        Type1RuntimeBackend::AmdSvm => {
+            let _runtime = build_svm_runtime(plan)?;
+            Ok(Type1RuntimeRegionMaterialization {
+                backend: Type1RuntimeBackend::AmdSvm,
+                vmxon_physical: plan.memory.vmxon_physical,
+                vmcs_physical: plan.memory.vmcs_physical,
+                svm_vmcb_physical: plan.memory.svm_vmcb_physical,
+                vmxon_revision: None,
+                vmcs_revision: None,
+                zeroed_page_count: 1,
+            })
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1256,6 +1342,85 @@ mod tests {
         let runtime = build_svm_runtime(plan).unwrap();
 
         assert_eq!(runtime.vmcb_physical_address().get(), 0x28_2000);
+    }
+
+    #[test]
+    fn runtime_region_plan_materializes_vmx_pages_from_basic_msr() {
+        let plan = plan_type1_runtime(
+            ready_handoff(),
+            Type1BackendRequest::IntelVmx,
+            Type1ArchCapabilities::intel_vmx(),
+        )
+        .unwrap();
+
+        let regions =
+            plan_type1_runtime_regions(plan, Some(Type1VmxBasic::new(0x8000_0033))).unwrap();
+
+        assert_eq!(regions.backend, Type1RuntimeBackend::IntelVmx);
+        assert!(regions.uses_vmx_pages());
+        assert!(!regions.uses_svm_page());
+        assert_eq!(regions.vmxon_physical, 0x28_0000);
+        assert_eq!(regions.vmcs_physical, 0x28_1000);
+        assert_eq!(regions.vmxon_revision, Some(0x33));
+        assert_eq!(regions.vmcs_revision, Some(0x33));
+        assert_eq!(regions.zeroed_page_count, 2);
+    }
+
+    #[test]
+    fn runtime_region_plan_rejects_missing_or_bad_vmx_revision() {
+        let plan = plan_type1_runtime(
+            ready_handoff(),
+            Type1BackendRequest::IntelVmx,
+            Type1ArchCapabilities::intel_vmx(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            plan_type1_runtime_regions(plan, None).unwrap_err(),
+            Type1RuntimePlanError::MissingVmxBasic
+        );
+        assert_eq!(
+            plan_type1_runtime_regions(plan, Some(Type1VmxBasic::new(0))).unwrap_err(),
+            Type1RuntimePlanError::Vmx(VmxErrorKind::InvalidRevisionId)
+        );
+    }
+
+    #[test]
+    fn runtime_region_plan_materializes_svm_vmcb_page() {
+        let plan = plan_type1_runtime(
+            ready_handoff(),
+            Type1BackendRequest::AmdSvm,
+            Type1ArchCapabilities::amd_svm(),
+        )
+        .unwrap();
+
+        let regions = plan_type1_runtime_regions(plan, None).unwrap();
+
+        assert_eq!(regions.backend, Type1RuntimeBackend::AmdSvm);
+        assert!(!regions.uses_vmx_pages());
+        assert!(regions.uses_svm_page());
+        assert_eq!(regions.svm_vmcb_physical, 0x28_2000);
+        assert_eq!(regions.vmxon_revision, None);
+        assert_eq!(regions.vmcs_revision, None);
+        assert_eq!(regions.zeroed_page_count, 1);
+    }
+
+    #[test]
+    fn runtime_region_plan_leaves_no_backend_without_writes() {
+        let plan = Type1RuntimePlan {
+            backend: Type1RuntimeBackend::None,
+            memory: Type1RuntimeMemoryPlan::from_executable_base(
+                aegishv_type1_boot::layout::KERNEL_PHYSICAL_BASE,
+            )
+            .unwrap(),
+        };
+
+        let regions = plan_type1_runtime_regions(plan, None).unwrap();
+
+        assert_eq!(regions.backend, Type1RuntimeBackend::None);
+        assert!(!regions.uses_vmx_pages());
+        assert!(!regions.uses_svm_page());
+        assert_eq!(regions.zeroed_page_count, 0);
     }
 
     #[test]
