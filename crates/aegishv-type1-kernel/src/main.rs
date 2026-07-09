@@ -84,13 +84,20 @@ pub extern "C" fn aegishv_type1_rust_entry() -> ! {
     let status = aegishv_type1_kernel::limine_minimal_handoff_status(handoff);
     if status.is_ready() {
         serial_write_line(status.serial_marker());
-        let (backend_marker, preflight_marker, enable_marker, regions_marker, vmxon_marker) =
-            runtime_markers(handoff);
+        let (
+            backend_marker,
+            preflight_marker,
+            enable_marker,
+            regions_marker,
+            vmxon_marker,
+            vmcs_marker,
+        ) = runtime_markers(handoff);
         serial_write_line(backend_marker);
         serial_write_line(preflight_marker);
         serial_write_line(enable_marker);
         serial_write_line(regions_marker);
         serial_write_line(vmxon_marker);
+        serial_write_line(vmcs_marker);
     } else {
         serial_write_line(aegishv_type1_kernel::SERIAL_LIMINE_MISSING_MARKER);
         serial_write_line(status.serial_marker());
@@ -102,6 +109,7 @@ pub extern "C" fn aegishv_type1_rust_entry() -> ! {
 fn runtime_markers(
     handoff: aegishv_type1_kernel::LimineMinimalHandoff,
 ) -> (
+    &'static str,
     &'static str,
     &'static str,
     &'static str,
@@ -124,7 +132,7 @@ fn runtime_markers(
                     let enable_plan = aegishv_type1_kernel::plan_type1_runtime_enable(preflight);
                     match unsafe { apply_type1_enable_plan(enable_plan) } {
                         Ok(()) => {
-                            let (regions_marker, vmxon_marker) =
+                            let (regions_marker, vmxon_marker, vmcs_marker) =
                                 match aegishv_type1_kernel::plan_type1_runtime_regions(
                                     plan,
                                     unsafe { read_type1_vmx_basic(plan.backend) },
@@ -132,14 +140,20 @@ fn runtime_markers(
                                     Ok(regions) => match unsafe {
                                         materialize_type1_runtime_regions(handoff, regions)
                                     } {
-                                        Ok(()) => (
-                                            aegishv_type1_kernel::SERIAL_RUNTIME_REGIONS_OK_MARKER,
-                                            unsafe { run_type1_vmxon_cycle(regions) },
-                                        ),
+                                        Ok(()) => {
+                                            let (vmxon_marker, vmcs_marker) =
+                                                unsafe { run_type1_vmcs_load_cycle(regions) };
+                                            (
+                                                aegishv_type1_kernel::SERIAL_RUNTIME_REGIONS_OK_MARKER,
+                                                vmxon_marker,
+                                                vmcs_marker,
+                                            )
+                                        }
                                         Err(()) => {
                                             (
                                                 aegishv_type1_kernel::SERIAL_RUNTIME_REGIONS_ERROR_MARKER,
                                                 aegishv_type1_kernel::SERIAL_RUNTIME_VMXON_ERROR_MARKER,
+                                                aegishv_type1_kernel::SERIAL_RUNTIME_VMCS_LOAD_ERROR_MARKER,
                                             )
                                         }
                                     },
@@ -147,6 +161,7 @@ fn runtime_markers(
                                         (
                                             aegishv_type1_kernel::SERIAL_RUNTIME_REGIONS_ERROR_MARKER,
                                             aegishv_type1_kernel::SERIAL_RUNTIME_VMXON_ERROR_MARKER,
+                                            aegishv_type1_kernel::SERIAL_RUNTIME_VMCS_LOAD_ERROR_MARKER,
                                         )
                                     }
                                 };
@@ -156,6 +171,7 @@ fn runtime_markers(
                                 aegishv_type1_kernel::SERIAL_RUNTIME_ENABLE_OK_MARKER,
                                 regions_marker,
                                 vmxon_marker,
+                                vmcs_marker,
                             )
                         }
                         Err(()) => (
@@ -164,6 +180,7 @@ fn runtime_markers(
                             aegishv_type1_kernel::SERIAL_RUNTIME_ENABLE_ERROR_MARKER,
                             aegishv_type1_kernel::SERIAL_RUNTIME_REGIONS_ERROR_MARKER,
                             aegishv_type1_kernel::SERIAL_RUNTIME_VMXON_ERROR_MARKER,
+                            aegishv_type1_kernel::SERIAL_RUNTIME_VMCS_LOAD_ERROR_MARKER,
                         ),
                     }
                 }
@@ -173,6 +190,7 @@ fn runtime_markers(
                     aegishv_type1_kernel::SERIAL_RUNTIME_ENABLE_ERROR_MARKER,
                     aegishv_type1_kernel::SERIAL_RUNTIME_REGIONS_ERROR_MARKER,
                     aegishv_type1_kernel::SERIAL_RUNTIME_VMXON_ERROR_MARKER,
+                    aegishv_type1_kernel::SERIAL_RUNTIME_VMCS_LOAD_ERROR_MARKER,
                 ),
             }
         }
@@ -182,6 +200,7 @@ fn runtime_markers(
             aegishv_type1_kernel::SERIAL_RUNTIME_ENABLE_ERROR_MARKER,
             aegishv_type1_kernel::SERIAL_RUNTIME_REGIONS_ERROR_MARKER,
             aegishv_type1_kernel::SERIAL_RUNTIME_VMXON_ERROR_MARKER,
+            aegishv_type1_kernel::SERIAL_RUNTIME_VMCS_LOAD_ERROR_MARKER,
         ),
     }
 }
@@ -382,18 +401,28 @@ unsafe fn materialize_type1_runtime_regions(
 }
 
 #[cfg(target_os = "none")]
-unsafe fn run_type1_vmxon_cycle(
+unsafe fn run_type1_vmcs_load_cycle(
     regions: aegishv_type1_kernel::Type1RuntimeRegionMaterialization,
-) -> &'static str {
+) -> (&'static str, &'static str) {
     let mut executor = aegishv_arch_x86::vmx::hardware::HardwareVmxInstructions::new();
-    match unsafe { aegishv_type1_kernel::run_type1_vmxon_cycle_with(regions, &mut executor) } {
-        Ok(aegishv_type1_kernel::Type1VmxonCycleStatus::EnteredAndLeft) => {
-            aegishv_type1_kernel::SERIAL_RUNTIME_VMXON_OK_MARKER
-        }
-        Ok(aegishv_type1_kernel::Type1VmxonCycleStatus::Skipped) => {
-            aegishv_type1_kernel::SERIAL_RUNTIME_VMXON_SKIPPED_MARKER
-        }
-        Err(_) => aegishv_type1_kernel::SERIAL_RUNTIME_VMXON_ERROR_MARKER,
+    match unsafe { aegishv_type1_kernel::run_type1_vmcs_load_cycle_with(regions, &mut executor) } {
+        Ok(aegishv_type1_kernel::Type1VmcsLoadCycleStatus::LoadedAndLeft) => (
+            aegishv_type1_kernel::SERIAL_RUNTIME_VMXON_OK_MARKER,
+            aegishv_type1_kernel::SERIAL_RUNTIME_VMCS_LOAD_OK_MARKER,
+        ),
+        Ok(aegishv_type1_kernel::Type1VmcsLoadCycleStatus::Skipped) => (
+            aegishv_type1_kernel::SERIAL_RUNTIME_VMXON_SKIPPED_MARKER,
+            aegishv_type1_kernel::SERIAL_RUNTIME_VMCS_LOAD_SKIPPED_MARKER,
+        ),
+        Err(aegishv_type1_kernel::Type1VmcsLoadCycleError::Vmclear(_))
+        | Err(aegishv_type1_kernel::Type1VmcsLoadCycleError::Vmptrld(_)) => (
+            aegishv_type1_kernel::SERIAL_RUNTIME_VMXON_OK_MARKER,
+            aegishv_type1_kernel::SERIAL_RUNTIME_VMCS_LOAD_ERROR_MARKER,
+        ),
+        Err(_) => (
+            aegishv_type1_kernel::SERIAL_RUNTIME_VMXON_ERROR_MARKER,
+            aegishv_type1_kernel::SERIAL_RUNTIME_VMCS_LOAD_ERROR_MARKER,
+        ),
     }
 }
 
