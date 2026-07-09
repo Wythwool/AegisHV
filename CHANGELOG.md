@@ -30,6 +30,7 @@
 - Added type-1 kernel CPU capability snapshots so the runtime backend marker can be selected from CPUID/MSR data before privileged VM entry is wired.
 - Added type-1 kernel register preflight planning for VMX CR0/CR4 fixed bits, CR4.VMXE, and SVM EFER.SVME before any privileged entry path is wired.
 - Added controlled type-1 register-enable writes for VMX CR0/CR4 and SVM EFER.SVME while still stopping before VMXON or VMRUN.
+- Added type-1 runtime page materialization for VMXON, VMCS, and VMCB regions through the Limine HHDM while still stopping before VMXON or VMRUN.
 - Expanded synthetic Linux and Windows VMI fixture corpus.
 
 ## 0.4.0
