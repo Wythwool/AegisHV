@@ -84,10 +84,12 @@ pub extern "C" fn aegishv_type1_rust_entry() -> ! {
     let status = aegishv_type1_kernel::limine_minimal_handoff_status(handoff);
     if status.is_ready() {
         serial_write_line(status.serial_marker());
-        let (backend_marker, preflight_marker, enable_marker) = runtime_markers(handoff);
+        let (backend_marker, preflight_marker, enable_marker, regions_marker) =
+            runtime_markers(handoff);
         serial_write_line(backend_marker);
         serial_write_line(preflight_marker);
         serial_write_line(enable_marker);
+        serial_write_line(regions_marker);
     } else {
         serial_write_line(aegishv_type1_kernel::SERIAL_LIMINE_MISSING_MARKER);
         serial_write_line(status.serial_marker());
@@ -98,7 +100,7 @@ pub extern "C" fn aegishv_type1_rust_entry() -> ! {
 #[cfg(target_os = "none")]
 fn runtime_markers(
     handoff: aegishv_type1_kernel::LimineMinimalHandoff,
-) -> (&'static str, &'static str, &'static str) {
+) -> (&'static str, &'static str, &'static str, &'static str) {
     let capability_report = aegishv_type1_kernel::type1_capabilities_from_snapshot(unsafe {
         read_type1_cpu_snapshot()
     });
@@ -113,20 +115,47 @@ fn runtime_markers(
             match aegishv_type1_kernel::plan_type1_runtime_preflight(plan, controls) {
                 Ok(preflight) => {
                     let enable_plan = aegishv_type1_kernel::plan_type1_runtime_enable(preflight);
-                    let enable_marker = match unsafe { apply_type1_enable_plan(enable_plan) } {
-                        Ok(()) => aegishv_type1_kernel::SERIAL_RUNTIME_ENABLE_OK_MARKER,
-                        Err(()) => aegishv_type1_kernel::SERIAL_RUNTIME_ENABLE_ERROR_MARKER,
-                    };
-                    (
-                        backend_marker,
-                        aegishv_type1_kernel::SERIAL_RUNTIME_PREFLIGHT_OK_MARKER,
-                        enable_marker,
-                    )
+                    match unsafe { apply_type1_enable_plan(enable_plan) } {
+                        Ok(()) => {
+                            let regions_marker =
+                                match aegishv_type1_kernel::plan_type1_runtime_regions(
+                                    plan,
+                                    unsafe { read_type1_vmx_basic(plan.backend) },
+                                ) {
+                                    Ok(regions) => match unsafe {
+                                        materialize_type1_runtime_regions(handoff, regions)
+                                    } {
+                                        Ok(()) => {
+                                            aegishv_type1_kernel::SERIAL_RUNTIME_REGIONS_OK_MARKER
+                                        }
+                                        Err(()) => {
+                                            aegishv_type1_kernel::SERIAL_RUNTIME_REGIONS_ERROR_MARKER
+                                        }
+                                    },
+                                    Err(_) => {
+                                        aegishv_type1_kernel::SERIAL_RUNTIME_REGIONS_ERROR_MARKER
+                                    }
+                                };
+                            (
+                                backend_marker,
+                                aegishv_type1_kernel::SERIAL_RUNTIME_PREFLIGHT_OK_MARKER,
+                                aegishv_type1_kernel::SERIAL_RUNTIME_ENABLE_OK_MARKER,
+                                regions_marker,
+                            )
+                        }
+                        Err(()) => (
+                            backend_marker,
+                            aegishv_type1_kernel::SERIAL_RUNTIME_PREFLIGHT_OK_MARKER,
+                            aegishv_type1_kernel::SERIAL_RUNTIME_ENABLE_ERROR_MARKER,
+                            aegishv_type1_kernel::SERIAL_RUNTIME_REGIONS_ERROR_MARKER,
+                        ),
+                    }
                 }
                 Err(_) => (
                     backend_marker,
                     aegishv_type1_kernel::SERIAL_RUNTIME_PREFLIGHT_ERROR_MARKER,
                     aegishv_type1_kernel::SERIAL_RUNTIME_ENABLE_ERROR_MARKER,
+                    aegishv_type1_kernel::SERIAL_RUNTIME_REGIONS_ERROR_MARKER,
                 ),
             }
         }
@@ -134,6 +163,7 @@ fn runtime_markers(
             aegishv_type1_kernel::SERIAL_RUNTIME_PLAN_ERROR_MARKER,
             aegishv_type1_kernel::SERIAL_RUNTIME_PREFLIGHT_ERROR_MARKER,
             aegishv_type1_kernel::SERIAL_RUNTIME_ENABLE_ERROR_MARKER,
+            aegishv_type1_kernel::SERIAL_RUNTIME_REGIONS_ERROR_MARKER,
         ),
     }
 }
@@ -191,6 +221,19 @@ unsafe fn read_msr(msr: u32) -> u64 {
         options(nomem, nostack, preserves_flags)
     );
     ((high as u64) << 32) | low as u64
+}
+
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+unsafe fn read_type1_vmx_basic(
+    backend: aegishv_type1_kernel::Type1RuntimeBackend,
+) -> Option<aegishv_type1_kernel::Type1VmxBasic> {
+    if backend == aegishv_type1_kernel::Type1RuntimeBackend::IntelVmx {
+        Some(aegishv_type1_kernel::Type1VmxBasic::new(read_msr(
+            aegishv_type1_kernel::IA32_VMX_BASIC_MSR,
+        )))
+    } else {
+        None
+    }
 }
 
 #[cfg(all(target_os = "none", target_arch = "x86_64"))]
@@ -288,9 +331,81 @@ unsafe fn write_msr(msr: u32, value: u64) {
     );
 }
 
+#[cfg(target_os = "none")]
+unsafe fn materialize_type1_runtime_regions(
+    handoff: aegishv_type1_kernel::LimineMinimalHandoff,
+    regions: aegishv_type1_kernel::Type1RuntimeRegionMaterialization,
+) -> Result<(), ()> {
+    match regions.backend {
+        aegishv_type1_kernel::Type1RuntimeBackend::IntelVmx => {
+            let vmxon_revision = match regions.vmxon_revision {
+                Some(value) => value,
+                None => return Err(()),
+            };
+            let vmcs_revision = match regions.vmcs_revision {
+                Some(value) => value,
+                None => return Err(()),
+            };
+            let vmxon = physical_to_hhdm(regions.vmxon_physical, handoff.hhdm_offset)?;
+            let vmcs = physical_to_hhdm(regions.vmcs_physical, handoff.hhdm_offset)?;
+            write_runtime_page(vmxon);
+            write_runtime_revision(vmxon, vmxon_revision);
+            write_runtime_page(vmcs);
+            write_runtime_revision(vmcs, vmcs_revision);
+            Ok(())
+        }
+        aegishv_type1_kernel::Type1RuntimeBackend::AmdSvm => {
+            let vmcb = physical_to_hhdm(regions.svm_vmcb_physical, handoff.hhdm_offset)?;
+            write_runtime_page(vmcb);
+            Ok(())
+        }
+        aegishv_type1_kernel::Type1RuntimeBackend::None => Ok(()),
+    }
+}
+
+#[cfg(target_os = "none")]
+fn physical_to_hhdm(physical: u64, hhdm_offset: u64) -> Result<usize, ()> {
+    let virtual_address = match physical.checked_add(hhdm_offset) {
+        Some(value) => value,
+        None => return Err(()),
+    };
+    if virtual_address > usize::MAX as u64 {
+        return Err(());
+    }
+    Ok(virtual_address as usize)
+}
+
+#[cfg(target_os = "none")]
+unsafe fn write_runtime_page(address: usize) {
+    let page = address as *mut u8;
+    let mut offset = 0usize;
+    while offset < aegishv_type1_kernel::TYPE1_RUNTIME_PAGE_SIZE as usize {
+        page.add(offset).write_volatile(0);
+        offset += 1;
+    }
+}
+
+#[cfg(target_os = "none")]
+unsafe fn write_runtime_revision(address: usize, revision: u32) {
+    let page = address as *mut u8;
+    let bytes = revision.to_le_bytes();
+    let mut offset = 0usize;
+    while offset < bytes.len() {
+        page.add(offset).write_volatile(bytes[offset]);
+        offset += 1;
+    }
+}
+
 #[cfg(all(target_os = "none", not(target_arch = "x86_64")))]
 unsafe fn read_type1_cpu_snapshot() -> aegishv_type1_kernel::Type1CpuSnapshot {
     aegishv_type1_kernel::Type1CpuSnapshot::empty()
+}
+
+#[cfg(all(target_os = "none", not(target_arch = "x86_64")))]
+unsafe fn read_type1_vmx_basic(
+    _backend: aegishv_type1_kernel::Type1RuntimeBackend,
+) -> Option<aegishv_type1_kernel::Type1VmxBasic> {
+    None
 }
 
 #[cfg(all(target_os = "none", not(target_arch = "x86_64")))]
