@@ -31,7 +31,8 @@
 - Added type-1 kernel register preflight planning for VMX CR0/CR4 fixed bits, CR4.VMXE, and SVM EFER.SVME before any privileged entry path is wired.
 - Added controlled type-1 register-enable writes for VMX CR0/CR4 and SVM EFER.SVME.
 - Added type-1 runtime page materialization for VMXON, VMCS, and VMCB regions through the Limine HHDM.
-- Added a type-1 VMXON/VMXOFF smoke cycle with explicit serial markers while still stopping before VMCS load or guest launch.
+- Added a type-1 VMXON/VMXOFF smoke cycle with explicit serial markers.
+- Added a type-1 VMCLEAR/VMPTRLD smoke cycle while still stopping before VMCS field writes or guest launch.
 - Expanded synthetic Linux and Windows VMI fixture corpus.
 
 ## 0.4.0

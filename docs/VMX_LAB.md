@@ -16,7 +16,7 @@ This document records the Intel VMX model code now present in `aegishv-arch-x86`
 - EPT mapping plans, EPT violation decoding, VPID validation, and INVEPT/VPID invalidation plans.
 - Execute and write trap lifecycle models with temporary write-window reporting and Monitor Trap Flag single-step fallback behavior.
 
-These pieces are library code with tests. Normal tests do not execute privileged VMX instructions. The type-1 kernel can now select a checked VMX runtime plan, apply the CR0/CR4 enable values, read the VMCS revision from `IA32_VMX_BASIC`, materialize the VMXON and VMCS pages, and run a VMXON/VMXOFF smoke cycle before halting. VMCS load, VMLAUNCH, VMRESUME, guest execution, and hardware evidence are not wired into the boot image yet.
+These pieces are library code with tests. Normal tests do not execute privileged VMX instructions. The type-1 kernel can now select a checked VMX runtime plan, apply the CR0/CR4 enable values, read the VMCS revision from `IA32_VMX_BASIC`, materialize the VMXON and VMCS pages, and run a VMXON/VMCLEAR/VMPTRLD/VMXOFF smoke cycle before halting. VMCS field writes, VMLAUNCH, VMRESUME, guest execution, and hardware evidence are not wired into the boot image yet.
 
 ## Required Exit Coverage
 
