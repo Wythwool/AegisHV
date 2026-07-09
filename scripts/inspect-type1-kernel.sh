@@ -33,6 +33,11 @@ runtime_vmxon_markers=(
   "aegishv:type1:vmxon-cycle-error"
   "aegishv:type1:vmxon-cycle-skipped"
 )
+runtime_vmcs_load_markers=(
+  "aegishv:type1:vmcs-load-ok"
+  "aegishv:type1:vmcs-load-error"
+  "aegishv:type1:vmcs-load-skipped"
+)
 limine_failure_markers=(
   "aegishv:type1:limine-base-revision"
   "aegishv:type1:limine-hhdm-missing"
@@ -171,6 +176,13 @@ for marker in "${runtime_vmxon_markers[@]}"; do
   fi
 done
 
+for marker in "${runtime_vmcs_load_markers[@]}"; do
+  if ! grep -Fqa "$marker" "$kernel_elf"; then
+    echo "type1 kernel inspect: VMCS load marker was not found: $marker" >&2
+    exit 70
+  fi
+done
+
 if ! grep -Fqa "$expected_limine_missing" "$kernel_elf"; then
   echo "type1 kernel inspect: Limine fallback marker was not found: $expected_limine_missing" >&2
   exit 70
@@ -213,6 +225,9 @@ runtime_region_markers_present=true
 runtime_vmxon=smoke-cycle
 runtime_vmxon_marker_count=${#runtime_vmxon_markers[@]}
 runtime_vmxon_markers_present=true
+runtime_vmcs_load=smoke-cycle
+runtime_vmcs_load_marker_count=${#runtime_vmcs_load_markers[@]}
+runtime_vmcs_load_markers_present=true
 limine_missing_marker=$expected_limine_missing
 limine_missing_marker_present=true
 limine_failure_marker_count=${#limine_failure_markers[@]}
