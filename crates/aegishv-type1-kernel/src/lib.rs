@@ -29,6 +29,9 @@ pub const SERIAL_RUNTIME_REGIONS_ERROR_MARKER: &str = "aegishv:type1:runtime-reg
 pub const SERIAL_RUNTIME_VMXON_OK_MARKER: &str = "aegishv:type1:vmxon-cycle-ok";
 pub const SERIAL_RUNTIME_VMXON_ERROR_MARKER: &str = "aegishv:type1:vmxon-cycle-error";
 pub const SERIAL_RUNTIME_VMXON_SKIPPED_MARKER: &str = "aegishv:type1:vmxon-cycle-skipped";
+pub const SERIAL_RUNTIME_VMCS_LOAD_OK_MARKER: &str = "aegishv:type1:vmcs-load-ok";
+pub const SERIAL_RUNTIME_VMCS_LOAD_ERROR_MARKER: &str = "aegishv:type1:vmcs-load-error";
+pub const SERIAL_RUNTIME_VMCS_LOAD_SKIPPED_MARKER: &str = "aegishv:type1:vmcs-load-skipped";
 pub const SERIAL_LIMINE_BASE_REVISION_MARKER: &str = "aegishv:type1:limine-base-revision";
 pub const SERIAL_LIMINE_HHDM_MISSING_MARKER: &str = "aegishv:type1:limine-hhdm-missing";
 pub const SERIAL_LIMINE_HHDM_REVISION_MARKER: &str = "aegishv:type1:limine-hhdm-revision";
@@ -731,6 +734,86 @@ pub unsafe fn run_type1_vmxon_cycle_with<E: VmxInstructionExecutor>(
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Type1VmcsLoadCyclePlan {
+    pub vmxon_physical: HostPhysical,
+    pub vmcs_physical: HostPhysical,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Type1VmcsLoadCycleStatus {
+    Skipped,
+    LoadedAndLeft,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Type1VmcsLoadCycleError {
+    MissingVmxRegion,
+    InvalidRuntimeAddress,
+    Vmxon(VmxErrorKind),
+    Vmclear(VmxErrorKind),
+    Vmptrld(VmxErrorKind),
+    Vmxoff(VmxErrorKind),
+}
+
+pub fn plan_type1_vmcs_load_cycle(
+    regions: Type1RuntimeRegionMaterialization,
+) -> Result<Option<Type1VmcsLoadCyclePlan>, Type1VmcsLoadCycleError> {
+    if regions.backend != Type1RuntimeBackend::IntelVmx {
+        return Ok(None);
+    }
+    if regions.vmxon_revision.is_none() || regions.vmcs_revision.is_none() {
+        return Err(Type1VmcsLoadCycleError::MissingVmxRegion);
+    }
+    if regions.vmxon_physical == 0
+        || regions.vmcs_physical == 0
+        || regions.vmxon_physical % TYPE1_RUNTIME_PAGE_SIZE != 0
+        || regions.vmcs_physical % TYPE1_RUNTIME_PAGE_SIZE != 0
+    {
+        return Err(Type1VmcsLoadCycleError::InvalidRuntimeAddress);
+    }
+    let vmxon_physical = HostPhysical::new(regions.vmxon_physical)
+        .map_err(|_| Type1VmcsLoadCycleError::InvalidRuntimeAddress)?;
+    let vmcs_physical = HostPhysical::new(regions.vmcs_physical)
+        .map_err(|_| Type1VmcsLoadCycleError::InvalidRuntimeAddress)?;
+    Ok(Some(Type1VmcsLoadCyclePlan {
+        vmxon_physical,
+        vmcs_physical,
+    }))
+}
+
+/// # Safety
+///
+/// The caller must run this only after VMX capability and control-register
+/// checks passed and after the VMXON and VMCS pages were initialized with the
+/// current CPU's VMCS revision id. This routine deliberately stops before any
+/// VMCS field writes or guest entry.
+pub unsafe fn run_type1_vmcs_load_cycle_with<E: VmxInstructionExecutor>(
+    regions: Type1RuntimeRegionMaterialization,
+    executor: &mut E,
+) -> Result<Type1VmcsLoadCycleStatus, Type1VmcsLoadCycleError> {
+    let plan = match plan_type1_vmcs_load_cycle(regions)? {
+        Some(plan) => plan,
+        None => return Ok(Type1VmcsLoadCycleStatus::Skipped),
+    };
+    unsafe { executor.vmxon(plan.vmxon_physical) }
+        .map_err(|err| Type1VmcsLoadCycleError::Vmxon(err.kind))?;
+    if let Err(err) = unsafe { executor.vmclear(plan.vmcs_physical) } {
+        if let Err(off_err) = unsafe { executor.vmxoff() } {
+            return Err(Type1VmcsLoadCycleError::Vmxoff(off_err.kind));
+        }
+        return Err(Type1VmcsLoadCycleError::Vmclear(err.kind));
+    }
+    if let Err(err) = unsafe { executor.vmptrld(plan.vmcs_physical) } {
+        if let Err(off_err) = unsafe { executor.vmxoff() } {
+            return Err(Type1VmcsLoadCycleError::Vmxoff(off_err.kind));
+        }
+        return Err(Type1VmcsLoadCycleError::Vmptrld(err.kind));
+    }
+    unsafe { executor.vmxoff() }.map_err(|err| Type1VmcsLoadCycleError::Vmxoff(err.kind))?;
+    Ok(Type1VmcsLoadCycleStatus::LoadedAndLeft)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Type1ControlSnapshot {
     pub cr0: u64,
     pub cr4: u64,
@@ -907,8 +990,11 @@ mod tests {
     struct MockVmxonCycleExecutor {
         vmxon_region: Option<HostPhysical>,
         current_vmcs: Option<HostPhysical>,
+        cleared_vmcs: Option<HostPhysical>,
         fail_vmxon: bool,
         fail_vmxoff: bool,
+        fail_vmclear: bool,
+        fail_vmptrld: bool,
     }
 
     impl MockVmxonCycleExecutor {
@@ -918,6 +1004,14 @@ mod tests {
 
         fn fail_vmxoff(&mut self) {
             self.fail_vmxoff = true;
+        }
+
+        fn fail_vmclear(&mut self) {
+            self.fail_vmclear = true;
+        }
+
+        fn fail_vmptrld(&mut self) {
+            self.fail_vmptrld = true;
         }
     }
 
@@ -947,12 +1041,27 @@ mod tests {
             Ok(())
         }
 
-        unsafe fn vmptrld(&mut self, vmcs: HostPhysical) -> Result<(), VmxError> {
-            self.current_vmcs = Some(vmcs);
+        unsafe fn vmclear(&mut self, vmcs: HostPhysical) -> Result<(), VmxError> {
+            if self.fail_vmclear {
+                self.fail_vmclear = false;
+                return Err(VmxError::new(
+                    VmxErrorKind::InstructionFailed,
+                    "mock VMCLEAR failed",
+                ));
+            }
+            self.cleared_vmcs = Some(vmcs);
             Ok(())
         }
 
-        unsafe fn vmclear(&mut self, _vmcs: HostPhysical) -> Result<(), VmxError> {
+        unsafe fn vmptrld(&mut self, vmcs: HostPhysical) -> Result<(), VmxError> {
+            if self.fail_vmptrld {
+                self.fail_vmptrld = false;
+                return Err(VmxError::new(
+                    VmxErrorKind::InstructionFailed,
+                    "mock VMPTRLD failed",
+                ));
+            }
+            self.current_vmcs = Some(vmcs);
             Ok(())
         }
 
@@ -1017,6 +1126,9 @@ mod tests {
         assert!(marker_line(SERIAL_RUNTIME_VMXON_OK_MARKER, &mut out).is_some());
         assert!(marker_line(SERIAL_RUNTIME_VMXON_ERROR_MARKER, &mut out).is_some());
         assert!(marker_line(SERIAL_RUNTIME_VMXON_SKIPPED_MARKER, &mut out).is_some());
+        assert!(marker_line(SERIAL_RUNTIME_VMCS_LOAD_OK_MARKER, &mut out).is_some());
+        assert!(marker_line(SERIAL_RUNTIME_VMCS_LOAD_ERROR_MARKER, &mut out).is_some());
+        assert!(marker_line(SERIAL_RUNTIME_VMCS_LOAD_SKIPPED_MARKER, &mut out).is_some());
         assert_eq!(
             Type1RuntimeBackend::IntelVmx.serial_marker(),
             "aegishv:type1:backend-vmx"
@@ -1671,6 +1783,129 @@ mod tests {
             Type1VmxonCycleStatus::Skipped
         );
         assert!(executor.vmxon_region.is_none());
+    }
+
+    #[test]
+    fn vmcs_load_cycle_clears_loads_and_leaves_with_mock_executor() {
+        let regions = plan_type1_runtime_regions(
+            plan_type1_runtime(
+                ready_handoff(),
+                Type1BackendRequest::IntelVmx,
+                Type1ArchCapabilities::intel_vmx(),
+            )
+            .unwrap(),
+            Some(Type1VmxBasic::new(0x33)),
+        )
+        .unwrap();
+        let plan = plan_type1_vmcs_load_cycle(regions).unwrap().unwrap();
+        let mut executor = MockVmxonCycleExecutor::default();
+
+        let status = unsafe { run_type1_vmcs_load_cycle_with(regions, &mut executor) }.unwrap();
+
+        assert_eq!(plan.vmxon_physical.get(), 0x28_0000);
+        assert_eq!(plan.vmcs_physical.get(), 0x28_1000);
+        assert_eq!(status, Type1VmcsLoadCycleStatus::LoadedAndLeft);
+        assert_eq!(executor.cleared_vmcs.unwrap().get(), 0x28_1000);
+        assert!(executor.current_vmcs.is_none());
+        assert!(executor.vmxon_region.is_none());
+    }
+
+    #[test]
+    fn vmcs_load_cycle_skips_non_vmx_backend() {
+        let regions = plan_type1_runtime_regions(
+            plan_type1_runtime(
+                ready_handoff(),
+                Type1BackendRequest::AmdSvm,
+                Type1ArchCapabilities::amd_svm(),
+            )
+            .unwrap(),
+            None,
+        )
+        .unwrap();
+        let mut executor = MockVmxonCycleExecutor::default();
+
+        assert_eq!(
+            unsafe { run_type1_vmcs_load_cycle_with(regions, &mut executor) }.unwrap(),
+            Type1VmcsLoadCycleStatus::Skipped
+        );
+        assert!(executor.vmxon_region.is_none());
+    }
+
+    #[test]
+    fn vmcs_load_cycle_rolls_back_after_vmclear_failure() {
+        let regions = plan_type1_runtime_regions(
+            plan_type1_runtime(
+                ready_handoff(),
+                Type1BackendRequest::IntelVmx,
+                Type1ArchCapabilities::intel_vmx(),
+            )
+            .unwrap(),
+            Some(Type1VmxBasic::new(0x33)),
+        )
+        .unwrap();
+        let mut executor = MockVmxonCycleExecutor::default();
+        executor.fail_vmclear();
+
+        let err = unsafe { run_type1_vmcs_load_cycle_with(regions, &mut executor) }.unwrap_err();
+
+        assert_eq!(
+            err,
+            Type1VmcsLoadCycleError::Vmclear(VmxErrorKind::InstructionFailed)
+        );
+        assert!(executor.cleared_vmcs.is_none());
+        assert!(executor.current_vmcs.is_none());
+        assert!(executor.vmxon_region.is_none());
+    }
+
+    #[test]
+    fn vmcs_load_cycle_rolls_back_after_vmptrld_failure() {
+        let regions = plan_type1_runtime_regions(
+            plan_type1_runtime(
+                ready_handoff(),
+                Type1BackendRequest::IntelVmx,
+                Type1ArchCapabilities::intel_vmx(),
+            )
+            .unwrap(),
+            Some(Type1VmxBasic::new(0x33)),
+        )
+        .unwrap();
+        let mut executor = MockVmxonCycleExecutor::default();
+        executor.fail_vmptrld();
+
+        let err = unsafe { run_type1_vmcs_load_cycle_with(regions, &mut executor) }.unwrap_err();
+
+        assert_eq!(
+            err,
+            Type1VmcsLoadCycleError::Vmptrld(VmxErrorKind::InstructionFailed)
+        );
+        assert_eq!(executor.cleared_vmcs.unwrap().get(), 0x28_1000);
+        assert!(executor.current_vmcs.is_none());
+        assert!(executor.vmxon_region.is_none());
+    }
+
+    #[test]
+    fn vmcs_load_cycle_reports_vmxoff_failure_after_load() {
+        let regions = plan_type1_runtime_regions(
+            plan_type1_runtime(
+                ready_handoff(),
+                Type1BackendRequest::IntelVmx,
+                Type1ArchCapabilities::intel_vmx(),
+            )
+            .unwrap(),
+            Some(Type1VmxBasic::new(0x33)),
+        )
+        .unwrap();
+        let mut executor = MockVmxonCycleExecutor::default();
+        executor.fail_vmxoff();
+
+        let err = unsafe { run_type1_vmcs_load_cycle_with(regions, &mut executor) }.unwrap_err();
+
+        assert_eq!(
+            err,
+            Type1VmcsLoadCycleError::Vmxoff(VmxErrorKind::InstructionFailed)
+        );
+        assert_eq!(executor.vmxon_region.unwrap().get(), 0x28_0000);
+        assert_eq!(executor.current_vmcs.unwrap().get(), 0x28_1000);
     }
 
     #[test]
