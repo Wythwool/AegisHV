@@ -92,8 +92,8 @@ runtime_vmcs_load_markers=aegishv:type1:vmcs-load-ok,aegishv:type1:vmcs-load-err
 runtime_host_tables=owned-gdt-tss-idt
 runtime_host_paging=owned-final-vmx-root
 runtime_host_paging_markers=aegishv:type1:host-paging-ok,aegishv:type1:host-paging-error
-runtime_vmx_guest=bounded-io-cpuid-hlt
-runtime_vmx_guest_markers=aegishv:type1:guest-config-ok,aegishv:type1:guest-preempt-exit-ok,aegishv:type1:guest-io-exit-ok,aegishv:type1:guest-cpuid-exit-ok,aegishv:type1:guest-hlt-exit-ok,aegishv:type1:guest-run-ok
+runtime_vmx_guest=bounded-io-a-io-b-cpuid-rdmsr-hlt
+runtime_vmx_guest_markers=aegishv:type1:guest-config-ok,aegishv:type1:guest-preempt-exit-ok,aegishv:type1:guest-io-exit-ok,aegishv:type1:guest-io-b-exit-ok,aegishv:type1:guest-cpuid-exit-ok,aegishv:type1:guest-rdmsr-exit-ok,aegishv:type1:guest-hlt-exit-ok,aegishv:type1:guest-run-ok
 runtime_vmx_diagnostics=cpu-signature,timer-rate,timer-reload,timer-effective
 runtime_vmx_diagnostic_prefixes=aegishv:type1:vmx-cpu-signature=0x,aegishv:type1:vmx-timer-rate=0x,aegishv:type1:vmx-timer-reload=0x,aegishv:type1:vmx-timer-effective=0x
 inspect_manifest=$inspect_manifest

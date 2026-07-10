@@ -187,7 +187,9 @@ aegishv:type1:host-paging-ok\n\
 aegishv:type1:guest-config-ok\n\
 aegishv:type1:guest-preempt-exit-ok\n\
 aegishv:type1:guest-io-exit-ok\n\
+aegishv:type1:guest-io-b-exit-ok\n\
 aegishv:type1:guest-cpuid-exit-ok\n\
+aegishv:type1:guest-rdmsr-exit-ok\n\
 aegishv:type1:guest-hlt-exit-ok\n\
 aegishv:type1:guest-run-ok\n"
 }
@@ -210,8 +212,10 @@ aegishv:type1:vmcs-load-ok\n\
 aegishv:type1:host-paging-ok\n\
 aegishv:type1:guest-config-ok\n\
 aegishv:type1:guest-io-exit-ok\n\
+aegishv:type1:guest-io-b-exit-ok\n\
 aegishv:type1:guest-preempt-exit-ok\n\
 aegishv:type1:guest-cpuid-exit-ok\n\
+aegishv:type1:guest-rdmsr-exit-ok\n\
 aegishv:type1:guest-hlt-exit-ok\n\
 aegishv:type1:guest-run-ok\n",
         &[],
@@ -234,6 +238,30 @@ aegishv:type1:guest-run-ok\n",
             .contains("required order: aegishv:type1:guest-io-exit-ok"),
         "unexpected stderr: {}",
         String::from_utf8_lossy(&missing_io.stderr)
+    );
+
+    let missing_io_b = lab.smoke(
+        &default_vmx_markers().replace("aegishv:type1:guest-io-b-exit-ok\n", ""),
+        &[],
+    );
+    assert_eq!(missing_io_b.status.code(), Some(70));
+    assert!(
+        String::from_utf8_lossy(&missing_io_b.stderr)
+            .contains("required order: aegishv:type1:guest-io-b-exit-ok"),
+        "unexpected stderr: {}",
+        String::from_utf8_lossy(&missing_io_b.stderr)
+    );
+
+    let missing_rdmsr = lab.smoke(
+        &default_vmx_markers().replace("aegishv:type1:guest-rdmsr-exit-ok\n", ""),
+        &[],
+    );
+    assert_eq!(missing_rdmsr.status.code(), Some(70));
+    assert!(
+        String::from_utf8_lossy(&missing_rdmsr.stderr)
+            .contains("required order: aegishv:type1:guest-rdmsr-exit-ok"),
+        "unexpected stderr: {}",
+        String::from_utf8_lossy(&missing_rdmsr.stderr)
     );
 }
 
@@ -260,7 +288,11 @@ fn qemu_smoke_accepts_repeated_marker_arguments() {
             "--expect-marker",
             "aegishv:type1:guest-io-exit-ok",
             "--expect-marker",
+            "aegishv:type1:guest-io-b-exit-ok",
+            "--expect-marker",
             "aegishv:type1:guest-cpuid-exit-ok",
+            "--expect-marker",
+            "aegishv:type1:guest-rdmsr-exit-ok",
             "--expect-marker",
             "aegishv:type1:guest-hlt-exit-ok",
             "--expect-marker",
@@ -285,7 +317,7 @@ fn qemu_smoke_rejects_a_weak_custom_marker_contract() {
 
     assert_eq!(output.status.code(), Some(64));
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains("preemption, port-I/O"),
+        String::from_utf8_lossy(&output.stderr).contains("preemption, both I/O bitmaps"),
         "unexpected stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
@@ -299,7 +331,7 @@ fn qemu_smoke_rejects_a_contract_without_containment_markers() {
 
     assert_eq!(output.status.code(), Some(64));
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains("preemption, port-I/O"),
+        String::from_utf8_lossy(&output.stderr).contains("preemption, both I/O bitmaps"),
         "unexpected stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
@@ -308,7 +340,7 @@ fn qemu_smoke_rejects_a_contract_without_containment_markers() {
 #[test]
 fn qemu_smoke_rejects_a_contract_without_owned_paging_evidence() {
     let lab = FakeQemuLab::new();
-    let contract = "aegishv:type1:host-tables-ok,aegishv:type1:backend-vmx,aegishv:type1:vmxon-cycle-ok,aegishv:type1:vmcs-load-ok,aegishv:type1:guest-config-ok,aegishv:type1:guest-preempt-exit-ok,aegishv:type1:guest-io-exit-ok,aegishv:type1:guest-cpuid-exit-ok,aegishv:type1:guest-hlt-exit-ok,aegishv:type1:guest-run-ok";
+    let contract = "aegishv:type1:host-tables-ok,aegishv:type1:backend-vmx,aegishv:type1:vmxon-cycle-ok,aegishv:type1:vmcs-load-ok,aegishv:type1:guest-config-ok,aegishv:type1:guest-preempt-exit-ok,aegishv:type1:guest-io-exit-ok,aegishv:type1:guest-io-b-exit-ok,aegishv:type1:guest-cpuid-exit-ok,aegishv:type1:guest-rdmsr-exit-ok,aegishv:type1:guest-hlt-exit-ok,aegishv:type1:guest-run-ok";
     let output = lab.smoke(default_vmx_markers(), &["--expect-markers", contract]);
 
     assert_eq!(output.status.code(), Some(64));
@@ -428,8 +460,8 @@ fn evidence_manifest_accepts_the_ordered_vmx_chain() {
         "boot_image_digest_valid=true",
         "boot_image_digest_match=true",
         "qemu_command=",
-        "expected_serial_marker_count=11",
-        "expected_serial_markers=aegishv:type1:host-tables-ok,aegishv:type1:backend-vmx,aegishv:type1:vmxon-cycle-ok,aegishv:type1:vmcs-load-ok,aegishv:type1:host-paging-ok,aegishv:type1:guest-config-ok,aegishv:type1:guest-preempt-exit-ok,aegishv:type1:guest-io-exit-ok,aegishv:type1:guest-cpuid-exit-ok,aegishv:type1:guest-hlt-exit-ok,aegishv:type1:guest-run-ok",
+        "expected_serial_marker_count=13",
+        "expected_serial_markers=aegishv:type1:host-tables-ok,aegishv:type1:backend-vmx,aegishv:type1:vmxon-cycle-ok,aegishv:type1:vmcs-load-ok,aegishv:type1:host-paging-ok,aegishv:type1:guest-config-ok,aegishv:type1:guest-preempt-exit-ok,aegishv:type1:guest-io-exit-ok,aegishv:type1:guest-io-b-exit-ok,aegishv:type1:guest-cpuid-exit-ok,aegishv:type1:guest-rdmsr-exit-ok,aegishv:type1:guest-hlt-exit-ok,aegishv:type1:guest-run-ok",
         "serial_markers_present=true",
         "serial_markers_in_order=true",
         "vmx_cpu_signature_valid=true",
@@ -693,8 +725,8 @@ fn evidence_manifest_records_order_and_backend_none_refusal() {
     let manifest_text =
         fs::read_to_string(repo_root().join(manifest)).expect("read QEMU evidence manifest");
     for expected in [
-        "expected_serial_marker_count=11",
-        "expected_serial_markers=aegishv:type1:host-tables-ok,aegishv:type1:backend-vmx,aegishv:type1:vmxon-cycle-ok,aegishv:type1:vmcs-load-ok,aegishv:type1:host-paging-ok,aegishv:type1:guest-config-ok,aegishv:type1:guest-preempt-exit-ok,aegishv:type1:guest-io-exit-ok,aegishv:type1:guest-cpuid-exit-ok,aegishv:type1:guest-hlt-exit-ok,aegishv:type1:guest-run-ok",
+        "expected_serial_marker_count=13",
+        "expected_serial_markers=aegishv:type1:host-tables-ok,aegishv:type1:backend-vmx,aegishv:type1:vmxon-cycle-ok,aegishv:type1:vmcs-load-ok,aegishv:type1:host-paging-ok,aegishv:type1:guest-config-ok,aegishv:type1:guest-preempt-exit-ok,aegishv:type1:guest-io-exit-ok,aegishv:type1:guest-io-b-exit-ok,aegishv:type1:guest-cpuid-exit-ok,aegishv:type1:guest-rdmsr-exit-ok,aegishv:type1:guest-hlt-exit-ok,aegishv:type1:guest-run-ok",
         "serial_markers_present=true",
         "serial_markers_in_order=true",
         "forbidden_backend_none_observed=true",
