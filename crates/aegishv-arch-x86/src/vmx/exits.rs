@@ -31,6 +31,7 @@ impl VmxExitReason {
     }
 }
 
+#[repr(C, align(16))]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct GeneralRegisters {
     pub rax: u64,
@@ -361,6 +362,23 @@ pub fn handle_hlt_exit(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn general_register_frame_has_a_stable_assembly_layout() {
+        assert_eq!(core::mem::size_of::<GeneralRegisters>(), 144);
+        assert_eq!(core::mem::align_of::<GeneralRegisters>(), 16);
+        assert_eq!(core::mem::offset_of!(GeneralRegisters, rax), 0);
+        assert_eq!(core::mem::offset_of!(GeneralRegisters, rbx), 8);
+        assert_eq!(core::mem::offset_of!(GeneralRegisters, rcx), 16);
+        assert_eq!(core::mem::offset_of!(GeneralRegisters, rdx), 24);
+        assert_eq!(core::mem::offset_of!(GeneralRegisters, rsp), 32);
+        assert_eq!(core::mem::offset_of!(GeneralRegisters, rbp), 40);
+        assert_eq!(core::mem::offset_of!(GeneralRegisters, rsi), 48);
+        assert_eq!(core::mem::offset_of!(GeneralRegisters, rdi), 56);
+        assert_eq!(core::mem::offset_of!(GeneralRegisters, r8), 64);
+        assert_eq!(core::mem::offset_of!(GeneralRegisters, r15), 120);
+        assert_eq!(core::mem::offset_of!(GeneralRegisters, rip), 128);
+    }
 
     #[test]
     fn cpuid_exit_uses_explicit_policy_and_advances_rip() {
