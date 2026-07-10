@@ -69,6 +69,25 @@ first_line_or_unavailable() {
 
 rustup_path="$(command_path rustup)"
 qemu_path="$(command_path "${AEGISHV_QEMU:-qemu-system-x86_64}")"
+requested_timeout="${AEGISHV_TIMEOUT:-}"
+timeout_command=""
+timeout_path=""
+if [ -n "$requested_timeout" ]; then
+  candidate_path="$(command_path "$requested_timeout")"
+  if [ -n "$candidate_path" ] && "$requested_timeout" --help >/dev/null 2>&1; then
+    timeout_command="$requested_timeout"
+    timeout_path="$candidate_path"
+  fi
+else
+  for candidate in timeout /usr/bin/timeout gtimeout; do
+    candidate_path="$(command_path "$candidate")"
+    if [ -n "$candidate_path" ] && "$candidate" --help >/dev/null 2>&1; then
+      timeout_command="$candidate"
+      timeout_path="$candidate_path"
+      break
+    fi
+  done
+fi
 xorriso_path="$(command_path xorriso)"
 limine_path="$(command_path limine)"
 
@@ -78,6 +97,7 @@ if [ -n "$rustup_path" ] && rustup target list --installed | grep -Fxq x86_64-un
 fi
 
 qemu_available="$(bool_for_path "$qemu_path")"
+timeout_compatible="$(bool_for_path "$timeout_path")"
 xorriso_available="$(bool_for_path "$xorriso_path")"
 limine_command_available="$(bool_for_path "$limine_path")"
 
@@ -108,6 +128,7 @@ add_missing() {
 
 [ "$rust_target_installed" = true ] || add_missing rust_target_x86_64_unknown_none
 [ "$qemu_available" = true ] || add_missing qemu_system_x86_64
+[ "$timeout_compatible" = true ] || add_missing timeout_command
 [ "$xorriso_available" = true ] || add_missing xorriso
 [ "$limine_command_available" = true ] || add_missing limine_command
 [ "$limine_dir_set" = true ] || add_missing AEGISHV_LIMINE_DIR
@@ -129,6 +150,9 @@ rust_target_x86_64_unknown_none=$rust_target_installed
 qemu_available=$qemu_available
 qemu_path=$qemu_path
 qemu_version=$qemu_version
+timeout_command=$timeout_command
+timeout_path=$timeout_path
+timeout_compatible=$timeout_compatible
 xorriso_available=$xorriso_available
 xorriso_path=$xorriso_path
 limine_command_available=$limine_command_available

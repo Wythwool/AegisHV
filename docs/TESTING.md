@@ -75,7 +75,7 @@ They cover memory-map validation, physical page allocation, page ownership, huge
 
 `scripts/build-type1-limine-iso.sh` is the tool-gated ISO builder. It requires `xorriso`, the `limine` command, and `AEGISHV_LIMINE_DIR` containing `limine-bios.sys`, `limine-bios-cd.bin`, and `limine-uefi-cd.bin`. It writes `target/type1/aegishv-type1.iso` and `target/type1/aegishv-type1-iso-build.txt` when those reviewed inputs are present. The script does not run QEMU and the ISO build is not QEMU boot evidence.
 
-`scripts/check-type1-lab-tools.sh` writes `target/type1/aegishv-type1-lab-tools.txt` with local availability for the Rust none target, QEMU, xorriso, the Limine command, and reviewed Limine ISO files. Normal CI runs it without `--require-all` so missing lab tools are recorded, not hidden. Local lab hosts can use `--require-all` before attempting an ISO/QEMU run.
+`scripts/check-type1-lab-tools.sh` writes `target/type1/aegishv-type1-lab-tools.txt` with local availability for the Rust none target, QEMU, a compatible bounded-run `timeout` command, xorriso, the Limine command, and reviewed Limine ISO files. Normal CI runs it without `--require-all` so missing lab tools are recorded, not hidden. Local lab hosts can use `--require-all` before attempting an ISO/QEMU run. `AEGISHV_TIMEOUT` may name a reviewed compatible command when the host does not expose it as `timeout`.
 
 Device model tests are also normal locked Rust tests:
 
@@ -85,22 +85,31 @@ cargo test --locked -p aegishv-devices --all-features
 
 They cover virtio-mmio feature negotiation and queue validation, bounded virtio-console queues, read-only virtio-blk bounds checks, write refusal, and virtio-net quarantine decisions. They do not execute MMIO exits or run a service VM.
 
-`scripts/type1-qemu-smoke.sh` is opt-in lab plumbing for a boot image once one exists. The repository does not currently ship `./target/type1/aegishv-type1.elf`. A successful future smoke must capture the configured serial marker, defaulting to `aegishv:type1:halt`. The script supports kernel ELF input with `-kernel` and ISO input with `-cdrom`/`-boot d`.
+`scripts/type1-qemu-smoke.sh` is opt-in lab plumbing for a boot image once one exists. The repository does not currently ship `./target/type1/aegishv-type1.elf`. By default, success requires the complete serial lines `aegishv:type1:backend-vmx`, `aegishv:type1:vmxon-cycle-ok`, and `aegishv:type1:vmcs-load-ok` in that order. A log is rejected if it also contains a contradictory backend, runtime failure, skipped VMX operation, missing-Limine, or panic marker. The script defaults to `q35,accel=kvm` and `host,+vmx`; `AEGISHV_QEMU_MACHINE` and `AEGISHV_QEMU_CPU` can override those values for an explicitly reviewed lab. It supports kernel ELF input with `-kernel` and ISO input with `-cdrom`/`-boot d`.
 
 ```bash
-AEGISHV_TYPE1_EXPECTED_SERIAL=aegishv:type1:halt \
 scripts/type1-qemu-smoke.sh --print-command ./target/type1/aegishv-type1.elf
 ```
 
-The script exits with a clear error when the image is missing, when QEMU is missing, or when the serial marker is not observed. It is not wired into normal CI.
+An extended ordered list can be supplied as comma-separated `AEGISHV_TYPE1_EXPECTED_MARKERS` or `--expect-markers` input. Every custom list must still contain the three required VMX markers in order, so configuration cannot weaken the evidence contract to `halt` or another bring-up-only marker. Repeating `--expect-marker` avoids comma parsing when a caller builds the command programmatically:
 
-`scripts/type1-qemu-evidence.sh` wraps the QEMU smoke script for local lab runs and writes `target/type1/aegishv-type1-qemu-evidence.txt`. The manifest includes the boot image digest, QEMU version, serial log path, expected marker, observed marker state, smoke exit code, and `qemu_evidence=true` only when the marker is captured.
+```bash
+scripts/type1-qemu-smoke.sh \
+  --expect-marker aegishv:type1:backend-vmx \
+  --expect-marker aegishv:type1:vmxon-cycle-ok \
+  --expect-marker aegishv:type1:vmcs-load-ok \
+  ./target/type1/aegishv-type1.iso
+```
+
+The script exits with a clear error when the image is missing, QEMU or the timeout command is missing, a marker is absent or out of order, or a contradictory marker is observed. It never launches the intentionally halting kernel without a working timeout. Marker checks use complete serial-log lines, not substring matches. It is not wired into normal CI.
+
+`scripts/type1-qemu-evidence.sh` wraps the QEMU smoke script for local lab runs and writes `target/type1/aegishv-type1-qemu-evidence.txt`. The manifest includes the boot image digest, QEMU version, machine, CPU, boot mode, rendered command line, serial log path, ordered marker list, per-marker observations, order result, first contradictory marker, and smoke exit code. `qemu_evidence=true` requires a successful smoke, every expected marker, correct order, and no contradictory marker. This result proves only the checked VMXON and VMCS-load bring-up path; it does not prove VMLAUNCH, guest execution, VM exits, or production readiness.
 
 ```bash
 scripts/type1-qemu-evidence.sh --image ./target/type1/aegishv-type1.iso --timeout 20
 ```
 
-`scripts/run-type1-lab.sh` is the one-command local chain for reviewed lab hosts. It refuses to run unless `AEGISHV_RUN_TYPE1_LAB=1` is set, then runs `check-type1-lab-tools.sh --require-all`, builds the Limine ISO, runs QEMU evidence capture, and writes `target/type1/aegishv-type1-lab-summary.txt`.
+`scripts/run-type1-lab.sh` is the one-command local chain for reviewed lab hosts. It refuses to run unless `AEGISHV_RUN_TYPE1_LAB=1` is set, then runs `check-type1-lab-tools.sh --require-all`, builds the Limine ISO, runs QEMU evidence capture, and writes `target/type1/aegishv-type1-lab-summary.txt`. The summary records the expected list, order result, contradictory-marker refusal, machine, CPU, boot mode, and rendered QEMU command; `lab_complete=true` requires the strict evidence result. The runner forwards `--expect-markers` and repeated `--expect-marker` arguments when a lab needs an explicit non-default contract.
 
 ```bash
 AEGISHV_RUN_TYPE1_LAB=1 \

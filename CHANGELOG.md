@@ -33,6 +33,9 @@
 - Added type-1 runtime page materialization for VMXON, VMCS, and VMCB regions through the Limine HHDM.
 - Added a type-1 VMXON/VMXOFF smoke cycle with explicit serial markers.
 - Added a type-1 VMCLEAR/VMPTRLD smoke cycle while still stopping before VMCS field writes or guest launch.
+- Replaced fixed type-1 runtime page addresses with bounded allocations from Limine `USABLE` memory below 4 GiB; bootloader-reclaimable pages remain reserved.
+- Tightened QEMU VMX evidence to require ordered backend, VMXON, and VMCS-load markers and to reject `backend-none` logs.
+- Corrected guest CR3 typing, VM-entry failure decoding, and EPT qualification semantics in the Intel model layer.
 - Expanded synthetic Linux and Windows VMI fixture corpus.
 
 ## 0.4.0

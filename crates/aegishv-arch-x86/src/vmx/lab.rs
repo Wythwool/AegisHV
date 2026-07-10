@@ -34,6 +34,7 @@ impl RequiredExitCoverage {
             VmxExitReason::CrAccess => self.cr_access = true,
             VmxExitReason::EptViolation => self.ept_violation = true,
             VmxExitReason::MonitorTrapFlag => self.monitor_trap_flag = true,
+            VmxExitReason::VmEntryFailure(_) => {}
             VmxExitReason::Unknown(_) => {}
         }
     }

@@ -19,3 +19,4 @@ pub use image::{
     validate_boot_image_plan, BootImageFormat, BootImagePlan, BootImagePlanError, QemuEvidencePlan,
 };
 pub use layout::{validate_link_layout, LinkLayout, LinkLayoutError};
+pub use limine::{LimineMemmapEntry, LimineMemoryKind, LimineMemoryMapError, LimineUsableMemory};

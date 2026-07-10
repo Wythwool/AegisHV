@@ -119,10 +119,29 @@ fn runtime_markers(
     let capability_report = aegishv_type1_kernel::type1_capabilities_from_snapshot(unsafe {
         read_type1_cpu_snapshot()
     });
-    match aegishv_type1_kernel::plan_type1_runtime(
+    let backend = match aegishv_type1_kernel::select_type1_runtime_backend(
+        aegishv_type1_kernel::Type1BackendRequest::Auto,
+        capability_report.capabilities,
+    ) {
+        Ok(backend) => backend,
+        Err(_) => return runtime_plan_error_markers(),
+    };
+    let (memory_entries, memory_entry_count) = match copy_limine_memory_entries(handoff) {
+        Ok(entries) => entries,
+        Err(()) => return runtime_plan_error_markers(),
+    };
+    let allocation = match aegishv_type1_kernel::allocate_type1_runtime_memory::<
+        { aegishv_type1_kernel::TYPE1_MAX_MEMORY_MAP_ENTRIES },
+    >(&memory_entries[..memory_entry_count], backend)
+    {
+        Ok(allocation) => allocation,
+        Err(_) => return runtime_plan_error_markers(),
+    };
+    match aegishv_type1_kernel::plan_type1_runtime_with_memory(
         handoff,
         aegishv_type1_kernel::Type1BackendRequest::Auto,
         capability_report.capabilities,
+        allocation.plan(),
     ) {
         Ok(plan) => {
             let backend_marker = plan.backend.serial_marker();
@@ -203,6 +222,96 @@ fn runtime_markers(
             aegishv_type1_kernel::SERIAL_RUNTIME_VMCS_LOAD_ERROR_MARKER,
         ),
     }
+}
+
+#[cfg(target_os = "none")]
+const fn runtime_plan_error_markers() -> (
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+) {
+    (
+        aegishv_type1_kernel::SERIAL_RUNTIME_PLAN_ERROR_MARKER,
+        aegishv_type1_kernel::SERIAL_RUNTIME_PREFLIGHT_ERROR_MARKER,
+        aegishv_type1_kernel::SERIAL_RUNTIME_ENABLE_ERROR_MARKER,
+        aegishv_type1_kernel::SERIAL_RUNTIME_REGIONS_ERROR_MARKER,
+        aegishv_type1_kernel::SERIAL_RUNTIME_VMXON_ERROR_MARKER,
+        aegishv_type1_kernel::SERIAL_RUNTIME_VMCS_LOAD_ERROR_MARKER,
+    )
+}
+
+#[cfg(target_os = "none")]
+fn copy_limine_memory_entries(
+    handoff: aegishv_type1_kernel::LimineMinimalHandoff,
+) -> Result<
+    (
+        [aegishv_type1_boot::LimineMemmapEntry; aegishv_type1_kernel::TYPE1_MAX_MEMORY_MAP_ENTRIES],
+        usize,
+    ),
+    (),
+> {
+    let count = usize::try_from(handoff.memmap_entry_count).map_err(|_| ())?;
+    if count == 0 || count > aegishv_type1_kernel::TYPE1_MAX_MEMORY_MAP_ENTRIES {
+        return Err(());
+    }
+    let table_size = count
+        .checked_mul(core::mem::size_of::<
+            *const aegishv_type1_boot::LimineMemmapEntry,
+        >())
+        .ok_or(())?;
+    validate_limine_object_range(
+        handoff.memmap_entries,
+        table_size,
+        core::mem::align_of::<*const aegishv_type1_boot::LimineMemmapEntry>(),
+    )?;
+
+    let table =
+        handoff.memmap_entries as usize as *const *const aegishv_type1_boot::LimineMemmapEntry;
+    let mut copied = [aegishv_type1_boot::LimineMemmapEntry::empty();
+        aegishv_type1_kernel::TYPE1_MAX_MEMORY_MAP_ENTRIES];
+    for (index, slot) in copied.iter_mut().take(count).enumerate() {
+        // The accepted Limine response guarantees that entry_count is the
+        // accessible extent of this live pointer array. The range check above
+        // rules out arithmetic wrap and noncanonical endpoints; Limine owns and
+        // keeps the mapped array alive until bootloader memory is reclaimed.
+        let entry = unsafe { table.add(index).read_volatile() };
+        if entry.is_null() {
+            return Err(());
+        }
+        validate_limine_object_range(
+            entry as usize as u64,
+            core::mem::size_of::<aegishv_type1_boot::LimineMemmapEntry>(),
+            core::mem::align_of::<aegishv_type1_boot::LimineMemmapEntry>(),
+        )?;
+        // Limine guarantees that each validated pointer addresses one complete
+        // 24-byte protocol object which remains mapped and alive until the
+        // bootloader-reclaimable ranges are explicitly reclaimed.
+        *slot = unsafe { entry.read_volatile() };
+    }
+    Ok((copied, count))
+}
+
+#[cfg(any(target_os = "none", test))]
+fn validate_limine_object_range(start: u64, size: usize, alignment: usize) -> Result<(), ()> {
+    if size == 0 || alignment == 0 || start % alignment as u64 != 0 {
+        return Err(());
+    }
+    let size = u64::try_from(size).map_err(|_| ())?;
+    let last = start
+        .checked_add(size)
+        .and_then(|end| end.checked_sub(1))
+        .ok_or(())?;
+    if start > usize::MAX as u64
+        || last > usize::MAX as u64
+        || !aegishv_arch_x86::vmx::features::is_canonical_u64(start)
+        || !aegishv_arch_x86::vmx::features::is_canonical_u64(last)
+    {
+        return Err(());
+    }
+    Ok(())
 }
 
 #[cfg(all(target_os = "none", target_arch = "x86_64"))]
@@ -662,4 +771,17 @@ fn halt_loop() -> ! {
 #[cfg(not(target_os = "none"))]
 fn main() {
     println!("{}", aegishv_type1_kernel::SERIAL_READY_MARKER);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_limine_object_range;
+
+    #[test]
+    fn limine_object_range_rejects_wrap_and_noncanonical_endpoints() {
+        assert!(validate_limine_object_range(0x1000, 24, 8).is_ok());
+        assert!(validate_limine_object_range(u64::MAX - 7, 16, 8).is_err());
+        assert!(validate_limine_object_range(0x0000_7fff_ffff_fff8, 16, 8).is_err());
+        assert!(validate_limine_object_range(0x1001, 24, 8).is_err());
+    }
 }

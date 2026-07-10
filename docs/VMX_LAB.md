@@ -18,6 +18,8 @@ This document records the Intel VMX model code now present in `aegishv-arch-x86`
 
 These pieces are library code with tests. Normal tests do not execute privileged VMX instructions. The type-1 kernel can now select a checked VMX runtime plan, apply the CR0/CR4 enable values, read the VMCS revision from `IA32_VMX_BASIC`, materialize the VMXON and VMCS pages, and run a VMXON/VMCLEAR/VMPTRLD/VMXOFF smoke cycle before halting. VMCS field writes, VMLAUNCH, VMRESUME, guest execution, and hardware evidence are not wired into the boot image yet.
 
+The boot path copies a bounded Limine memory map and allocates VMXON and VMCS only from `USABLE` pages between 1 MiB and 4 GiB. Bootloader-reclaimable memory is deliberately excluded because it can still contain Limine responses and active bootloader page tables.
+
 ## Required Exit Coverage
 
 A minimal Linux VMX lab run must cover these exits before it is treated as meaningful lab evidence:

@@ -1,4 +1,4 @@
-use aegishv_hypervisor_core::ids::{GuestVirtual, HostPhysical};
+use aegishv_hypervisor_core::ids::{GuestPhysical, GuestVirtual, HostPhysical};
 
 use super::features::{
     is_canonical_u64, validate_control_register, CrFixedBits, VmxError, VmxErrorKind,
@@ -205,7 +205,7 @@ impl HostState64 {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GuestState64 {
     pub cr0: u64,
-    pub cr3: HostPhysical,
+    pub cr3: GuestPhysical,
     pub cr4: u64,
     pub rsp: u64,
     pub rip: GuestVirtual,
@@ -215,7 +215,7 @@ pub struct GuestState64 {
 impl GuestState64 {
     pub fn toy_64bit(
         cr0: u64,
-        cr3: HostPhysical,
+        cr3: GuestPhysical,
         cr4: u64,
         rsp: u64,
         rip: GuestVirtual,
@@ -357,7 +357,7 @@ mod tests {
     fn toy_guest_state_rejects_bad_cr_fixed_bits() {
         let err = GuestState64::toy_64bit(
             0,
-            HostPhysical::new(0x1000).unwrap(),
+            GuestPhysical::new(0x1000).unwrap(),
             0,
             0x7000,
             GuestVirtual::new(0x100000),
@@ -373,7 +373,7 @@ mod tests {
     fn guest_state_writer_uses_guest_vmcs_fields() {
         let state = GuestState64::toy_64bit(
             1,
-            HostPhysical::new(0x2000).unwrap(),
+            GuestPhysical::new(0x2000).unwrap(),
             0,
             0x7000,
             GuestVirtual::new(0x100000),
