@@ -183,7 +183,7 @@ qemu_command=$qemu_command
 qemu_evidence=$qemu_evidence
 lab_complete=$lab_complete
 
-This summary records one local opt-in lab chain. It is only successful when the full fixed-guest marker sequence appears exactly once and in order and no contradictory marker is present. Success proves only the bounded VMX timer, bitmap, PAT, fixed #NM probe, VMLAUNCH/VMRESUME/HLT/VMXOFF sequence on the recorded host; it is not general-runtime or production evidence.
+This summary records one local opt-in lab chain. It is only successful when the full fixed-guest marker sequence appears exactly once and in order and no contradictory marker is present. Success proves only the bounded VMX timer, bitmap, PAT and fixed #NM probes, plus one fixed vector-6 VM-entry injection through the immutable CPL0 IDT gate and an integer-only handler's IRETQ to the fixed HLT, in the recorded VMLAUNCH/VMRESUME/VMXOFF sequence. It is not evidence of general exceptions, error-code injection, reinjection, IST or privilege transitions, external interrupts, APIC, SMP, guest-OS support, a general runtime, or production readiness.
 PLAN
 
 echo "$summary"

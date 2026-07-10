@@ -14,7 +14,7 @@ USAGE
 
 print_command=false
 image="${AEGISHV_TYPE1_BOOT_IMAGE:-}"
-default_expected_markers="aegishv:type1:host-tables-ok,aegishv:type1:backend-vmx,aegishv:type1:vmxon-cycle-ok,aegishv:type1:vmcs-load-ok,aegishv:type1:host-paging-ok,aegishv:type1:guest-config-ok,aegishv:type1:guest-preempt-exit-ok,aegishv:type1:guest-io-exit-ok,aegishv:type1:guest-io-b-exit-ok,aegishv:type1:guest-cpuid-exit-ok,aegishv:type1:guest-rdmsr-exit-ok,aegishv:type1:guest-pat-state-ok,aegishv:type1:guest-nm-x87-exit-ok,aegishv:type1:guest-nm-simd-exit-ok,aegishv:type1:guest-hlt-exit-ok,aegishv:type1:guest-run-ok"
+default_expected_markers="aegishv:type1:host-tables-ok,aegishv:type1:backend-vmx,aegishv:type1:vmxon-cycle-ok,aegishv:type1:vmcs-load-ok,aegishv:type1:host-paging-ok,aegishv:type1:guest-config-ok,aegishv:type1:guest-preempt-exit-ok,aegishv:type1:guest-io-exit-ok,aegishv:type1:guest-io-b-exit-ok,aegishv:type1:guest-cpuid-exit-ok,aegishv:type1:guest-rdmsr-exit-ok,aegishv:type1:guest-pat-state-ok,aegishv:type1:guest-nm-x87-exit-ok,aegishv:type1:guest-nm-simd-exit-ok,aegishv:type1:guest-ud-inject-ok,aegishv:type1:guest-hlt-exit-ok,aegishv:type1:guest-run-ok"
 expected_marker_csv="${AEGISHV_TYPE1_EXPECTED_MARKERS:-${AEGISHV_TYPE1_EXPECTED_SERIAL:-$default_expected_markers}}"
 expected_markers=()
 marker_option_mode=""
@@ -115,6 +115,7 @@ required_vmx_markers=(
   "aegishv:type1:guest-pat-state-ok"
   "aegishv:type1:guest-nm-x87-exit-ok"
   "aegishv:type1:guest-nm-simd-exit-ok"
+  "aegishv:type1:guest-ud-inject-ok"
   "aegishv:type1:guest-hlt-exit-ok"
   "aegishv:type1:guest-run-ok"
 )
@@ -128,7 +129,7 @@ for marker in "${expected_markers[@]}"; do
   fi
 done
 if [ "$required_marker_index" -ne "${#required_vmx_markers[@]}" ]; then
-  fail_usage "expected serial marker list must include the complete host-table, VMX backend/VMXON/VMCS-load, owned-paging, guest-configuration, preemption, both I/O bitmaps, CPUID, RDMSR, PAT, x87/SIMD #NM, HLT, and completion proof chain in order"
+  fail_usage "expected serial marker list must include the complete host-table, VMX backend/VMXON/VMCS-load, owned-paging, guest-configuration, preemption, both I/O bitmaps, CPUID, RDMSR, PAT, x87/SIMD #NM, fixed #UD injection, HLT, and completion proof chain in order"
 fi
 
 if [ -z "$image" ]; then
@@ -253,6 +254,7 @@ forbidden_markers=(
   "aegishv:type1:guest-pat-state-error"
   "aegishv:type1:guest-nm-x87-exit-error"
   "aegishv:type1:guest-nm-simd-exit-error"
+  "aegishv:type1:guest-ud-inject-error"
   "aegishv:type1:panic"
 )
 for forbidden_marker in "${forbidden_markers[@]}"; do

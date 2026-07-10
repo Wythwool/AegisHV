@@ -102,6 +102,8 @@ fn qemu_smoke_requires_ordered_vmx_evidence_markers() {
             "aegishv:type1:host-paging-ok",
             "aegishv:type1:guest-preempt-exit-ok",
             "aegishv:type1:guest-io-exit-ok",
+            "aegishv:type1:guest-ud-inject-ok",
+            "aegishv:type1:guest-ud-inject-error",
             "aegishv:type1:guest-timeout",
             "aegishv:type1:backend-none",
             "serial log was not written",

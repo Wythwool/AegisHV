@@ -56,6 +56,7 @@ vmx_guest_markers=(
   "aegishv:type1:guest-pat-state-ok"
   "aegishv:type1:guest-nm-x87-exit-ok"
   "aegishv:type1:guest-nm-simd-exit-ok"
+  "aegishv:type1:guest-ud-inject-ok"
   "aegishv:type1:guest-hlt-exit-ok"
   "aegishv:type1:guest-run-ok"
   "aegishv:type1:guest-timeout"
@@ -65,6 +66,7 @@ vmx_guest_markers=(
   "aegishv:type1:guest-pat-state-error"
   "aegishv:type1:guest-nm-x87-exit-error"
   "aegishv:type1:guest-nm-simd-exit-error"
+  "aegishv:type1:guest-ud-inject-error"
   "aegishv:type1:vm-instruction-error=0x"
 )
 vmx_diagnostic_prefixes=(

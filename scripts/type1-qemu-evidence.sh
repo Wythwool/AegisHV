@@ -7,7 +7,7 @@ out_dir="${AEGISHV_TYPE1_OUT:-target/type1}"
 boot_image="${AEGISHV_TYPE1_BOOT_IMAGE:-}"
 manifest="${AEGISHV_TYPE1_QEMU_MANIFEST:-$out_dir/aegishv-type1-qemu-evidence.txt}"
 serial_log="${AEGISHV_QEMU_SERIAL_LOG:-$out_dir/aegishv-type1-serial.log}"
-default_expected_markers="aegishv:type1:host-tables-ok,aegishv:type1:backend-vmx,aegishv:type1:vmxon-cycle-ok,aegishv:type1:vmcs-load-ok,aegishv:type1:host-paging-ok,aegishv:type1:guest-config-ok,aegishv:type1:guest-preempt-exit-ok,aegishv:type1:guest-io-exit-ok,aegishv:type1:guest-io-b-exit-ok,aegishv:type1:guest-cpuid-exit-ok,aegishv:type1:guest-rdmsr-exit-ok,aegishv:type1:guest-pat-state-ok,aegishv:type1:guest-nm-x87-exit-ok,aegishv:type1:guest-nm-simd-exit-ok,aegishv:type1:guest-hlt-exit-ok,aegishv:type1:guest-run-ok"
+default_expected_markers="aegishv:type1:host-tables-ok,aegishv:type1:backend-vmx,aegishv:type1:vmxon-cycle-ok,aegishv:type1:vmcs-load-ok,aegishv:type1:host-paging-ok,aegishv:type1:guest-config-ok,aegishv:type1:guest-preempt-exit-ok,aegishv:type1:guest-io-exit-ok,aegishv:type1:guest-io-b-exit-ok,aegishv:type1:guest-cpuid-exit-ok,aegishv:type1:guest-rdmsr-exit-ok,aegishv:type1:guest-pat-state-ok,aegishv:type1:guest-nm-x87-exit-ok,aegishv:type1:guest-nm-simd-exit-ok,aegishv:type1:guest-ud-inject-ok,aegishv:type1:guest-hlt-exit-ok,aegishv:type1:guest-run-ok"
 expected_marker_csv="${AEGISHV_TYPE1_EXPECTED_MARKERS:-${AEGISHV_TYPE1_EXPECTED_SERIAL:-$default_expected_markers}}"
 expected_markers=()
 marker_option_mode=""
@@ -137,6 +137,7 @@ required_vmx_markers=(
   "aegishv:type1:guest-pat-state-ok"
   "aegishv:type1:guest-nm-x87-exit-ok"
   "aegishv:type1:guest-nm-simd-exit-ok"
+  "aegishv:type1:guest-ud-inject-ok"
   "aegishv:type1:guest-hlt-exit-ok"
   "aegishv:type1:guest-run-ok"
 )
@@ -150,7 +151,7 @@ for marker in "${expected_markers[@]}"; do
   fi
 done
 if [ "$required_marker_index" -ne "${#required_vmx_markers[@]}" ]; then
-  fail_usage "expected serial marker list must include the complete host-table, VMX backend/VMXON/VMCS-load, owned-paging, guest-configuration, preemption, both I/O bitmaps, CPUID, RDMSR, PAT, x87/SIMD #NM, HLT, and completion proof chain in order"
+  fail_usage "expected serial marker list must include the complete host-table, VMX backend/VMXON/VMCS-load, owned-paging, guest-configuration, preemption, both I/O bitmaps, CPUID, RDMSR, PAT, x87/SIMD #NM, fixed #UD injection, HLT, and completion proof chain in order"
 fi
 
 expected_marker_csv="$(IFS=','; printf '%s' "${expected_markers[*]}")"
@@ -506,6 +507,7 @@ if [ -f "$serial_log" ]; then
     "aegishv:type1:guest-pat-state-error"
     "aegishv:type1:guest-nm-x87-exit-error"
     "aegishv:type1:guest-nm-simd-exit-error"
+    "aegishv:type1:guest-ud-inject-error"
     "aegishv:type1:panic"
   )
   for candidate in "${forbidden_markers[@]}"; do
@@ -599,7 +601,7 @@ qemu_smoke_exit_status=$smoke_status
 qemu_evidence_exit_status=$evidence_status
 qemu_evidence=$qemu_evidence
 
-This manifest records a local QEMU smoke attempt. A true qemu_evidence value requires a valid SHA-256 digest of the boot image before and after the run with both digests equal, every expected marker exactly once and in order, exactly one well-formed CPU/timer diagnostic set whose timer values are internally consistent and within the fixed budget, and no contradictory backend, failure, skipped, or panic markers. With the default contract it proves only the fixed toy guest's VMLAUNCH, forced preemption, trapped port-I/O, CPUID and selected MSR behavior, fixed PAT round trip, exact x87/SIMD #NM probes, VMRESUME, HLT exit, and VMXOFF sequence on the recorded host; it is not general-runtime or production evidence.
+This manifest records a local QEMU smoke attempt. A true qemu_evidence value requires a valid SHA-256 digest of the boot image before and after the run with both digests equal, every expected marker exactly once and in order, exactly one well-formed CPU/timer diagnostic set whose timer values are internally consistent and within the fixed budget, and no contradictory backend, failure, skipped, or panic markers. With the default contract it proves only the fixed toy guest's VMLAUNCH, forced preemption, trapped port-I/O, CPUID and selected MSR behavior, fixed PAT round trip, exact x87/SIMD #NM probes, one fixed vector-6 hardware exception injected at VM entry through the immutable CPL0 IDT gate, IRETQ to the fixed HLT, VMRESUME, and VMXOFF sequence on the recorded host. It is not evidence of general exceptions, error-code injection, reinjection, IST or privilege transitions, external interrupts, APIC, SMP, guest-OS support, a general runtime, or production readiness.
 PLAN
 } > "$manifest"
 

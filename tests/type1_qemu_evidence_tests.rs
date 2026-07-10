@@ -193,12 +193,13 @@ aegishv:type1:guest-rdmsr-exit-ok\n\
 aegishv:type1:guest-pat-state-ok\n\
 aegishv:type1:guest-nm-x87-exit-ok\n\
 aegishv:type1:guest-nm-simd-exit-ok\n\
+aegishv:type1:guest-ud-inject-ok\n\
 aegishv:type1:guest-hlt-exit-ok\n\
 aegishv:type1:guest-run-ok\n"
 }
 
 fn default_vmx_marker_csv() -> &'static str {
-    "aegishv:type1:host-tables-ok,aegishv:type1:backend-vmx,aegishv:type1:vmxon-cycle-ok,aegishv:type1:vmcs-load-ok,aegishv:type1:host-paging-ok,aegishv:type1:guest-config-ok,aegishv:type1:guest-preempt-exit-ok,aegishv:type1:guest-io-exit-ok,aegishv:type1:guest-io-b-exit-ok,aegishv:type1:guest-cpuid-exit-ok,aegishv:type1:guest-rdmsr-exit-ok,aegishv:type1:guest-pat-state-ok,aegishv:type1:guest-nm-x87-exit-ok,aegishv:type1:guest-nm-simd-exit-ok,aegishv:type1:guest-hlt-exit-ok,aegishv:type1:guest-run-ok"
+    "aegishv:type1:host-tables-ok,aegishv:type1:backend-vmx,aegishv:type1:vmxon-cycle-ok,aegishv:type1:vmcs-load-ok,aegishv:type1:host-paging-ok,aegishv:type1:guest-config-ok,aegishv:type1:guest-preempt-exit-ok,aegishv:type1:guest-io-exit-ok,aegishv:type1:guest-io-b-exit-ok,aegishv:type1:guest-cpuid-exit-ok,aegishv:type1:guest-rdmsr-exit-ok,aegishv:type1:guest-pat-state-ok,aegishv:type1:guest-nm-x87-exit-ok,aegishv:type1:guest-nm-simd-exit-ok,aegishv:type1:guest-ud-inject-ok,aegishv:type1:guest-hlt-exit-ok,aegishv:type1:guest-run-ok"
 }
 
 #[test]
@@ -226,6 +227,7 @@ aegishv:type1:guest-rdmsr-exit-ok\n\
 aegishv:type1:guest-pat-state-ok\n\
 aegishv:type1:guest-nm-x87-exit-ok\n\
 aegishv:type1:guest-nm-simd-exit-ok\n\
+aegishv:type1:guest-ud-inject-ok\n\
 aegishv:type1:guest-hlt-exit-ok\n\
 aegishv:type1:guest-run-ok\n",
         &[],
@@ -273,6 +275,18 @@ aegishv:type1:guest-run-ok\n",
         "unexpected stderr: {}",
         String::from_utf8_lossy(&missing_rdmsr.stderr)
     );
+
+    let missing_ud_injection = lab.smoke(
+        &default_vmx_markers().replace("aegishv:type1:guest-ud-inject-ok\n", ""),
+        &[],
+    );
+    assert_eq!(missing_ud_injection.status.code(), Some(70));
+    assert!(
+        String::from_utf8_lossy(&missing_ud_injection.stderr)
+            .contains("must appear exactly once: aegishv:type1:guest-ud-inject-ok"),
+        "unexpected stderr: {}",
+        String::from_utf8_lossy(&missing_ud_injection.stderr)
+    );
 }
 
 #[test]
@@ -310,6 +324,8 @@ fn qemu_smoke_accepts_repeated_marker_arguments() {
             "--expect-marker",
             "aegishv:type1:guest-nm-simd-exit-ok",
             "--expect-marker",
+            "aegishv:type1:guest-ud-inject-ok",
+            "--expect-marker",
             "aegishv:type1:guest-hlt-exit-ok",
             "--expect-marker",
             "aegishv:type1:guest-run-ok",
@@ -332,6 +348,23 @@ fn qemu_smoke_rejects_the_old_thirteen_marker_contract() {
     assert_eq!(output.status.code(), Some(64));
     assert!(
         String::from_utf8_lossy(&output.stderr).contains("PAT, x87/SIMD #NM"),
+        "unexpected stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn qemu_smoke_rejects_the_old_sixteen_marker_contract() {
+    let lab = FakeQemuLab::new();
+    let old_contract = default_vmx_marker_csv().replace(",aegishv:type1:guest-ud-inject-ok", "");
+    let output = lab.smoke(
+        default_vmx_markers(),
+        &["--expect-markers", old_contract.as_str()],
+    );
+
+    assert_eq!(output.status.code(), Some(64));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("fixed #UD injection"),
         "unexpected stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
@@ -433,11 +466,12 @@ fn qemu_smoke_rejects_failure_marker_after_success_chain() {
 }
 
 #[test]
-fn qemu_smoke_rejects_pat_and_nm_errors_after_success_chain() {
+fn qemu_smoke_rejects_fixed_state_and_exception_errors_after_success_chain() {
     for marker in [
         "aegishv:type1:guest-pat-state-error",
         "aegishv:type1:guest-nm-x87-exit-error",
         "aegishv:type1:guest-nm-simd-exit-error",
+        "aegishv:type1:guest-ud-inject-error",
     ] {
         let lab = FakeQemuLab::new();
         let output = lab.smoke(&format!("{}{marker}\n", default_vmx_markers()), &[]);
@@ -456,7 +490,7 @@ fn qemu_smoke_rejects_duplicate_success_marker_output() {
     let lab = FakeQemuLab::new();
     let output = lab.smoke(
         &format!(
-            "{}aegishv:type1:guest-pat-state-ok\n",
+            "{}aegishv:type1:guest-ud-inject-ok\n",
             default_vmx_markers()
         ),
         &[],
@@ -545,7 +579,7 @@ fn evidence_manifest_accepts_the_ordered_vmx_chain() {
         "boot_image_digest_valid=true",
         "boot_image_digest_match=true",
         "qemu_command=",
-        "expected_serial_marker_count=16",
+        "expected_serial_marker_count=17",
         "serial_markers_present=true",
         "serial_markers_in_order=true",
         "serial_markers_exactly_once=true",
@@ -578,11 +612,31 @@ fn evidence_manifest_accepts_the_ordered_vmx_chain() {
 }
 
 #[test]
+fn evidence_helper_rejects_the_old_sixteen_marker_contract() {
+    let lab = FakeQemuLab::new();
+    let manifest = lab.directory.join("evidence.txt");
+    let old_contract = default_vmx_marker_csv().replace(",aegishv:type1:guest-ud-inject-ok", "");
+    let output = lab.evidence_with_environment(
+        default_vmx_markers(),
+        &manifest,
+        &[("AEGISHV_TYPE1_EXPECTED_MARKERS", old_contract.as_str())],
+    );
+
+    assert_eq!(output.status.code(), Some(64));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("fixed #UD injection"),
+        "unexpected stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!repo_root().join(manifest).exists());
+}
+
+#[test]
 fn evidence_manifest_rejects_duplicate_success_markers() {
     let lab = FakeQemuLab::new();
     let manifest = lab.directory.join("evidence.txt");
     let serial = format!(
-        "{}aegishv:type1:guest-nm-x87-exit-ok\n",
+        "{}aegishv:type1:guest-ud-inject-ok\n",
         default_vmx_markers()
     );
     let output = lab.evidence(&serial, &manifest);
@@ -840,7 +894,7 @@ fn evidence_manifest_records_order_and_backend_none_refusal() {
     let manifest_text =
         fs::read_to_string(repo_root().join(manifest)).expect("read QEMU evidence manifest");
     for expected in [
-        "expected_serial_marker_count=16",
+        "expected_serial_marker_count=17",
         "serial_markers_present=true",
         "serial_markers_in_order=true",
         "serial_markers_exactly_once=true",
