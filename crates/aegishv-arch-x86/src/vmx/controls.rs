@@ -60,10 +60,12 @@ impl VmxControlMsr {
 
 pub const PIN_BASED_EXT_INTR_EXITING: u32 = 1 << 0;
 pub const PIN_BASED_NMI_EXITING: u32 = 1 << 3;
+pub const PIN_BASED_VMX_PREEMPTION_TIMER: u32 = 1 << 6;
 
 pub const PRIMARY_HLT_EXITING: u32 = 1 << 7;
 pub const PRIMARY_CR3_LOAD_EXITING: u32 = 1 << 15;
 pub const PRIMARY_CR3_STORE_EXITING: u32 = 1 << 16;
+pub const PRIMARY_UNCONDITIONAL_IO_EXITING: u32 = 1 << 24;
 pub const PRIMARY_USE_MSR_BITMAPS: u32 = 1 << 28;
 pub const PRIMARY_MONITOR_TRAP_FLAG: u32 = 1 << 27;
 pub const PRIMARY_ACTIVATE_SECONDARY_CONTROLS: u32 = 1 << 31;
@@ -96,8 +98,10 @@ pub struct VmxControlRequest {
 impl VmxControlRequest {
     pub const fn toy_hlt_guest() -> Self {
         Self {
-            pin_based: PIN_BASED_NMI_EXITING,
-            primary: PRIMARY_HLT_EXITING | PRIMARY_ACTIVATE_SECONDARY_CONTROLS,
+            pin_based: PIN_BASED_NMI_EXITING | PIN_BASED_VMX_PREEMPTION_TIMER,
+            primary: PRIMARY_HLT_EXITING
+                | PRIMARY_UNCONDITIONAL_IO_EXITING
+                | PRIMARY_ACTIVATE_SECONDARY_CONTROLS,
             secondary: SECONDARY_ENABLE_EPT,
             exit: EXIT_HOST_ADDRESS_SPACE_SIZE | EXIT_SAVE_IA32_EFER | EXIT_LOAD_IA32_EFER,
             entry: ENTRY_IA32E_MODE_GUEST | ENTRY_LOAD_IA32_EFER,
@@ -147,8 +151,10 @@ impl VmxControlMsrs {
             exit: self.exit.adjust(request.exit)?,
             entry: self.entry.adjust(request.entry)?,
         };
-        let supported_pin = PIN_BASED_NMI_EXITING;
-        let supported_primary = PRIMARY_HLT_EXITING | PRIMARY_ACTIVATE_SECONDARY_CONTROLS;
+        let supported_pin = PIN_BASED_NMI_EXITING | PIN_BASED_VMX_PREEMPTION_TIMER;
+        let supported_primary = PRIMARY_HLT_EXITING
+            | PRIMARY_UNCONDITIONAL_IO_EXITING
+            | PRIMARY_ACTIVATE_SECONDARY_CONTROLS;
         let supported_secondary = SECONDARY_ENABLE_EPT;
         let supported_exit =
             EXIT_HOST_ADDRESS_SPACE_SIZE | EXIT_SAVE_IA32_EFER | EXIT_LOAD_IA32_EFER;
@@ -230,6 +236,8 @@ mod tests {
 
         assert_ne!(fields.primary & PRIMARY_HLT_EXITING, 0);
         assert_ne!(fields.pin_based & PIN_BASED_NMI_EXITING, 0);
+        assert_ne!(fields.pin_based & PIN_BASED_VMX_PREEMPTION_TIMER, 0);
+        assert_ne!(fields.primary & PRIMARY_UNCONDITIONAL_IO_EXITING, 0);
         assert_ne!(fields.secondary & SECONDARY_ENABLE_EPT, 0);
         assert_eq!(fields.secondary & SECONDARY_ENABLE_VPID, 0);
         assert_ne!(fields.exit & EXIT_HOST_ADDRESS_SPACE_SIZE, 0);

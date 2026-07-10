@@ -22,16 +22,24 @@ global_asm!(include_str!("../../../boot/x86_64/vmx_entry.S"));
 global_asm!(include_str!("../../../boot/x86_64/host_tables.S"));
 
 #[cfg(all(target_os = "none", target_arch = "x86_64"))]
-const VMX_TOY_AWAITING_CPUID: u8 = 0;
+const VMX_TOY_AWAITING_PREEMPTION: u8 = 0;
 #[cfg(all(target_os = "none", target_arch = "x86_64"))]
-const VMX_TOY_AWAITING_HLT: u8 = 1;
+const VMX_TOY_AWAITING_DEADLINE_PROBE: u8 = 1;
 #[cfg(all(target_os = "none", target_arch = "x86_64"))]
-const VMX_TOY_COMPLETE: u8 = 2;
+const VMX_TOY_AWAITING_IO: u8 = 2;
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+const VMX_TOY_AWAITING_CPUID: u8 = 3;
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+const VMX_TOY_AWAITING_HLT: u8 = 4;
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+const VMX_TOY_COMPLETE: u8 = 5;
 #[cfg(all(target_os = "none", target_arch = "x86_64"))]
 const VMX_TOY_FAILED: u8 = u8::MAX;
 
 #[cfg(all(target_os = "none", target_arch = "x86_64"))]
-static VMX_TOY_EXIT_STATE: AtomicU8 = AtomicU8::new(VMX_TOY_AWAITING_CPUID);
+static VMX_TOY_EXIT_STATE: AtomicU8 = AtomicU8::new(VMX_TOY_AWAITING_PREEMPTION);
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+static VMX_TOY_PREEMPTION_RELOAD: AtomicU32 = AtomicU32::new(0);
 #[cfg(all(target_os = "none", target_arch = "x86_64"))]
 static VMX_LAST_INSTRUCTION_ERROR: AtomicU32 = AtomicU32::new(0);
 #[cfg(all(target_os = "none", target_arch = "x86_64"))]
@@ -590,6 +598,9 @@ unsafe fn read_vmx_capability_snapshot() -> Result<
     // SAFETY: CPUID has already selected the Intel VMX backend, making the
     // architectural IA32_VMX_BASIC capability MSR available on this CPU.
     let basic = unsafe { read_msr(IA32_VMX_BASIC_MSR) };
+    // SAFETY: CPUID leaf 1 is architectural on every x86-64 processor and the
+    // EAX signature is needed to reject documented broken VMX timers.
+    let processor_signature = unsafe { __cpuid_count(1, 0).eax };
     if !VmxCapabilitySnapshot::uses_true_controls(basic) {
         return Err(aegishv_arch_x86::vmx::VmxError::new(
             aegishv_arch_x86::vmx::VmxErrorKind::UnsupportedCapability,
@@ -616,8 +627,9 @@ unsafe fn read_vmx_capability_snapshot() -> Result<
     }
     // SAFETY: the VMX backend and true/secondary-control checks above make all
     // remaining Intel VMX capability and fixed-bit MSRs architectural here.
-    let (pin_based, exit, entry, ept_vpid, cr0_fixed0, cr0_fixed1, cr4_fixed0, cr4_fixed1) = unsafe {
+    let (misc, pin_based, exit, entry, ept_vpid, cr0_fixed0, cr0_fixed1, cr4_fixed0, cr4_fixed1) = unsafe {
         (
+            read_msr(IA32_VMX_MISC_MSR),
             read_msr(IA32_VMX_TRUE_PINBASED_CTLS_MSR),
             read_msr(IA32_VMX_TRUE_EXIT_CTLS_MSR),
             read_msr(IA32_VMX_TRUE_ENTRY_CTLS_MSR),
@@ -629,7 +641,9 @@ unsafe fn read_vmx_capability_snapshot() -> Result<
         )
     };
     Ok(VmxCapabilitySnapshot {
+        processor_signature,
         basic,
+        misc,
         pin_based,
         primary,
         secondary,
@@ -920,6 +934,22 @@ unsafe fn run_type1_vmx_toy_guest(handoff: aegishv_type1_kernel::LimineMinimalHa
         Ok(capabilities) => capabilities,
         Err(_) => vmx_guest_entry_error(),
     };
+    serial_write_hex_u32(
+        aegishv_type1_kernel::SERIAL_VMX_CPU_SIGNATURE_PREFIX,
+        capability_snapshot.processor_signature,
+    );
+    serial_write_hex_u32(
+        aegishv_type1_kernel::SERIAL_VMX_TIMER_RATE_PREFIX,
+        u32::from(capabilities.preemption_timer.rate_shift),
+    );
+    serial_write_hex_u32(
+        aegishv_type1_kernel::SERIAL_VMX_TIMER_RELOAD_PREFIX,
+        capabilities.preemption_timer.reload_value,
+    );
+    serial_write_hex_u64(
+        aegishv_type1_kernel::SERIAL_VMX_TIMER_EFFECTIVE_PREFIX,
+        capabilities.preemption_timer.effective_budget_tsc_ticks,
+    );
     let (memory_entries, memory_entry_count) = match copy_limine_memory_entries(handoff) {
         Ok(entries) => entries,
         Err(()) => vmx_guest_entry_error(),
@@ -1071,7 +1101,11 @@ unsafe fn run_type1_vmx_toy_guest(handoff: aegishv_type1_kernel::LimineMinimalHa
     }
 
     serial_write_line(aegishv_type1_kernel::SERIAL_VMX_GUEST_CONFIG_OK_MARKER);
-    VMX_TOY_EXIT_STATE.store(VMX_TOY_AWAITING_CPUID, Ordering::Release);
+    VMX_TOY_PREEMPTION_RELOAD.store(
+        capabilities.preemption_timer.reload_value,
+        Ordering::Release,
+    );
+    VMX_TOY_EXIT_STATE.store(VMX_TOY_AWAITING_PREEMPTION, Ordering::Release);
     VMX_LAST_INSTRUCTION_ERROR.store(0, Ordering::Release);
     let registers = aegishv_arch_x86::vmx::exits::GeneralRegisters::default();
     // SAFETY: the current VMCS contains the complete validated host, guest,
@@ -1232,6 +1266,13 @@ extern "C" fn aegishv_vmx_exit_dispatch(
         return 1;
     }
     let mut sequence = match VMX_TOY_EXIT_STATE.load(Ordering::Acquire) {
+        VMX_TOY_AWAITING_PREEMPTION => {
+            aegishv_arch_x86::vmx::toy_exit::ToyVmxExitSequence::AwaitingPreemption
+        }
+        VMX_TOY_AWAITING_DEADLINE_PROBE => {
+            aegishv_arch_x86::vmx::toy_exit::ToyVmxExitSequence::AwaitingDeadlineProbe
+        }
+        VMX_TOY_AWAITING_IO => aegishv_arch_x86::vmx::toy_exit::ToyVmxExitSequence::AwaitingIo,
         VMX_TOY_AWAITING_CPUID => {
             aegishv_arch_x86::vmx::toy_exit::ToyVmxExitSequence::AwaitingCpuid
         }
@@ -1243,8 +1284,16 @@ extern "C" fn aegishv_vmx_exit_dispatch(
         }
     };
     let contract = aegishv_arch_x86::vmx::toy_exit::ToyVmxExitContract {
+        initial_rip: aegishv_type1_kernel::TYPE1_TOY_GUEST_RIP,
+        deadline_probe_rips: aegishv_type1_kernel::TYPE1_TOY_DEADLINE_PROBE_RIPS,
+        deadline_fallback_rip: aegishv_type1_kernel::TYPE1_TOY_DEADLINE_FALLBACK_RIP,
+        continuation_rip: aegishv_type1_kernel::TYPE1_TOY_CONTINUATION_RIP,
+        io_rip: aegishv_type1_kernel::TYPE1_TOY_IO_RIP,
         cpuid_rip: aegishv_type1_kernel::TYPE1_TOY_CPUID_RIP,
         hlt_rip: aegishv_type1_kernel::TYPE1_TOY_HLT_RIP,
+        io_port: 0xe9,
+        io_value: b'A',
+        preemption_timer_reload: VMX_TOY_PREEMPTION_RELOAD.load(Ordering::Acquire),
     };
     let mut executor = aegishv_arch_x86::vmx::hardware::HardwareVmxInstructions::new();
     // SAFETY: this function is reached only at the VMCS HOST_RIP. The current
@@ -1262,6 +1311,27 @@ extern "C" fn aegishv_vmx_exit_dispatch(
         contract,
     ) {
         Ok(aegishv_arch_x86::vmx::toy_exit::ToyVmxExitAction::Resume)
+            if sequence
+                == aegishv_arch_x86::vmx::toy_exit::ToyVmxExitSequence::AwaitingDeadlineProbe =>
+        {
+            VMX_TOY_EXIT_STATE.store(VMX_TOY_AWAITING_DEADLINE_PROBE, Ordering::Release);
+            0
+        }
+        Ok(aegishv_arch_x86::vmx::toy_exit::ToyVmxExitAction::Resume)
+            if sequence == aegishv_arch_x86::vmx::toy_exit::ToyVmxExitSequence::AwaitingIo =>
+        {
+            VMX_TOY_EXIT_STATE.store(VMX_TOY_AWAITING_IO, Ordering::Release);
+            serial_write_line(aegishv_type1_kernel::SERIAL_VMX_GUEST_PREEMPT_EXIT_OK_MARKER);
+            0
+        }
+        Ok(aegishv_arch_x86::vmx::toy_exit::ToyVmxExitAction::Resume)
+            if sequence == aegishv_arch_x86::vmx::toy_exit::ToyVmxExitSequence::AwaitingCpuid =>
+        {
+            VMX_TOY_EXIT_STATE.store(VMX_TOY_AWAITING_CPUID, Ordering::Release);
+            serial_write_line(aegishv_type1_kernel::SERIAL_VMX_GUEST_IO_EXIT_OK_MARKER);
+            0
+        }
+        Ok(aegishv_arch_x86::vmx::toy_exit::ToyVmxExitAction::Resume)
             if sequence == aegishv_arch_x86::vmx::toy_exit::ToyVmxExitSequence::AwaitingHlt =>
         {
             VMX_TOY_EXIT_STATE.store(VMX_TOY_AWAITING_HLT, Ordering::Release);
@@ -1273,6 +1343,11 @@ extern "C" fn aegishv_vmx_exit_dispatch(
         {
             VMX_TOY_EXIT_STATE.store(VMX_TOY_COMPLETE, Ordering::Release);
             serial_write_line(aegishv_type1_kernel::SERIAL_VMX_GUEST_HLT_EXIT_OK_MARKER);
+            1
+        }
+        Err(aegishv_arch_x86::vmx::toy_exit::ToyVmxExitError::ExecutionDeadlineExpired) => {
+            VMX_TOY_EXIT_STATE.store(VMX_TOY_FAILED, Ordering::Release);
+            serial_write_line(aegishv_type1_kernel::SERIAL_VMX_GUEST_TIMEOUT_MARKER);
             1
         }
         _ => {
@@ -1362,15 +1437,40 @@ fn serial_write_line(text: &str) {
 
 #[cfg(all(target_os = "none", target_arch = "x86_64"))]
 fn serial_write_vmx_instruction_error(error: u32) {
+    serial_write_hex_u32(
+        aegishv_type1_kernel::SERIAL_VMX_INSTRUCTION_ERROR_PREFIX,
+        error,
+    );
+}
+
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+fn serial_write_hex_u32(prefix: &str, value: u32) {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     // SAFETY: early boot owns COM1. Every emitted byte is from a fixed prefix,
     // an in-bounds hexadecimal lookup, or the final newline.
     unsafe {
-        for byte in aegishv_type1_kernel::SERIAL_VMX_INSTRUCTION_ERROR_PREFIX.as_bytes() {
+        for byte in prefix.as_bytes() {
             serial_write_byte(COM1, *byte);
         }
         for shift in (0..8).rev() {
-            let nibble = ((error >> (shift * 4)) & 0xf) as usize;
+            let nibble = ((value >> (shift * 4)) & 0xf) as usize;
+            serial_write_byte(COM1, HEX[nibble]);
+        }
+        serial_write_byte(COM1, b'\n');
+    }
+}
+
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+fn serial_write_hex_u64(prefix: &str, value: u64) {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    // SAFETY: early boot owns COM1. Every emitted byte is from a fixed prefix,
+    // an in-bounds hexadecimal lookup, or the final newline.
+    unsafe {
+        for byte in prefix.as_bytes() {
+            serial_write_byte(COM1, *byte);
+        }
+        for shift in (0..16).rev() {
+            let nibble = ((value >> (shift * 4)) & 0xf) as usize;
             serial_write_byte(COM1, HEX[nibble]);
         }
         serial_write_byte(COM1, b'\n');

@@ -6,9 +6,11 @@ pub enum VmxExitReason {
     Hlt,
     Rdmsr,
     Wrmsr,
+    IoInstruction,
     CrAccess,
     EptViolation,
     MonitorTrapFlag,
+    PreemptionTimer,
     VmEntryFailure(u32),
     Unknown(u32),
 }
@@ -22,12 +24,72 @@ impl VmxExitReason {
             10 => Self::Cpuid,
             12 => Self::Hlt,
             28 => Self::CrAccess,
+            30 => Self::IoInstruction,
             31 => Self::Rdmsr,
             32 => Self::Wrmsr,
             48 => Self::EptViolation,
             37 => Self::MonitorTrapFlag,
+            52 => Self::PreemptionTimer,
             other => Self::Unknown(other),
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IoAccessSize {
+    Byte,
+    Word,
+    Dword,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IoDirection {
+    Out,
+    In,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct IoInstructionQualification {
+    pub size: IoAccessSize,
+    pub direction: IoDirection,
+    pub string: bool,
+    pub rep: bool,
+    pub immediate: bool,
+    pub port: u16,
+}
+
+impl IoInstructionQualification {
+    pub const fn decode(raw: u64) -> Result<Self, VmxError> {
+        const ALLOWED_BITS: u64 = 0x0000_0000_ffff_007f;
+        if raw & !ALLOWED_BITS != 0 {
+            return Err(VmxError::new(
+                VmxErrorKind::UnsupportedExit,
+                "I/O exit qualification sets a reserved bit",
+            ));
+        }
+        let size = match raw & 0x7 {
+            0 => IoAccessSize::Byte,
+            1 => IoAccessSize::Word,
+            3 => IoAccessSize::Dword,
+            _ => {
+                return Err(VmxError::new(
+                    VmxErrorKind::UnsupportedExit,
+                    "I/O exit qualification encodes a reserved operand size",
+                ))
+            }
+        };
+        Ok(Self {
+            size,
+            direction: if raw & (1 << 3) == 0 {
+                IoDirection::Out
+            } else {
+                IoDirection::In
+            },
+            string: raw & (1 << 4) != 0,
+            rep: raw & (1 << 5) != 0,
+            immediate: raw & (1 << 6) != 0,
+            port: (raw >> 16) as u16,
+        })
     }
 }
 
@@ -418,6 +480,37 @@ mod tests {
         assert_eq!(
             VmxExitReason::from_basic_reason((1 << 31) | 33),
             VmxExitReason::VmEntryFailure(33)
+        );
+    }
+
+    #[test]
+    fn io_exit_qualification_decodes_immediate_byte_output() {
+        let qualification =
+            IoInstructionQualification::decode((0xe9_u64 << 16) | (1 << 6)).unwrap();
+
+        assert_eq!(qualification.size, IoAccessSize::Byte);
+        assert_eq!(qualification.direction, IoDirection::Out);
+        assert!(!qualification.string);
+        assert!(!qualification.rep);
+        assert!(qualification.immediate);
+        assert_eq!(qualification.port, 0xe9);
+        assert_eq!(
+            VmxExitReason::from_basic_reason(52),
+            VmxExitReason::PreemptionTimer
+        );
+    }
+
+    #[test]
+    fn io_exit_qualification_rejects_reserved_size_and_high_bits() {
+        assert_eq!(
+            IoInstructionQualification::decode(2).unwrap_err().kind,
+            VmxErrorKind::UnsupportedExit
+        );
+        assert_eq!(
+            IoInstructionQualification::decode(1_u64 << 40)
+                .unwrap_err()
+                .kind,
+            VmxErrorKind::UnsupportedExit
         );
     }
 

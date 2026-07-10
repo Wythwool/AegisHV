@@ -3,8 +3,8 @@ use aegishv_hypervisor_core::ids::{GuestPhysical, GuestVirtual, HostPhysical};
 use super::controls::{
     VmxControlFields, ENTRY_IA32E_MODE_GUEST, ENTRY_LOAD_IA32_EFER, EXIT_HOST_ADDRESS_SPACE_SIZE,
     EXIT_LOAD_IA32_EFER, EXIT_SAVE_IA32_EFER, PIN_BASED_NMI_EXITING,
-    PRIMARY_ACTIVATE_SECONDARY_CONTROLS, PRIMARY_HLT_EXITING, SECONDARY_ENABLE_EPT,
-    SECONDARY_ENABLE_VPID,
+    PIN_BASED_VMX_PREEMPTION_TIMER, PRIMARY_ACTIVATE_SECONDARY_CONTROLS, PRIMARY_HLT_EXITING,
+    PRIMARY_UNCONDITIONAL_IO_EXITING, SECONDARY_ENABLE_EPT, SECONDARY_ENABLE_VPID,
 };
 use super::ept::EptPointer;
 use super::features::{
@@ -522,6 +522,7 @@ impl VmcsGuestState64 {
 pub struct VmcsExecutionState {
     pub controls: VmxControlFields,
     pub ept_pointer: EptPointer,
+    pub preemption_timer_value: u32,
     pub cr0_guest_host_mask: u64,
     pub cr4_guest_host_mask: u64,
     pub cr0_read_shadow: u64,
@@ -539,6 +540,7 @@ impl VmcsExecutionState {
         let state = Self {
             controls,
             ept_pointer,
+            preemption_timer_value: 0,
             cr0_guest_host_mask: cr0_fixed.fixed0
                 | !cr0_fixed.fixed1
                 | VMX_CR0_PROTECTED_MODE_ENABLE
@@ -553,7 +555,9 @@ impl VmcsExecutionState {
 
     pub fn validate(self, guest: VmcsGuestState64) -> Result<Self, VmxError> {
         if self.controls.pin_based & PIN_BASED_NMI_EXITING == 0
+            || self.controls.pin_based & PIN_BASED_VMX_PREEMPTION_TIMER == 0
             || self.controls.primary & PRIMARY_HLT_EXITING == 0
+            || self.controls.primary & PRIMARY_UNCONDITIONAL_IO_EXITING == 0
             || self.controls.primary & PRIMARY_ACTIVATE_SECONDARY_CONTROLS == 0
             || self.controls.secondary & SECONDARY_ENABLE_EPT == 0
             || self.controls.secondary & SECONDARY_ENABLE_VPID != 0
@@ -563,10 +567,11 @@ impl VmcsExecutionState {
             || self.controls.entry & ENTRY_IA32E_MODE_GUEST == 0
             || self.controls.entry & ENTRY_LOAD_IA32_EFER == 0
             || self.ept_pointer.root().get() == 0
+            || self.preemption_timer_value != 0
         {
             return Err(VmxError::new(
                 VmxErrorKind::InvalidControlBits,
-                "VMCS execution controls do not satisfy the isolated toy guest contract",
+                "VMCS execution state does not satisfy the isolated toy guest contract",
             ));
         }
         if self.cr0_guest_host_mask
@@ -615,6 +620,10 @@ impl VmcsExecutionState {
             executor.vmwrite(VmcsField::VIRTUAL_PROCESSOR_ID.raw(), 0)?;
             executor.vmwrite(VmcsField::TSC_OFFSET.raw(), 0)?;
             executor.vmwrite(VmcsField::EPT_POINTER.raw(), self.ept_pointer.raw())?;
+            executor.vmwrite(
+                VmcsField::VMX_PREEMPTION_TIMER_VALUE.raw(),
+                self.preemption_timer_value.into(),
+            )?;
             executor.vmwrite(VmcsField::EXCEPTION_BITMAP.raw(), u32::MAX.into())?;
             executor.vmwrite(VmcsField::PAGE_FAULT_ERROR_CODE_MASK.raw(), 0)?;
             executor.vmwrite(VmcsField::PAGE_FAULT_ERROR_CODE_MATCH.raw(), 0)?;
@@ -828,6 +837,10 @@ mod tests {
 
         assert_eq!(recorded(&executor, VmcsField::EPT_POINTER), Some(0x801e));
         assert_eq!(
+            recorded(&executor, VmcsField::VMX_PREEMPTION_TIMER_VALUE),
+            Some(0)
+        );
+        assert_eq!(
             recorded(&executor, VmcsField::VIRTUAL_PROCESSOR_ID),
             Some(0)
         );
@@ -860,6 +873,30 @@ mod tests {
         let mut config = configuration();
         config.execution.controls.secondary |= SECONDARY_ENABLE_VPID;
 
+        assert_eq!(
+            config.validate().unwrap_err().kind,
+            VmxErrorKind::InvalidControlBits
+        );
+    }
+
+    #[test]
+    fn configuration_rejects_missing_preemption_or_io_containment() {
+        let mut config = configuration();
+        config.execution.controls.pin_based &= !PIN_BASED_VMX_PREEMPTION_TIMER;
+        assert_eq!(
+            config.validate().unwrap_err().kind,
+            VmxErrorKind::InvalidControlBits
+        );
+
+        let mut config = configuration();
+        config.execution.controls.primary &= !PRIMARY_UNCONDITIONAL_IO_EXITING;
+        assert_eq!(
+            config.validate().unwrap_err().kind,
+            VmxErrorKind::InvalidControlBits
+        );
+
+        let mut config = configuration();
+        config.execution.preemption_timer_value = 1;
         assert_eq!(
             config.validate().unwrap_err().kind,
             VmxErrorKind::InvalidControlBits

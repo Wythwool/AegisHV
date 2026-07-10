@@ -112,6 +112,7 @@ impl VmcsField {
     pub const GUEST_ACTIVITY_STATE: Self = Self(0x4826);
     pub const GUEST_SMBASE: Self = Self(0x4828);
     pub const GUEST_IA32_SYSENTER_CS: Self = Self(0x482a);
+    pub const VMX_PREEMPTION_TIMER_VALUE: Self = Self(0x482e);
     pub const HOST_IA32_SYSENTER_CS: Self = Self(0x4c00);
 
     pub const CR0_GUEST_HOST_MASK: Self = Self(0x6000);

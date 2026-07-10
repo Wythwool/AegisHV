@@ -11,8 +11,10 @@ pub use early_memory::{
 pub use toy_guest::{
     materialize_type1_toy_guest, Type1PageTableWrite, Type1PhysicalPageWriter,
     Type1ToyGuestBuildPlan, Type1ToyGuestError, TYPE1_TOY_CODE, TYPE1_TOY_CODE_GPA,
-    TYPE1_TOY_CPUID_RIP, TYPE1_TOY_GUEST_PML4_GPA, TYPE1_TOY_GUEST_RIP, TYPE1_TOY_GUEST_RSP,
-    TYPE1_TOY_HLT_RIP, TYPE1_TOY_STACK_GPA,
+    TYPE1_TOY_CONTINUATION_RIP, TYPE1_TOY_CPUID_RIP, TYPE1_TOY_DEADLINE_FALLBACK_ITERATIONS,
+    TYPE1_TOY_DEADLINE_FALLBACK_RIP, TYPE1_TOY_DEADLINE_FALLBACK_TSC_TICKS,
+    TYPE1_TOY_DEADLINE_PROBE_RIPS, TYPE1_TOY_GUEST_PML4_GPA, TYPE1_TOY_GUEST_RIP,
+    TYPE1_TOY_GUEST_RSP, TYPE1_TOY_HLT_RIP, TYPE1_TOY_IO_RIP, TYPE1_TOY_STACK_GPA,
 };
 
 use aegishv_arch_x86::svm::features::EferValue;
@@ -48,13 +50,20 @@ pub const SERIAL_HOST_TABLES_OK_MARKER: &str = "aegishv:type1:host-tables-ok";
 pub const SERIAL_HOST_TABLES_ERROR_MARKER: &str = "aegishv:type1:host-tables-error";
 pub const SERIAL_HOST_EXCEPTION_MARKER: &str = "aegishv:type1:host-exception";
 pub const SERIAL_HOST_FATAL_MARKER: &str = "aegishv:type1:host-fatal";
+pub const SERIAL_VMX_GUEST_PREEMPT_EXIT_OK_MARKER: &str = "aegishv:type1:guest-preempt-exit-ok";
+pub const SERIAL_VMX_GUEST_IO_EXIT_OK_MARKER: &str = "aegishv:type1:guest-io-exit-ok";
 pub const SERIAL_VMX_GUEST_CPUID_EXIT_OK_MARKER: &str = "aegishv:type1:guest-cpuid-exit-ok";
 pub const SERIAL_VMX_GUEST_HLT_EXIT_OK_MARKER: &str = "aegishv:type1:guest-hlt-exit-ok";
 pub const SERIAL_VMX_GUEST_CONFIG_OK_MARKER: &str = "aegishv:type1:guest-config-ok";
 pub const SERIAL_VMX_GUEST_ENTRY_ERROR_MARKER: &str = "aegishv:type1:guest-entry-error";
 pub const SERIAL_VMX_GUEST_EXIT_ERROR_MARKER: &str = "aegishv:type1:guest-exit-error";
 pub const SERIAL_VMX_GUEST_RESUME_ERROR_MARKER: &str = "aegishv:type1:guest-resume-error";
+pub const SERIAL_VMX_GUEST_TIMEOUT_MARKER: &str = "aegishv:type1:guest-timeout";
 pub const SERIAL_VMX_GUEST_RUN_OK_MARKER: &str = "aegishv:type1:guest-run-ok";
+pub const SERIAL_VMX_CPU_SIGNATURE_PREFIX: &str = "aegishv:type1:vmx-cpu-signature=0x";
+pub const SERIAL_VMX_TIMER_RATE_PREFIX: &str = "aegishv:type1:vmx-timer-rate=0x";
+pub const SERIAL_VMX_TIMER_RELOAD_PREFIX: &str = "aegishv:type1:vmx-timer-reload=0x";
+pub const SERIAL_VMX_TIMER_EFFECTIVE_PREFIX: &str = "aegishv:type1:vmx-timer-effective=0x";
 pub const SERIAL_VMX_INSTRUCTION_ERROR_PREFIX: &str = "aegishv:type1:vm-instruction-error=0x";
 pub const SERIAL_LIMINE_BASE_REVISION_MARKER: &str = "aegishv:type1:limine-base-revision";
 pub const SERIAL_LIMINE_HHDM_MISSING_MARKER: &str = "aegishv:type1:limine-hhdm-missing";
@@ -1233,6 +1242,17 @@ mod tests {
         assert!(marker_line(SERIAL_RUNTIME_VMCS_LOAD_OK_MARKER, &mut out).is_some());
         assert!(marker_line(SERIAL_RUNTIME_VMCS_LOAD_ERROR_MARKER, &mut out).is_some());
         assert!(marker_line(SERIAL_RUNTIME_VMCS_LOAD_SKIPPED_MARKER, &mut out).is_some());
+        for marker in [
+            SERIAL_VMX_GUEST_CONFIG_OK_MARKER,
+            SERIAL_VMX_GUEST_PREEMPT_EXIT_OK_MARKER,
+            SERIAL_VMX_GUEST_IO_EXIT_OK_MARKER,
+            SERIAL_VMX_GUEST_CPUID_EXIT_OK_MARKER,
+            SERIAL_VMX_GUEST_HLT_EXIT_OK_MARKER,
+            SERIAL_VMX_GUEST_RUN_OK_MARKER,
+            SERIAL_VMX_GUEST_TIMEOUT_MARKER,
+        ] {
+            assert!(marker_line(marker, &mut out).is_some());
+        }
         assert_eq!(
             Type1RuntimeBackend::IntelVmx.serial_marker(),
             "aegishv:type1:backend-vmx"

@@ -7,9 +7,11 @@ pub struct RequiredExitCoverage {
     pub hlt: bool,
     pub rdmsr: bool,
     pub wrmsr: bool,
+    pub io_instruction: bool,
     pub cr_access: bool,
     pub ept_violation: bool,
     pub monitor_trap_flag: bool,
+    pub preemption_timer: bool,
 }
 
 impl RequiredExitCoverage {
@@ -19,9 +21,11 @@ impl RequiredExitCoverage {
             hlt: true,
             rdmsr: true,
             wrmsr: true,
+            io_instruction: true,
             cr_access: true,
             ept_violation: true,
             monitor_trap_flag: true,
+            preemption_timer: true,
         }
     }
 
@@ -31,9 +35,11 @@ impl RequiredExitCoverage {
             VmxExitReason::Hlt => self.hlt = true,
             VmxExitReason::Rdmsr => self.rdmsr = true,
             VmxExitReason::Wrmsr => self.wrmsr = true,
+            VmxExitReason::IoInstruction => self.io_instruction = true,
             VmxExitReason::CrAccess => self.cr_access = true,
             VmxExitReason::EptViolation => self.ept_violation = true,
             VmxExitReason::MonitorTrapFlag => self.monitor_trap_flag = true,
+            VmxExitReason::PreemptionTimer => self.preemption_timer = true,
             VmxExitReason::VmEntryFailure(_) => {}
             VmxExitReason::Unknown(_) => {}
         }
@@ -44,9 +50,11 @@ impl RequiredExitCoverage {
             && (!required.hlt || self.hlt)
             && (!required.rdmsr || self.rdmsr)
             && (!required.wrmsr || self.wrmsr)
+            && (!required.io_instruction || self.io_instruction)
             && (!required.cr_access || self.cr_access)
             && (!required.ept_violation || self.ept_violation)
             && (!required.monitor_trap_flag || self.monitor_trap_flag)
+            && (!required.preemption_timer || self.preemption_timer)
     }
 }
 
@@ -136,9 +144,11 @@ mod tests {
             VmxExitReason::Hlt,
             VmxExitReason::Rdmsr,
             VmxExitReason::Wrmsr,
+            VmxExitReason::IoInstruction,
             VmxExitReason::CrAccess,
             VmxExitReason::EptViolation,
             VmxExitReason::MonitorTrapFlag,
+            VmxExitReason::PreemptionTimer,
         ] {
             coverage.mark(reason);
         }

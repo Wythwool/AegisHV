@@ -14,10 +14,30 @@ pub const TYPE1_TOY_GUEST_PDPT_GPA: u64 = 0x4000;
 pub const TYPE1_TOY_GUEST_PD_GPA: u64 = 0x5000;
 pub const TYPE1_TOY_GUEST_PT_GPA: u64 = 0x6000;
 pub const TYPE1_TOY_GUEST_RIP: u64 = TYPE1_TOY_CODE_GPA;
-pub const TYPE1_TOY_CPUID_RIP: u64 = TYPE1_TOY_CODE_GPA + 5;
-pub const TYPE1_TOY_HLT_RIP: u64 = TYPE1_TOY_CODE_GPA + 7;
+pub const TYPE1_TOY_DEADLINE_PROBE_RIPS: [u64; 9] = [
+    TYPE1_TOY_GUEST_RIP,
+    TYPE1_TOY_GUEST_RIP + 2,
+    TYPE1_TOY_GUEST_RIP + 4,
+    TYPE1_TOY_GUEST_RIP + 10,
+    TYPE1_TOY_GUEST_RIP + 15,
+    TYPE1_TOY_GUEST_RIP + 17,
+    TYPE1_TOY_GUEST_RIP + 19,
+    TYPE1_TOY_GUEST_RIP + 21,
+    TYPE1_TOY_GUEST_RIP + 23,
+];
+pub const TYPE1_TOY_DEADLINE_FALLBACK_RIP: u64 = TYPE1_TOY_CODE_GPA + 25;
+pub const TYPE1_TOY_CONTINUATION_RIP: u64 = TYPE1_TOY_CODE_GPA + 26;
+pub const TYPE1_TOY_IO_RIP: u64 = TYPE1_TOY_CODE_GPA + 28;
+pub const TYPE1_TOY_CPUID_RIP: u64 = TYPE1_TOY_CODE_GPA + 34;
+pub const TYPE1_TOY_HLT_RIP: u64 = TYPE1_TOY_CODE_GPA + 36;
 pub const TYPE1_TOY_GUEST_RSP: u64 = TYPE1_TOY_STACK_GPA + 0xff0;
-pub const TYPE1_TOY_CODE: [u8; 8] = [0xb8, 0, 0, 0, 0, 0x0f, 0xa2, 0xf4];
+pub const TYPE1_TOY_DEADLINE_FALLBACK_TSC_TICKS: u32 = 1 << 27;
+pub const TYPE1_TOY_DEADLINE_FALLBACK_ITERATIONS: u32 = 1 << 24;
+pub const TYPE1_TOY_CODE: [u8; 37] = [
+    0x0f, 0x31, 0x89, 0xc1, 0x81, 0xc1, 0x00, 0x00, 0x00, 0x08, 0xbb, 0x00, 0x00, 0x00, 0x01, 0x0f,
+    0x31, 0x29, 0xc8, 0x79, 0x04, 0xff, 0xcb, 0x75, 0xf6, 0xf4, 0xb0, b'A', 0xe6, 0xe9, 0x31, 0xc0,
+    0x31, 0xc9, 0x0f, 0xa2, 0xf4,
+];
 
 const PAGE_SIZE: u64 = 4096;
 const PAGE_ADDRESS_MASK: u64 = 0x000f_ffff_ffff_f000;
@@ -263,6 +283,39 @@ mod tests {
         assert_eq!(write_for(&plan, pages.guest_pt, 2), 0x2003);
         assert_eq!(write_for(&plan, pages.ept_pt, 1), pages.code.get() | 0x35);
         assert_eq!(write_for(&plan, pages.ept_pt, 2), pages.stack.get() | 0x33);
+    }
+
+    #[test]
+    fn toy_guest_payload_matches_the_bounded_exit_contract() {
+        assert_eq!(
+            TYPE1_TOY_CODE,
+            [
+                0x0f, 0x31, 0x89, 0xc1, 0x81, 0xc1, 0x00, 0x00, 0x00, 0x08, 0xbb, 0x00, 0x00, 0x00,
+                0x01, 0x0f, 0x31, 0x29, 0xc8, 0x79, 0x04, 0xff, 0xcb, 0x75, 0xf6, 0xf4, 0xb0, b'A',
+                0xe6, 0xe9, 0x31, 0xc0, 0x31, 0xc9, 0x0f, 0xa2, 0xf4
+            ]
+        );
+        assert_eq!(TYPE1_TOY_DEADLINE_FALLBACK_TSC_TICKS, 1 << 27);
+        let encoded_fallback = u32::from_le_bytes(TYPE1_TOY_CODE[6..10].try_into().unwrap());
+        assert_eq!(encoded_fallback, TYPE1_TOY_DEADLINE_FALLBACK_TSC_TICKS);
+        assert!(
+            u64::from(encoded_fallback)
+                > aegishv_arch_x86::vmx::capabilities::VMX_TOY_GUEST_BUDGET_TSC_TICKS
+        );
+        assert!(encoded_fallback < (1 << 31));
+        let encoded_iterations = u32::from_le_bytes(TYPE1_TOY_CODE[11..15].try_into().unwrap());
+        assert_eq!(encoded_iterations, TYPE1_TOY_DEADLINE_FALLBACK_ITERATIONS);
+        assert_ne!(encoded_iterations, 0);
+        assert_eq!(
+            TYPE1_TOY_DEADLINE_PROBE_RIPS,
+            [0x1000, 0x1002, 0x1004, 0x100a, 0x100f, 0x1011, 0x1013, 0x1015, 0x1017]
+        );
+        assert!(!TYPE1_TOY_DEADLINE_PROBE_RIPS.contains(&TYPE1_TOY_DEADLINE_FALLBACK_RIP));
+        assert_eq!(TYPE1_TOY_DEADLINE_FALLBACK_RIP, TYPE1_TOY_GUEST_RIP + 25);
+        assert_eq!(TYPE1_TOY_CONTINUATION_RIP, TYPE1_TOY_GUEST_RIP + 26);
+        assert_eq!(TYPE1_TOY_IO_RIP, TYPE1_TOY_GUEST_RIP + 28);
+        assert_eq!(TYPE1_TOY_CPUID_RIP, TYPE1_TOY_GUEST_RIP + 34);
+        assert_eq!(TYPE1_TOY_HLT_RIP, TYPE1_TOY_GUEST_RIP + 36);
     }
 
     #[test]
