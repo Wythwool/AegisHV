@@ -7,7 +7,7 @@ out_dir="${AEGISHV_TYPE1_OUT:-target/type1}"
 boot_image="${AEGISHV_TYPE1_BOOT_IMAGE:-}"
 manifest="${AEGISHV_TYPE1_QEMU_MANIFEST:-$out_dir/aegishv-type1-qemu-evidence.txt}"
 serial_log="${AEGISHV_QEMU_SERIAL_LOG:-$out_dir/aegishv-type1-serial.log}"
-default_expected_markers="aegishv:type1:host-tables-ok,aegishv:type1:backend-vmx,aegishv:type1:vmxon-cycle-ok,aegishv:type1:vmcs-load-ok,aegishv:type1:guest-config-ok,aegishv:type1:guest-preempt-exit-ok,aegishv:type1:guest-io-exit-ok,aegishv:type1:guest-cpuid-exit-ok,aegishv:type1:guest-hlt-exit-ok,aegishv:type1:guest-run-ok"
+default_expected_markers="aegishv:type1:host-tables-ok,aegishv:type1:backend-vmx,aegishv:type1:vmxon-cycle-ok,aegishv:type1:vmcs-load-ok,aegishv:type1:host-paging-ok,aegishv:type1:guest-config-ok,aegishv:type1:guest-preempt-exit-ok,aegishv:type1:guest-io-exit-ok,aegishv:type1:guest-cpuid-exit-ok,aegishv:type1:guest-hlt-exit-ok,aegishv:type1:guest-run-ok"
 expected_marker_csv="${AEGISHV_TYPE1_EXPECTED_MARKERS:-${AEGISHV_TYPE1_EXPECTED_SERIAL:-$default_expected_markers}}"
 expected_markers=()
 marker_option_mode=""
@@ -19,7 +19,8 @@ usage() {
 usage: scripts/type1-qemu-evidence.sh [--image PATH] [--manifest PATH] [--serial-log PATH] [--expect-markers CSV | --expect-marker TEXT ...] [--timeout SECONDS] [--print-command]
 
 Runs the opt-in type-1 QEMU smoke path and writes an evidence manifest with the
-boot image digest, serial log path, ordered marker state, and smoke exit code.
+pre/post-run boot image SHA-256 digests, serial log path, ordered marker state,
+and smoke exit code.
 USAGE
 }
 
@@ -118,6 +119,7 @@ required_vmx_markers=(
   "aegishv:type1:backend-vmx"
   "aegishv:type1:vmxon-cycle-ok"
   "aegishv:type1:vmcs-load-ok"
+  "aegishv:type1:host-paging-ok"
   "aegishv:type1:guest-config-ok"
   "aegishv:type1:guest-preempt-exit-ok"
   "aegishv:type1:guest-io-exit-ok"
@@ -135,7 +137,7 @@ for marker in "${expected_markers[@]}"; do
   fi
 done
 if [ "$required_marker_index" -ne "${#required_vmx_markers[@]}" ]; then
-  fail_usage "expected serial marker list must include the complete host, VMX entry, preemption, port-I/O, CPUID, resume, and HLT proof chain in order"
+  fail_usage "expected serial marker list must include the complete host-table, VMX backend/VMXON/VMCS-load, owned-paging, guest-configuration, preemption, port-I/O, CPUID, HLT, and completion proof chain in order"
 fi
 
 expected_marker_csv="$(IFS=','; printf '%s' "${expected_markers[*]}")"
@@ -192,13 +194,37 @@ first_line_or_unavailable() {
 
 sha256_file() {
   local path="$1"
-  if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$path" | awk '{print $1}'
+  local hash_command="${AEGISHV_SHA256_COMMAND:-}"
+  local digest=""
+
+  if [ -n "$hash_command" ]; then
+    if command -v "$hash_command" >/dev/null 2>&1; then
+      digest="$("$hash_command" "$path" 2>/dev/null | awk 'NR == 1 { print $1; exit }' || true)"
+    fi
+  elif command -v sha256sum >/dev/null 2>&1; then
+    digest="$(sha256sum "$path" 2>/dev/null | awk 'NR == 1 { print $1; exit }' || true)"
   elif command -v shasum >/dev/null 2>&1; then
-    shasum -a 256 "$path" | awk '{print $1}'
+    digest="$(shasum -a 256 "$path" 2>/dev/null | awk 'NR == 1 { print $1; exit }' || true)"
+  fi
+
+  # GNU sha256sum prefixes escaped output with a backslash when the file name
+  # itself contains a backslash, as it does for Windows paths passed to bash.
+  if [ "${#digest}" -eq 65 ] && [ "${digest:0:1}" = "\\" ]; then
+    digest="${digest:1}"
+  fi
+
+  if [[ "$digest" =~ ^[0-9A-Fa-f]{64}$ ]]; then
+    printf '%s\n' "${digest,,}"
+  elif [ -n "$digest" ]; then
+    printf '%s\n' "$digest"
   else
     echo unavailable
   fi
+}
+
+sha256_is_valid() {
+  local digest="$1"
+  [[ "$digest" =~ ^[0-9a-f]{64}$ ]]
 }
 
 qemu="${AEGISHV_QEMU:-qemu-system-x86_64}"
@@ -216,7 +242,11 @@ qemu_boot_mode=iso
 mkdir -p "$(dirname "$manifest")"
 mkdir -p "$(dirname "$serial_log")"
 
-boot_image_sha256="$(sha256_file "$boot_image")"
+boot_image_sha256_before="$(sha256_file "$boot_image")"
+boot_image_sha256_before_valid=false
+if sha256_is_valid "$boot_image_sha256_before"; then
+  boot_image_sha256_before_valid=true
+fi
 
 smoke_marker_args=()
 for marker in "${expected_markers[@]}"; do
@@ -243,6 +273,24 @@ AEGISHV_QEMU_TIMEOUT_SECONDS="$timeout_seconds" \
   bash scripts/type1-qemu-smoke.sh "${smoke_marker_args[@]}" "$boot_image"
 smoke_status=$?
 set -e
+
+boot_image_sha256_after="$(sha256_file "$boot_image")"
+boot_image_sha256_after_valid=false
+if sha256_is_valid "$boot_image_sha256_after"; then
+  boot_image_sha256_after_valid=true
+fi
+boot_image_digest_valid=false
+if [ "$boot_image_sha256_before_valid" = true ] \
+  && [ "$boot_image_sha256_after_valid" = true ]; then
+  boot_image_digest_valid=true
+fi
+boot_image_digest_match=false
+if [ "$boot_image_digest_valid" = true ] \
+  && [ "$boot_image_sha256_before" = "$boot_image_sha256_after" ]; then
+  boot_image_digest_match=true
+fi
+# Keep the original field as the post-run digest for existing manifest consumers.
+boot_image_sha256="$boot_image_sha256_after"
 
 serial_log_present=false
 serial_markers_present=false
@@ -414,6 +462,7 @@ if [ -f "$serial_log" ]; then
     "aegishv:type1:vmcs-load-skipped"
     "aegishv:type1:limine-missing"
     "aegishv:type1:host-tables-error"
+    "aegishv:type1:host-paging-error"
     "aegishv:type1:host-exception"
     "aegishv:type1:host-fatal"
     "aegishv:type1:guest-timeout"
@@ -441,6 +490,8 @@ fi
 
 qemu_evidence=false
 if [ "$smoke_status" -eq 0 ] \
+  && [ "$boot_image_digest_valid" = true ] \
+  && [ "$boot_image_digest_match" = true ] \
   && [ "$serial_markers_present" = true ] \
   && [ "$serial_markers_in_order" = true ] \
   && [ "$vmx_diagnostics_valid" = true ] \
@@ -449,7 +500,10 @@ if [ "$smoke_status" -eq 0 ] \
 fi
 
 evidence_status="$smoke_status"
-if [ "$evidence_status" -eq 0 ] && [ "$vmx_diagnostics_valid" != true ]; then
+if [ "$evidence_status" -eq 0 ] \
+  && { [ "$boot_image_digest_valid" != true ] \
+    || [ "$boot_image_digest_match" != true ] \
+    || [ "$vmx_diagnostics_valid" != true ]; }; then
   evidence_status=70
 fi
 
@@ -459,6 +513,12 @@ aegishv type-1 QEMU smoke evidence
 
 boot_image=$boot_image
 boot_image_sha256=$boot_image_sha256
+boot_image_sha256_before=$boot_image_sha256_before
+boot_image_sha256_after=$boot_image_sha256_after
+boot_image_sha256_before_valid=$boot_image_sha256_before_valid
+boot_image_sha256_after_valid=$boot_image_sha256_after_valid
+boot_image_digest_valid=$boot_image_digest_valid
+boot_image_digest_match=$boot_image_digest_match
 qemu_available=$qemu_available
 qemu_path=$qemu_path
 qemu_version=$qemu_version
@@ -500,7 +560,7 @@ qemu_smoke_exit_status=$smoke_status
 qemu_evidence_exit_status=$evidence_status
 qemu_evidence=$qemu_evidence
 
-This manifest records a local QEMU smoke attempt. A true qemu_evidence value requires every expected marker in order, exactly one well-formed CPU/timer diagnostic set whose timer values are internally consistent and within the fixed budget, and no contradictory backend, failure, skipped, or panic markers. With the default contract it proves only the fixed toy guest's VMLAUNCH, forced preemption, trapped port-I/O, CPUID exit, VMRESUME, HLT exit, and VMXOFF sequence on the recorded host; it is not general-runtime or production evidence.
+This manifest records a local QEMU smoke attempt. A true qemu_evidence value requires a valid SHA-256 digest of the boot image before and after the run with both digests equal, every expected marker in order, exactly one well-formed CPU/timer diagnostic set whose timer values are internally consistent and within the fixed budget, and no contradictory backend, failure, skipped, or panic markers. With the default contract it proves only the fixed toy guest's VMLAUNCH, forced preemption, trapped port-I/O, CPUID exit, VMRESUME, HLT exit, and VMXOFF sequence on the recorded host; it is not general-runtime or production evidence.
 PLAN
 } > "$manifest"
 

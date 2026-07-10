@@ -20,8 +20,8 @@ This review is deliberately strict. It lists gaps that block stronger release cl
 
 ## Type-1 Gaps Not Closed
 
-- The modern Limine ISO and x86_64 lab-kernel boot path are present, but there is no retained nested-VMX or bare-metal log proving the wired Intel toy guest executed. The observed QEMU TCG run reached owned host tables and preflight without VMX; WHPX was unavailable.
-- The lab kernel still relies on Limine's mappings. It does not install a hypervisor-owned CR3, enforce W^X across all host aliases, or provide guard pages.
+- The modern Limine ISO and x86_64 lab-kernel boot path are present, but there is no retained nested-VMX or bare-metal log proving the wired Intel toy guest or final owned CR3 executed. The observed QEMU TCG run reached owned descriptor tables and preflight without VMX; WHPX was unavailable.
+- The lab kernel relies on Limine mappings through handoff/preflight, then the final Intel path installs a bounded owned CR3 with W^X leaves and five guards. It still lacks early/dynamic/per-CPU paging, general physical/MMIO mappings, invalidation, teardown/reclamation, recovery, and hardware execution evidence.
 - SMP/AP startup, per-CPU VMX state, vCPU scheduling, APIC/interrupt routing, guest-timer virtualization, scheduler-driven preemption, and interrupt injection are not implemented. The fixed toy guest's VMX preemption timer only enforces per-stage deadlines.
 - The live Intel path runs one finite TSC-or-count deadline probe with an HLT timeout fallback and a fixed `AL='A'; OUT 0xE9,AL; CPUID leaf/subleaf 0; HLT` payload. It proves a nonzero VMX preemption deadline before entering the payload and traps and suppresses port I/O under unconditional exiting, but a general guest loader, reusable lifecycle, multiple guests, and guest crash recovery are not implemented.
 - PAT, XSAVE/FPU state, comprehensive MSR context, selective I/O and MSR bitmap policy, broad exit coverage, and hostile-guest recovery are incomplete.

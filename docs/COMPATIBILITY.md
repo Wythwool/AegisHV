@@ -15,7 +15,7 @@
 | QEMU QMP actions | Supported for mapped sockets |
 | PMU fallback heartbeat | Supported as host-thread target discovery with unavailable hardware counters reported as `null` |
 | Guest memory introspection | Not implemented |
-| x86_64 Limine lab boot | Bootable ISO path implemented; locally observed under QEMU TCG through owned host tables and runtime preflight |
+| x86_64 Limine lab boot | Bootable ISO path implemented; locally observed under QEMU TCG through owned descriptor tables and runtime preflight, before the final CR3 path |
 | Intel VMX toy-guest runtime | VMXON/VMCS/EPT, a zero-value timer sentinel followed by a nonzero deadline exit from a finite TSC-or-count probe with an HLT timeout fallback, unconditional port-I/O trapping, and bounded resumes through I/O, CPUID, and HLT exits are implemented in the lab kernel; reviewed hardware execution evidence is not present |
 | Intel VMX guest execution coverage | Not established; the observed TCG environment exposed no VMX and WHPX was unavailable |
 | General VMX/SVM/EL2 backends | Intel has one fixed toy-guest path; AMD SVM has instruction/runtime models; live AMD guest entry and ARM64 EL2 are not implemented |
@@ -33,9 +33,9 @@
 - Huge pages, live migration, snapshots, nested virtualization and multi-tenant QMP policies need dedicated test coverage before stronger deployment claims.
 - Tracefs text formats depend on kernel tracepoint formatting. Use replay and format autodiscovery tests for every kernel family you support.
 
-The Type-1 lab target is BSP-only and has no compatibility claim for SMP, APIC/interrupt/guest-timer virtualization, scheduler-driven preemption, general guest loading, PAT/XSAVE/FPU context, full MSR state, device emulation, passthrough, or IOMMU isolation. Its VMX preemption timer only bounds the fixed guest's stages. It still uses Limine's host mappings rather than a hypervisor-owned CR3 with enforced W^X and guard pages.
+The Type-1 lab target is BSP-only and has no compatibility claim for SMP, APIC/interrupt/guest-timer virtualization, scheduler-driven preemption, general guest loading, PAT/XSAVE/FPU context, full MSR state, device emulation, passthrough, or IOMMU isolation. Its VMX preemption timer only bounds the fixed guest's stages. Limine mappings remain active through preflight; only the final Intel path switches to the fixed four-level owned root, so there is no compatibility claim for LA57, dynamic/per-CPU paging, teardown, or guard-fault recovery.
 
-A source build, model test, or TCG boot is not Intel VMX execution coverage. That claim requires the complete strict marker chain and validated CPU/timer diagnostic set from a recorded nested-VMX or bare-metal configuration. Even that evidence covers only the fixed deadline probe and `AL='A'; OUT 0xE9,AL; CPUID leaf/subleaf 0; HLT` payload and is not production qualification.
+A source build, model test, or TCG boot is not Intel VMX execution coverage. That claim requires matching valid pre/post-run SHA-256 image digests, the complete strict marker chain, and a validated CPU/timer diagnostic set from a recorded nested-VMX or bare-metal configuration. Even that evidence covers only the fixed deadline probe and `AL='A'; OUT 0xE9,AL; CPUID leaf/subleaf 0; HLT` payload and is not production qualification.
 
 Treat this matrix literally. Unsupported means unsupported.
 

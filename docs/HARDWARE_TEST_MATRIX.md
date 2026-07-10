@@ -18,8 +18,9 @@ This matrix separates checked paths, locally observed bring-up, implemented-but-
 | Linux tracefs KVM text replay | checked | `scripts/smoke-replay.sh`, golden JSONL tests | Required for host sensor release |
 | Live Linux tracefs KVM smoke | planned | `scripts/live-tracefs-smoke.sh`, `scripts/live-kvm-integration.sh` | Manual runner evidence required before broad live claims |
 | Intel VMX model and VMCS/EPT construction tests | checked | `aegishv-arch-x86::vmx` tests and bare-metal kernel build checks | Model/build wording required |
-| x86_64 Limine ISO boot through owned host tables and preflight | observed | Local modern-Limine ISO boot under QEMU TCG; VMX unavailable | Retain a reviewable manifest and serial log before moving to `checked` |
-| Intel VMX toy-guest runtime | implemented | VMXON/VMCS/EPT, zero-value timer sentinel, nonzero finite-probe deadline with HLT fallback, unconditional I/O exiting, and bounded resumes through I/O, CPUID, and HLT are wired in code | Complete ten-marker evidence plus validated CPU/timer diagnostics required |
+| x86_64 Limine ISO boot through owned descriptor tables and preflight | observed | Local modern-Limine ISO boot under QEMU TCG; VMX unavailable | Retain a reviewable manifest and serial log before moving to `checked` |
+| Intel final-path owned host paging | implemented | Four-page root, 4K RX/R/RW leaves, NXE/WP/CR3/live-table checks, no HHDM/identity alias, and five guards are wired and build-tested | `host-paging-ok` plus complete hardware chain required |
+| Intel VMX toy-guest runtime | implemented | VMXON/VMCS/EPT, zero-value timer sentinel, nonzero finite-probe deadline with HLT fallback, unconditional I/O exiting, and bounded resumes through I/O, CPUID, and HLT are wired in code | Matching valid pre/post-run SHA-256 image digests, complete eleven-marker evidence, and validated CPU/timer diagnostics required |
 | Intel VMX guest execution | planned | No reviewed nested-VMX or bare-metal guest-execution log; TCG does not expose VMX and WHPX is unavailable | Must not be claimed as demonstrated |
 | AMD SVM model tests | checked | `aegishv-arch-x86::svm` unit tests | Lab-model wording required |
 | AMD SVM live guest path | unsupported | No VMRUN-backed guest execution path | Must not be claimed |
@@ -48,7 +49,7 @@ This matrix separates checked paths, locally observed bring-up, implemented-but-
 
 | Input | Status | Notes |
 | --- | --- | --- |
-| QEMU TCG boot coverage | observed | One local modern-Limine ISO boot reached owned host tables and runtime preflight; TCG supplied no VMX. |
+| QEMU TCG boot coverage | observed | One local modern-Limine ISO boot reached owned descriptor tables and runtime preflight; TCG supplied no VMX and did not reach the final owned root. |
 | Nested-VMX QEMU/KVM coverage | planned | Record exact host CPU, kernel, KVM, QEMU, machine, CPU model, and marker log. |
 | WHPX coverage | unsupported | WHPX was unavailable in the current environment. |
 | Libvirt version coverage | planned | Record exact version when lifecycle work is added. |
@@ -57,6 +58,6 @@ This matrix separates checked paths, locally observed bring-up, implemented-but-
 
 ## Still Missing For Production Coverage
 
-No matrix row covers a hypervisor-owned CR3 with enforced W^X and guard pages; SMP and per-CPU VMX; APIC, interrupts, guest-timer virtualization, scheduler-driven preemption, and devices; IOMMU isolation; a general guest loader; PAT, XSAVE/FPU, and full MSR context; live AMD or ARM paths; or hardware soak and the secure update/attestation/incident-response lifecycle. These are not present and remain release blockers for production wording.
+The following coverage is still missing: owned paging throughout early boot, dynamic/per-CPU roots and invalidation, teardown/recovery, executed guard-fault evidence, SMP/per-CPU VMX, APIC/interrupt/guest-timer virtualization, devices/IOMMU isolation, a general guest loader, PAT/XSAVE/FPU/full MSR context, live AMD/ARM paths, hardware soak, and the secure update/attestation/incident-response lifecycle. These remain release blockers for production wording.
 
 Any row moved from `planned`, `observed`, or `implemented` to `checked` needs a script, test, or attached lab log that a reviewer can reproduce.

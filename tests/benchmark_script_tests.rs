@@ -86,7 +86,7 @@ fn live_kvm_script_is_opt_in_and_refuses_missing_host_gate() {
             "Live Linux tracefs KVM smoke",
             "planned",
             "Manual runner evidence required before broad live claims",
-            "x86_64 Limine ISO boot through owned host tables and preflight",
+            "x86_64 Limine ISO boot through owned descriptor tables and preflight",
             "observed",
         ],
     );

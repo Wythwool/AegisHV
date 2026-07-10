@@ -17,7 +17,7 @@ These links identify project ownership metadata. They are not a copyright assign
 ## What this repository is today
 
 - Host-side KVM sensor.
-- Separate no-std x86_64 lab kernel with a modern Limine ISO build path, owned GDT/TSS/IDT state, one live early physical-allocation ledger with linked-kernel and inherited-CR3-root reservations, and strict serial evidence tooling.
+- Separate no-std x86_64 lab kernel with a modern Limine ISO build path, owned GDT/TSS/IDT state, one live early physical-allocation ledger, and a final Intel path that switches to a four-level host CR3 with RX/R/RW leaves and five stack guards after all HHDM writes finish.
 - Wired Intel VMX toy-guest path with VMXON, a complete VMCS, four-level guest paging and EPT, refusal of CPU signatures known to have broken VMX preemption timers, an initial zero-value sentinel followed by a proven nonzero deadline exit from a finite TSC-or-count probe with an HLT fallback, unconditional port-I/O exiting, validated `OUT 0xe9, AL`, CPUID and HLT exits, bounded per-stage resumes, and VMXOFF.
 - Replayable parser/correlation pipeline.
 - W^X correlation scoped by VM, address space, and guest-physical page.
@@ -45,9 +45,9 @@ That distinction matters. The userspace sensor and bare-metal lab kernel have di
 
 A modern Limine ISO has booted locally under QEMU TCG through the owned host descriptor tables and runtime preflight. That is boot-boundary evidence only: TCG did not expose VMX in the available environment, and WHPX was unavailable, so the run could not execute the Intel toy guest.
 
-The VMX guest path is present in code, but execution is claimed only after the strict ten-marker chain and validated CPU/timer diagnostic set in `docs/TYPE1_BOOT_BOUNDARY.md` are captured on a reviewed nested-VMX or bare-metal host. Successful evidence would prove one BSP, one fixed guest, a nonzero VMX preemption deadline exit, a trapped and validated port write that is never replayed on the host, one CPUID exit, bounded resumes, and one HLT exit—not production readiness.
+The VMX guest path is present in code, but execution is claimed only after matching valid pre/post-run SHA-256 image digests, the strict eleven-marker chain, and a validated CPU/timer diagnostic set are captured on a reviewed nested-VMX or bare-metal host as described in `docs/TYPE1_BOOT_BOUNDARY.md`. Successful evidence would prove one BSP, the final-path owned CR3 readback, one fixed guest, a nonzero VMX preemption deadline exit, a trapped and validated port write that is never replayed on the host, one CPUID exit, bounded resumes, and one HLT exit—not production readiness.
 
-Production blockers still include a hypervisor-owned CR3 with enforced W^X and guard pages, SMP/per-CPU VMX, APIC/interrupt/guest-timer virtualization and scheduler-driven preemption, an independent host watchdog, a general guest loader, complete PAT/XSAVE/FPU/MSR context, devices and IOMMU isolation, live AMD/ARM backends, hardware soak, and a secure update/attestation/incident-response lifecycle. The fixed CPU-signature denylist and toy probe cannot rule out unknown timer or TSC errata.
+Production blockers still include an owned paging policy for the complete boot lifetime and physical address space, dynamic map/unmap with TLB invalidation, recoverable guard-fault testing, SMP/per-CPU roots and VMX state, APIC/interrupt/guest-timer virtualization and scheduler-driven preemption, an independent host watchdog, a general guest loader, complete PAT/XSAVE/FPU/MSR context, devices and IOMMU isolation, live AMD/ARM backends, hardware soak, and a secure update/attestation/incident-response lifecycle. The fixed CPU-signature denylist and toy probe cannot rule out unknown timer or TSC errata.
 
 ## Highlights in 0.4.0
 
@@ -246,7 +246,7 @@ Tagging `vX.Y.Z` triggers locked release builds, packaging, SHA-256 generation, 
 - `crates/aegishv-event-abi` — `no_std` facade for the event and command ring ABI.
 - `crates/aegishv-arch-x86` — `no_std` x86 helpers and models for early serial logging, host page-table plans, AP startup validation, VMX instructions, controls, VMCS state, EPT, and exit handling.
 - `crates/aegishv-type1-kernel` — bootable x86_64 lab kernel and the wired Intel VMX toy-guest path.
-- `boot/` — Limine configuration, linker layout, early entry, owned host tables, and VMX entry/exit assembly.
+- `boot/` — Limine configuration, linker layout, early entry, owned descriptor tables/paging layout, and VMX entry/exit assembly.
 - `schema/` — JSON schemas.
 - `examples/traces/` — replay fixtures.
 - `tests/` — integration tests.

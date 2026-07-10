@@ -99,6 +99,7 @@ fn qemu_smoke_requires_ordered_vmx_evidence_markers() {
             "aegishv:type1:backend-vmx",
             "aegishv:type1:vmxon-cycle-ok",
             "aegishv:type1:vmcs-load-ok",
+            "aegishv:type1:host-paging-ok",
             "aegishv:type1:guest-preempt-exit-ok",
             "aegishv:type1:guest-io-exit-ok",
             "aegishv:type1:guest-timeout",
@@ -110,5 +111,5 @@ fn qemu_smoke_requires_ordered_vmx_evidence_markers() {
     );
     assert!(testing.contains("AEGISHV_TYPE1_EXPECTED_MARKERS"));
     assert!(testing.contains("complete serial lines"));
-    assert!(testing.contains("non-VMX/skipped path"));
+    assert!(testing.contains("exits before the final-path CR3 switch"));
 }

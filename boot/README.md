@@ -7,9 +7,9 @@ The default `aegishv` binary remains the Linux host-side sensor. Building or boo
 ## Files
 
 - `limine/limine.conf` contains the current Limine menu entry and `boot():` kernel path used by the ISO.
-- `linker/x86_64-type1.ld` defines page-separated RX text, R rodata/GOT, and RW request/data/BSS load segments plus a 256 KiB NOLOAD boot stack and exported layout symbols.
-- `x86_64/entry.S` disables interrupts, installs the transition IDT, clears BSS, switches to the boot stack, installs owned host tables, and enters Rust.
-- `x86_64/host_tables.S` defines the owned GDT, 64-bit TSS, IDT, transition IDT, dedicated fault stacks, selector reload, descriptor verification support, and terminal host exception path.
+- `linker/x86_64-type1.ld` defines page-separated RX text, R rodata/GOT, and RW request/data/BSS load segments, a four-page host table pool, dedicated guarded stacks, and exported paging boundaries.
+- `x86_64/entry.S` disables interrupts, installs the transition IDT, clears BSS, switches to the boot stack, installs owned descriptor tables, and enters Rust.
+- `x86_64/host_tables.S` defines the owned GDT, 64-bit TSS, IDT, transition IDT, selector reload, descriptor verification support, and terminal host exception path; the linker owns the dedicated fault-stack storage that the TSS references.
 - `x86_64/vmx_entry.S` defines the non-returning VMLAUNCH/VMRESUME entry points and VM-exit GPR frame on the dedicated host stack. VM exit reloads the owned descriptor tables before Rust dispatch.
 - The kernel ELF carries the Limine base-revision block and memory-map, HHDM, executable-address, RSDP, bootloader-info, and command-line requests used by the checked handoff.
 
@@ -19,7 +19,7 @@ The default `aegishv` binary remains the Linux host-side sensor. Building or boo
 
 `scripts/plan-type1-image.sh` validates the checked-in boot inputs and writes the kernel ELF, output ISO, expected bases, and serial contract to `target/type1/aegishv-type1-image-plan.txt`.
 
-`scripts/build-type1-kernel.sh` builds `target/type1/aegishv-type1.elf` for `x86_64-unknown-none`. The ELF validates the Limine handoff, owned host state, CPU capabilities, VMX controls, runtime regions, and explicit error paths. One early physical-allocation ledger reserves the linked kernel span and inherited active CR3 root before supplying the VMX and guest/EPT pages; the same owner is retained through guest setup. On an eligible Intel host, the runtime proceeds through VMXON, complete VMCS/EPT setup, a zero-value VMX preemption-timer sentinel, a real nonzero deadline exit from a finite TSC-or-count probe, contained port I/O, CPUID and HLT exits, bounded resumes, and VMXOFF.
+`scripts/build-type1-kernel.sh` builds `target/type1/aegishv-type1.elf` for `x86_64-unknown-none`. The ELF validates the Limine handoff, owned host state, CPU capabilities, VMX controls, runtime regions, and explicit error paths. One early physical-allocation ledger reserves the linked kernel span and inherited active CR3 root before supplying the VMX and guest/EPT pages; the same owner is retained through guest setup. After every HHDM write, the final Intel path installs a four-level host CR3 that maps only the linked 2 MiB higher-half window with 4K RX/R/RW leaves, no HHDM or identity alias, and five non-present lower stack guards. On an eligible Intel host, the runtime then proceeds through VMXON, complete VMCS/EPT setup, a zero-value VMX preemption-timer sentinel, a real nonzero deadline exit from a finite TSC-or-count probe, contained port I/O, CPUID and HLT exits, bounded resumes, and VMXOFF.
 
 The ELF is not a standalone QEMU boot input. Passing it through QEMU `-kernel` does not provide the required Limine handoff.
 
@@ -38,6 +38,7 @@ aegishv:type1:host-tables-ok
 aegishv:type1:backend-vmx
 aegishv:type1:vmxon-cycle-ok
 aegishv:type1:vmcs-load-ok
+aegishv:type1:host-paging-ok
 aegishv:type1:guest-config-ok
 aegishv:type1:guest-preempt-exit-ok
 aegishv:type1:guest-io-exit-ok
@@ -46,10 +47,10 @@ aegishv:type1:guest-hlt-exit-ok
 aegishv:type1:guest-run-ok
 ```
 
-Contradictory backends, skipped VMX operations, host faults, runtime failures, `aegishv:type1:guest-timeout`, guest entry/exit/resume errors, missing handoff, or panic invalidate the run. `scripts/type1-qemu-evidence.sh` records the image digest, environment, command, log, and marker results; `scripts/run-type1-lab.sh` drives the opt-in build and evidence chain.
+Contradictory backends, skipped VMX operations, host faults, runtime failures, `aegishv:type1:guest-timeout`, guest entry/exit/resume errors, missing handoff, or panic invalidate the run. `scripts/type1-qemu-evidence.sh` requires matching valid SHA-256 image digests before and after QEMU, then records those digests, the environment, command, log, and marker results; `scripts/run-type1-lab.sh` drives the opt-in build and evidence chain.
 
-Evidence capture also requires exactly one well-formed serial set containing the CPUID signature and the VMX timer rate, reload, and effective TSC-tick deadline. The helper verifies their internal relationship and hard budget without adding entries to the ten-marker chain.
+Evidence capture also requires exactly one well-formed serial set containing the CPUID signature and the VMX timer rate, reload, and effective TSC-tick deadline. The helper verifies their internal relationship and hard budget without adding entries to the eleven-marker chain.
 
-A modern Limine ISO has booted locally under QEMU TCG through owned host-table installation and runtime preflight. TCG exposed no VMX in the available environment, and WHPX was unavailable, so the observed run followed the non-VMX/skipped path and is not Intel guest-execution evidence.
+A modern Limine ISO has booted locally under QEMU TCG through owned descriptor-table installation and runtime preflight. TCG exposed no VMX in the available environment, and WHPX was unavailable, so the observed run stopped before the final owned-CR3 path and is neither owned-paging nor Intel guest-execution evidence.
 
-A valid ten-marker log from a reviewed nested-VMX or bare-metal host would prove only this fixed BSP toy-guest sequence, including the nonzero timer deadline and contained port-I/O exit. It would not prove SMP, APIC or interrupt injection, guest-timer virtualization, a general loader, full architectural context, devices/IOMMU isolation, production host paging, AMD/ARM runtime support, hardware soak, or a secure production lifecycle. See `docs/TYPE1_BOOT_BOUNDARY.md` and `docs/TYPE1_READINESS_GATE.md` for the claim boundary.
+A reviewed evidence package with matching valid pre/post-run SHA-256 image digests, a valid eleven-marker log, and validated CPU/timer diagnostics would prove only this fixed BSP toy-guest sequence, including the final-path owned CR3 readback, nonzero timer deadline, and contained port-I/O exit. It would not prove owned paging throughout early boot, SMP, APIC or interrupt injection, guest-timer virtualization, a general loader, full architectural context, devices/IOMMU isolation, AMD/ARM runtime support, hardware soak, or a secure production lifecycle. See `docs/TYPE1_BOOT_BOUNDARY.md` and `docs/TYPE1_READINESS_GATE.md` for the claim boundary.

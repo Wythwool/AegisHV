@@ -83,7 +83,7 @@ fn release_gate_docs_cover_host_vmi_and_type1_boundaries() {
         &milestone,
         &[
             "boot-boundary milestone is implemented",
-            "boot image path and checksum",
+            "matching valid pre/post-run SHA-256 image digests",
             "Do not claim demonstrated VMX guest execution",
         ],
     );

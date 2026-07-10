@@ -2,7 +2,7 @@
 
 The x86_64 boot-boundary milestone is implemented: a modern Limine ISO boots locally under QEMU TCG, installs the owned GDT/TSS/IDT, accepts the validated handoff, and reaches runtime preflight. The Intel guest-entry milestone remains blocked until the [Type-1 readiness gate](TYPE1_READINESS_GATE.md) passes.
 
-The VMX toy-guest path is wired in code, but the available TCG environment does not provide VMX and WHPX is unavailable. The observed TCG run therefore reaches the non-VMX and skipped-operation markers; it is boot evidence, not guest-execution evidence.
+The VMX toy-guest path is wired in code, but the available TCG environment does not provide VMX and WHPX is unavailable. The observed TCG run therefore stops before the final owned-CR3 path and reaches the non-VMX/skipped-operation markers; it is boot evidence, not owned-paging or guest-execution evidence.
 
 ## Required Intel Evidence
 
@@ -13,6 +13,7 @@ aegishv:type1:host-tables-ok
 aegishv:type1:backend-vmx
 aegishv:type1:vmxon-cycle-ok
 aegishv:type1:vmcs-load-ok
+aegishv:type1:host-paging-ok
 aegishv:type1:guest-config-ok
 aegishv:type1:guest-preempt-exit-ok
 aegishv:type1:guest-io-exit-ok
@@ -21,13 +22,13 @@ aegishv:type1:guest-hlt-exit-ok
 aegishv:type1:guest-run-ok
 ```
 
-The preemption marker is emitted only after an initial zero-value sentinel exit is followed by a real nonzero timer expiration from the finite TSC-or-count probe. It therefore proves the deadline fired rather than merely that the timer field was written. If an HLT or timer exit occurs at the exact later fallback RIP reached by either limit, the run emits `aegishv:type1:guest-timeout` and regains control instead of wedging the BSP; other unexpected probe exits remain guest-exit errors. The I/O exit proves that unconditional exiting contained the expected `OUT 0xe9, AL`; the handler validates it and does not replay the write on the host. CPUID and HLT prove the subsequent bounded VMRESUME stages. Any contradictory backend, host-table failure, runtime failure, skipped VMX operation, `aegishv:type1:guest-timeout`, guest entry/exit/resume error, exception, missing-handoff, or panic marker invalidates the run.
+The host-paging marker is emitted only after NXE/WP and CR3 readback, live-table validation, and owned descriptor-table reachability succeed. The preemption marker is emitted only after an initial zero-value sentinel exit is followed by a real nonzero timer expiration from the finite TSC-or-count probe. It therefore proves the deadline fired rather than merely that the timer field was written. If an HLT or timer exit occurs at the exact later fallback RIP reached by either limit, the run emits `aegishv:type1:guest-timeout` and regains control instead of wedging the BSP; other unexpected probe exits remain guest-exit errors. The I/O exit proves that unconditional exiting contained the expected `OUT 0xe9, AL`; the handler validates it and does not replay the write on the host. CPUID and HLT prove the subsequent bounded VMRESUME stages. Any contradictory backend, host-table or host-paging failure, runtime failure, skipped VMX operation, `aegishv:type1:guest-timeout`, guest entry/exit/resume error, exception, missing-handoff, or panic marker invalidates the run.
 
 The [Type-1 boot boundary](TYPE1_BOOT_BOUNDARY.md) defines what this chain proves and what remains outside it.
 
 ## Candidate Evidence Package
 
-- boot image path and checksum;
+- boot image path;
 - boot boundary manifest from `scripts/build-type1-skeleton.sh`;
 - kernel ELF build manifest from `scripts/build-type1-kernel.sh`;
 - kernel ELF inspection manifest from `scripts/inspect-type1-kernel.sh`;
@@ -35,7 +36,7 @@ The [Type-1 boot boundary](TYPE1_BOOT_BOUNDARY.md) defines what this chain prove
 - Limine ISO build manifest from `scripts/build-type1-limine-iso.sh`;
 - local tool manifest from `scripts/check-type1-lab-tools.sh`;
 - image input manifest from `scripts/plan-type1-image.sh`;
-- QEMU command line and image digest;
+- QEMU command line plus matching valid pre/post-run SHA-256 image digests;
 - serial log containing the complete ordered chain above and no forbidden marker;
 - QEMU smoke evidence manifest from `scripts/type1-qemu-evidence.sh`;
 - local lab-chain summary from `scripts/run-type1-lab.sh`;
@@ -47,6 +48,6 @@ The [Type-1 boot boundary](TYPE1_BOOT_BOUNDARY.md) defines what this chain prove
 
 ## Release Notes Shape
 
-Within the current claim boundary, release text may describe a bootable Type-1 lab kernel and a local TCG boot through owned host tables and preflight. It may describe the Intel toy-guest path as implemented in code.
+Within the current claim boundary, release text may describe a bootable Type-1 lab kernel and a local TCG boot through owned descriptor tables and preflight. It may describe the Intel toy-guest and final owned-CR3 path as implemented in code, not observed under TCG.
 
 Use "Intel guest-entry lab milestone" wording only after the complete evidence package exists. Do not claim demonstrated VMX guest execution from the current TCG run, and do not describe the host-side binary or lab kernel as a production hypervisor.
