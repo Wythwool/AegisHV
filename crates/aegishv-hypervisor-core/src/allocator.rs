@@ -155,9 +155,7 @@ impl<const R: usize, const A: usize> PhysicalPageAllocator<R, A> {
     ) -> Result<HostPhysical, CoreError> {
         let page = self.allocate()?;
         if let Err(err) = zeroer.zero_page(page) {
-            if let Err(rollback_err) = self.free(page) {
-                return Err(rollback_err);
-            }
+            self.free(page)?;
             return Err(err);
         }
         Ok(page)
