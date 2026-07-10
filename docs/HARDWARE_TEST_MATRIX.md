@@ -1,11 +1,13 @@
 # Hardware Test Matrix
 
-This matrix separates checked paths, planned lab paths, degraded cases, and unsupported cases. It is a release gate: README and release notes must not claim coverage that is missing here.
+This matrix separates checked paths, locally observed bring-up, implemented-but-unproven runtime paths, planned coverage, degraded cases, and unsupported cases. It is a release gate: README and release notes must not claim coverage that is missing here.
 
 ## Status Terms
 
-- `checked`: covered by normal locked tests or an opt-in script that has committed evidence.
-- `planned`: designed but not checked by committed evidence.
+- `checked`: covered by normal locked tests or reviewable committed evidence.
+- `observed`: completed in a local run, but not yet backed by a reviewable committed evidence package.
+- `implemented`: runtime code exists and is covered by build/model checks, but the required hardware execution evidence is absent.
+- `planned`: designed but not implemented or checked to the required level.
 - `degraded`: expected to run with reduced visibility or reduced action scope.
 - `unsupported`: must fail with a clear error or documented refusal.
 
@@ -15,33 +17,46 @@ This matrix separates checked paths, planned lab paths, degraded cases, and unsu
 | --- | --- | --- | --- |
 | Linux tracefs KVM text replay | checked | `scripts/smoke-replay.sh`, golden JSONL tests | Required for host sensor release |
 | Live Linux tracefs KVM smoke | planned | `scripts/live-tracefs-smoke.sh`, `scripts/live-kvm-integration.sh` | Manual runner evidence required before broad live claims |
-| Intel VMX model tests | checked | `aegishv-arch-x86::vmx` unit tests | Lab-only wording required |
-| AMD SVM model tests | checked | `aegishv-arch-x86::svm` unit tests | Lab-only wording required |
-| ARM64 EL2 model tests | checked | `aegishv-arch-arm64` unit tests | Lab-only wording required |
-| Bare-metal type-1 boot | unsupported | boot boundary skeleton only; no boot image | Must not be claimed |
-| Direct EPT/NPT/Stage-2 enforcement | unsupported | synthetic trap model only | Must not be claimed |
-| Hardware PMU sampling | unsupported | grouped/ring models only | Must not be claimed |
+| Intel VMX model and VMCS/EPT construction tests | checked | `aegishv-arch-x86::vmx` tests and bare-metal kernel build checks | Model/build wording required |
+| x86_64 Limine ISO boot through owned host tables and preflight | observed | Local modern-Limine ISO boot under QEMU TCG; VMX unavailable | Retain a reviewable manifest and serial log before moving to `checked` |
+| Intel VMX toy-guest runtime | implemented | VMXON/VMCS/EPT, VMLAUNCH to CPUID exit, VMRESUME to HLT exit are wired in code | Complete eight-marker nested-VMX or bare-metal evidence required |
+| Intel VMX guest execution | planned | No reviewed nested-VMX or bare-metal guest-execution log; TCG does not expose VMX and WHPX is unavailable | Must not be claimed as demonstrated |
+| AMD SVM model tests | checked | `aegishv-arch-x86::svm` unit tests | Lab-model wording required |
+| AMD SVM live guest path | unsupported | No VMRUN-backed guest execution path | Must not be claimed |
+| ARM64 EL2 model tests | checked | `aegishv-arch-arm64` unit tests | Lab-model wording required |
+| ARM64 EL2 live guest path | unsupported | No live EL2 entry or guest execution path | Must not be claimed |
+| Bare-metal physical-host qualification | planned | No retained hardware boot/guest evidence | Required before hardware coverage claims |
+| General direct EPT/NPT/Stage-2 enforcement | unsupported | Intel toy EPT exists; general trap runtime remains synthetic | Must not be claimed |
+| Hardware PMU sampling | unsupported | Grouped/ring models only | Must not be claimed |
 
 ## Guest And Tooling Paths
 
 | Area | Status | Current Evidence | Release Gate |
 | --- | --- | --- | --- |
+| Fixed Intel `CPUID; HLT` toy guest | implemented | Guest bytes, four-level guest paging, EPT, VMCS, and exit state machine build and test | Hardware marker chain required before execution claim |
+| General guest loader and lifecycle | unsupported | No kernel/module loader or production vCPU lifecycle | Must not be claimed |
 | Offline x86_64 VMI translation fixtures | checked | `vmi_cli_tests`, VMI fixture tests | Fixture-only wording required |
 | Offline ARM64 VMI translation fixtures | checked | `vmi_cli_tests`, VMI fixture tests | Fixture-only wording required |
 | Linux synthetic VMI profile corpus | checked | `tests/fixtures/vmi/linux` | Synthetic-only wording required |
 | Windows synthetic VMI profile corpus | checked | `tests/fixtures/vmi/windows` | Synthetic-only wording required |
-| Real Linux guest profile extraction | unsupported | no extractor | Must not be claimed |
-| Real Windows symbol download or PDB parsing | unsupported | pre-extracted synthetic cache only | Must not be claimed |
+| Real Linux guest profile extraction | unsupported | No extractor | Must not be claimed |
+| Real Windows symbol download or PDB parsing | unsupported | Pre-extracted synthetic cache only | Must not be claimed |
 | QEMU/QMP action dry-run | checked | `management_security_tests` | Stable identity gate remains required |
-| Libvirt lifecycle integration | unsupported | file-backed XML discovery only | Must not be claimed |
+| Libvirt lifecycle integration | unsupported | File-backed XML discovery only | Must not be claimed |
 
 ## Platform Inputs
 
 | Input | Status | Notes |
 | --- | --- | --- |
-| QEMU version coverage | planned | Record exact version in live test logs. |
+| QEMU TCG boot coverage | observed | One local modern-Limine ISO boot reached owned host tables and runtime preflight; TCG supplied no VMX. |
+| Nested-VMX QEMU/KVM coverage | planned | Record exact host CPU, kernel, KVM, QEMU, machine, CPU model, and marker log. |
+| WHPX coverage | unsupported | WHPX was unavailable in the current environment. |
 | Libvirt version coverage | planned | Record exact version when lifecycle work is added. |
-| Firmware and boot chain | planned | Required for any type-1 lab evidence. |
+| Firmware and physical boot chain | planned | Required for bare-metal qualification. |
 | Confidential guest modes | degraded | SEV, SNP, TDX, pKVM, and CCA-style protection can block reads. |
 
-Any row moved from planned to checked needs a script, test, or attached lab log that a reviewer can reproduce.
+## Still Missing For Production Coverage
+
+No matrix row covers a hypervisor-owned CR3 with enforced W^X and guard pages; SMP and per-CPU VMX; APIC, interrupts, timers, and devices; IOMMU isolation; a general guest loader; PAT, XSAVE/FPU, and full MSR context; live AMD or ARM paths; or hardware soak and the secure update/attestation/incident-response lifecycle. These are not present and remain release blockers for production wording.
+
+Any row moved from `planned`, `observed`, or `implemented` to `checked` needs a script, test, or attached lab log that a reviewer can reproduce.

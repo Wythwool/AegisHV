@@ -17,6 +17,7 @@ fn workspace_and_lockfile_include_minimal_type1_kernel_crate() {
     let cargo = read_repo_file("Cargo.toml");
     let lock = read_repo_file("Cargo.lock");
     let manifest = read_repo_file("crates/aegishv-type1-kernel/Cargo.toml");
+    let build_rs = read_repo_file("crates/aegishv-type1-kernel/build.rs");
 
     assert!(cargo.contains("crates/aegishv-type1-kernel"));
     assert!(lock.contains("name = \"aegishv-type1-kernel\""));
@@ -30,6 +31,46 @@ fn workspace_and_lockfile_include_minimal_type1_kernel_crate() {
             "aegishv-type1-boot",
         ],
     );
+    assert!(build_rs.contains("cargo:rerun-if-changed=../../boot/linker/x86_64-type1.ld"));
+}
+
+#[test]
+fn type1_entry_installs_owned_host_tables_before_rust() {
+    let entry = read_repo_file("boot/x86_64/entry.S");
+    let tables = read_repo_file("boot/x86_64/host_tables.S");
+    let build = read_repo_file("scripts/build-type1-kernel.sh");
+
+    let transition = entry.find("call aegishv_install_transition_idt").unwrap();
+    let bss_clear = entry.find("lea __aegishv_bss_start").unwrap();
+    let install = entry.find("call aegishv_install_host_tables").unwrap();
+    let rust_entry = entry.find("call aegishv_type1_rust_entry").unwrap();
+    assert!(transition < bss_clear);
+    assert!(install < rust_entry);
+    assert_contains_all(
+        &tables,
+        &[
+            "__aegishv_host_gdt",
+            "__aegishv_host_tss",
+            "__aegishv_host_idt",
+            "__aegishv_double_fault_stack_top",
+            "__aegishv_nmi_stack_top",
+            "__aegishv_machine_check_stack_top",
+            "__aegishv_vmx_exit_stack_top",
+            "aegishv_install_transition_idt",
+            "ltr ax",
+            "lidt [rip + __aegishv_host_idtr]",
+            "aegishv_type1_host_exception",
+        ],
+    );
+    let vmx_entry = read_repo_file("boot/x86_64/vmx_entry.S");
+    assert_contains_all(
+        &vmx_entry,
+        &[
+            "lgdt [rip + __aegishv_host_gdtr]",
+            "lidt [rip + __aegishv_host_idtr]",
+        ],
+    );
+    assert!(build.contains("-C no-redzone=yes"));
 }
 
 #[test]
@@ -42,7 +83,7 @@ fn kernel_entry_records_serial_marker_and_halt_path() {
         &lib,
         &[
             "SERIAL_READY_MARKER",
-            "aegishv:type1:halt",
+            "aegishv:type1:handoff-ok",
             "SERIAL_RUNTIME_BACKEND_NONE_MARKER",
             "aegishv:type1:backend-none",
             "SERIAL_PANIC_MARKER",
@@ -99,6 +140,8 @@ fn kernel_entry_records_serial_marker_and_halt_path() {
             "SERIAL_RUNTIME_VMCS_LOAD_OK_MARKER",
             "SERIAL_RUNTIME_VMCS_LOAD_ERROR_MARKER",
             "SERIAL_RUNTIME_VMCS_LOAD_SKIPPED_MARKER",
+            "SERIAL_VMX_INSTRUCTION_ERROR_PREFIX",
+            "aegishv:type1:vm-instruction-error=0x",
             "Type1RuntimePlan",
             "build_vmx_runtime",
             "build_svm_runtime",
@@ -162,6 +205,7 @@ fn kernel_entry_records_serial_marker_and_halt_path() {
 fn kernel_build_script_and_ci_keep_boot_evidence_boundary() {
     let script = read_repo_file("scripts/build-type1-kernel.sh");
     let inspect = read_repo_file("scripts/inspect-type1-kernel.sh");
+    let workspace = read_repo_file("Cargo.toml");
     let ci = read_repo_file(".github/workflows/ci.yml");
     let testing = read_repo_file("docs/TESTING.md");
 
@@ -171,6 +215,7 @@ fn kernel_build_script_and_ci_keep_boot_evidence_boundary() {
             "x86_64-unknown-none",
             "cargo rustc",
             "--bin aegishv-type1-kernel",
+            "--profile type1",
             "-C panic=abort",
             "-C relocation-model=static",
             "-C code-model=kernel",
@@ -185,6 +230,7 @@ fn kernel_build_script_and_ci_keep_boot_evidence_boundary() {
             "expected_kernel_virtual_base=",
             "relocation_model=static",
             "code_model=kernel",
+            "profile=type1",
             "runtime_backend_marker=aegishv:type1:backend-none",
             "runtime_backend_probe=cpuid-msr",
             "runtime_backend_markers=aegishv:type1:backend-none,aegishv:type1:backend-vmx,aegishv:type1:backend-svm",
@@ -201,6 +247,14 @@ fn kernel_build_script_and_ci_keep_boot_evidence_boundary() {
             "bootable_image=false",
             "qemu_evidence=false",
             "not a bootable ISO",
+        ],
+    );
+    assert_contains_all(
+        &workspace,
+        &[
+            "[profile.type1]",
+            "inherits = \"release\"",
+            "strip = \"none\"",
         ],
     );
     assert_contains_all(
@@ -242,6 +296,12 @@ fn kernel_build_script_and_ci_keep_boot_evidence_boundary() {
             "runtime_vmxon_markers_present=true",
             "runtime_vmcs_load=smoke-cycle",
             "runtime_vmcs_load_markers_present=true",
+            "load_segment_permissions=\"passed\"",
+            "expected RX, R, and RW PT_LOAD permissions",
+            "static_elf_check=\"passed\"",
+            "static kernel contains relocations",
+            "symbol_table_check=\"passed\"",
+            "diagnostic symbol was not retained",
         ],
     );
     assert_contains_all(

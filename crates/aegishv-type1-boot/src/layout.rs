@@ -1,6 +1,6 @@
 pub const KERNEL_PHYSICAL_BASE: u64 = 0x20_0000;
 pub const KERNEL_VIRTUAL_BASE: u64 = 0xffff_ffff_8020_0000;
-pub const BOOT_STACK_SIZE: u64 = 64 * 1024;
+pub const BOOT_STACK_SIZE: u64 = 256 * 1024;
 pub const EARLY_HEAP_SIZE: u64 = 2 * 1024 * 1024;
 pub const AP_TRAMPOLINE_PAGE: u64 = 0x7000;
 pub const SERIAL_COM1_PORT: u16 = 0x3f8;
@@ -69,7 +69,7 @@ pub fn validate_link_layout(layout: LinkLayout) -> Result<(), LinkLayoutError> {
             return Err(LinkLayoutError::SectionNotPageAligned);
         }
     }
-    if layout.boot_stack_size < 16 * 1024 {
+    if layout.boot_stack_size < 128 * 1024 {
         return Err(LinkLayoutError::StackTooSmall);
     }
     if layout.boot_stack_size % 4096 != 0 {
@@ -86,6 +86,7 @@ mod tests {
     fn planned_x86_layout_passes_basic_link_constraints() {
         validate_link_layout(LinkLayout::planned_x86_64()).unwrap();
         assert_eq!(KERNEL_VIRTUAL_BASE, 0xffff_ffff_8020_0000);
+        assert_eq!(BOOT_STACK_SIZE, 256 * 1024);
     }
 
     #[test]
@@ -98,7 +99,14 @@ mod tests {
         );
 
         let mut layout = LinkLayout::planned_x86_64();
-        layout.boot_stack_size = 17 * 1024;
+        layout.boot_stack_size = 64 * 1024;
+        assert_eq!(
+            validate_link_layout(layout).unwrap_err(),
+            LinkLayoutError::StackTooSmall
+        );
+
+        let mut layout = LinkLayout::planned_x86_64();
+        layout.boot_stack_size = 129 * 1024;
         assert_eq!(
             validate_link_layout(layout).unwrap_err(),
             LinkLayoutError::StackNotPageAligned

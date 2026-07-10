@@ -53,7 +53,7 @@ fn image_plan_script_writes_review_manifest_without_boot_claims() {
             "kernel_elf=target/tmp/aegishv-type1-missing.elf",
             "kernel_elf_present=false",
             "output_image=target/type1/aegishv-type1.iso",
-            "qemu_expected_serial=aegishv:type1:halt",
+            "qemu_expected_serial=aegishv:type1:handoff-ok",
             "expected_kernel_physical_base=0x00200000",
             "expected_kernel_virtual_base=0xFFFFFFFF80200000",
             "not a boot evidence record",
@@ -107,5 +107,5 @@ fn qemu_smoke_requires_ordered_vmx_evidence_markers() {
     );
     assert!(testing.contains("AEGISHV_TYPE1_EXPECTED_MARKERS"));
     assert!(testing.contains("complete serial lines"));
-    assert!(testing.contains("backend-none"));
+    assert!(testing.contains("non-VMX/skipped path"));
 }

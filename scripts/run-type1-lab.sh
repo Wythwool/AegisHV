@@ -176,7 +176,7 @@ qemu_command=$qemu_command
 qemu_evidence=$qemu_evidence
 lab_complete=$lab_complete
 
-This summary records one local opt-in lab chain. It is only successful when all expected markers appear in order and no contradictory marker is present. It does not prove guest entry or VM-exit handling.
+This summary records one local opt-in lab chain. It is only successful when the full fixed-guest marker sequence appears in order and no contradictory marker is present. Success proves that toy VMLAUNCH/CPUID-exit/VMRESUME/HLT-exit/VMXOFF sequence only on the recorded host; it is not general-runtime or production evidence.
 PLAN
 
 echo "$summary"

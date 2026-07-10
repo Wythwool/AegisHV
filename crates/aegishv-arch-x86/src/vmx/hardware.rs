@@ -131,8 +131,10 @@ impl VmxInstructionExecutor for HardwareVmxInstructions {
     unsafe fn vmwrite(&mut self, field: u64, value: u64) -> Result<(), VmxError> {
         let flags = unsafe {
             let flags: u64;
+            // Intel syntax places the register-only VMCS field encoding first
+            // and the register-or-memory value source second.
             asm!(
-                "vmwrite {value}, {field}",
+                "vmwrite {field}, {value}",
                 "pushfq",
                 "pop {flags}",
                 value = in(reg) value,

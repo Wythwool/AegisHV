@@ -1,6 +1,6 @@
 # VMI safety and consistency
 
-AegisHV has offline VMI infrastructure for tests and developer tooling. It is not a live VMI backend and it does not inspect a running guest.
+AegisHV has offline VMI infrastructure for tests and developer tooling. It is not a live VMI backend and it does not inspect a running guest. The separate Type-1 lab kernel does not change this boundary: its fixed toy guest and VM-exit frame are not connected to the VMI interfaces.
 
 ## Implemented scope
 
@@ -22,6 +22,8 @@ The current VMI code covers:
 
 These pieces are offline/testable infrastructure. They are not evidence of live guest inspection.
 
+The bootable x86_64 lab kernel has a wired Intel VMX path for one fixed `CPUID; HLT` guest. That path does not provide a stable guest-memory reader, a reusable vCPU register source, snapshot consistency, OS profiles, or an adapter to `src/vmi.rs`. The available TCG boot did not execute the VMX path, so it is not live VMI evidence either.
+
 Linux profile metadata format notes live in `docs/VMI_LINUX.md`. Windows profile and pre-extracted symbol cache format notes live in `docs/VMI_WINDOWS.md` and `docs/VMI_WINDOWS_SYMBOLS.md`.
 
 ## Unsupported scope
@@ -30,8 +32,8 @@ Linux profile metadata format notes live in `docs/VMI_LINUX.md`. Windows profile
 - Live guest memory reads are not implemented.
 - Live guest register reads are not implemented.
 - Full VMI stack behavior is not implemented.
-- Direct EPT/NPT/Stage-2 enforcement is not implemented.
-- Type-1 runtime support is not implemented.
+- Direct EPT/NPT/Stage-2 enforcement is not implemented. The Intel toy guest has a fixed EPT only; it is not a general permission-flip, invalidation, or retrap engine.
+- General Type-1 runtime support is not implemented. The separate BSP-only toy-guest target is not wired to the live VMI interfaces.
 - Syscall integrity implementation is not present.
 - Hardware PMU sampling is not implemented.
 - Production guest inspection is not implemented.

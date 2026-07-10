@@ -52,24 +52,24 @@ cargo run --locked --bin trap_synthetic_bench -- --iterations 10000
 
 The harness reports local process timing only. It does not benchmark VM exits, hardware invalidation, EPT/NPT writes, or guest runtime behavior.
 
-## Type-1 Boundary Model Crates
+## Type-1 Boundary And Runtime Crates
 
-The type-1 boundary workspace crates are library models. They are included in the normal workspace gate:
+The core Type-1 boundary workspace crates are library models. The separate `aegishv-type1-kernel` crate is a bare-metal runtime target. Both are included in the normal workspace gate:
 
 ```bash
 cargo test --locked -p aegishv-hypervisor-core -p aegishv-event-abi -p aegishv-arch-x86
 cargo test --locked -p aegishv-type1-boot --all-features
 ```
 
-They cover memory-map validation, physical page allocation, page ownership, huge-page split/merge planning, DMA domains, PCI inventory, crash records, event and command rings, VM lifecycle, vCPU scheduling, early serial logging, x86 page-table plans, ACPI DMAR/IVRS fixture parsing, and AP startup plan validation. These tests do not boot a hypervisor.
+They cover memory-map validation, physical page allocation, page ownership, huge-page split/merge planning, DMA domains, PCI inventory, crash records, event and command rings, VM lifecycle, vCPU scheduling, early serial logging, x86 page-table plans, ACPI DMAR/IVRS fixture parsing, AP startup plan validation, VMX capability/control validation, VMCS construction, guest paging, EPT, and the toy exit state machine. These tests do not execute the bare-metal entry point or privileged VMX instructions.
 
-`scripts/build-type1-skeleton.sh` validates the planned boot handoff crate and writes `target/type1/aegishv-type1-build-plan.txt`. The manifest is review material only and does not prove type-1 support.
+`scripts/build-type1-skeleton.sh` validates the boot handoff crate and writes `target/type1/aegishv-type1-build-plan.txt`. The manifest is review material only and does not prove boot or guest execution.
 
-`scripts/plan-type1-image.sh` validates the checked-in Limine config, linker script, and entry stub, then writes `target/type1/aegishv-type1-image-plan.txt`. The helper records the future kernel ELF path, output image path, expected kernel bases, and `AEGISHV_TYPE1_EXPECTED_SERIAL` marker. It exits with code 66 when `--require-kernel` is used before the kernel ELF exists.
+`scripts/plan-type1-image.sh` validates the checked-in Limine config, linker script, and entry stub, then writes `target/type1/aegishv-type1-image-plan.txt`. The helper records the kernel ELF path, output image path, expected kernel bases, and `AEGISHV_TYPE1_EXPECTED_SERIAL` marker. It exits with code 66 when `--require-kernel` is used before the kernel ELF exists.
 
-`scripts/build-type1-kernel.sh` builds the minimal `x86_64-unknown-none` kernel ELF and writes `target/type1/aegishv-type1-kernel-build.txt`. It requires the Rust `x86_64-unknown-none` target, builds with static relocation and the kernel code model, and records `bootable_image=false` and `qemu_evidence=false`; the output is not a bootable ISO. The kernel emits the configured success marker only after Limine base revision is accepted and HHDM, memory-map, and executable-address responses have revision `0` plus the required offset, entries pointer, count, and executable bases matching the linker layout. It then reads a bounded CPU snapshot and emits `aegishv:type1:backend-vmx`, `aegishv:type1:backend-svm`, or `aegishv:type1:backend-none` from the checked runtime planner. It also emits runtime preflight, controlled-enable, runtime-region, VMXON-cycle, and VMCS-load markers after checking the CR0/CR4/EFER values, applying the needed register writes, materializing the selected VMXON/VMCS or VMCB pages, and running VMXON, VMCLEAR, VMPTRLD, and VMXOFF for the Intel VMX backend. Failed handoff checks emit the generic missing-handoff marker followed by a status-specific marker.
+`scripts/build-type1-kernel.sh` builds the `x86_64-unknown-none` kernel ELF and writes `target/type1/aegishv-type1-kernel-build.txt`. It requires the Rust `x86_64-unknown-none` target, builds with static relocation and the kernel code model, and records `bootable_image=false` and `qemu_evidence=false` because the ELF alone is not a Limine boot image or runtime proof. The kernel validates the Limine base revision and bounded HHDM, memory-map, and executable-address response state before using the handoff. It installs and verifies owned GDT/TSS/IDT state, captures CPU/MSR capabilities, validates CR0/CR4 fixed bits and VMX controls, allocates VMXON/VMCS/guest/EPT pages only from Limine `USABLE` memory, and materializes the selected backend state. On an eligible Intel host it writes the complete toy-guest VMCS, executes VMLAUNCH, handles the CPUID exit, performs VMRESUME, handles HLT, and executes VMXOFF. Failed handoff, host-table, runtime, entry, exit, and resume checks emit explicit failure markers.
 
-`scripts/inspect-type1-kernel.sh` checks the built kernel ELF. When `llvm-readobj` is available it verifies the expected entry address, section layout, `.limine_requests`, and boot stack size. It always checks `aegishv:type1:halt`, the runtime backend marker strings, the runtime preflight marker strings, the runtime enable marker strings, the runtime region marker strings, the VMXON-cycle marker strings, the VMCS-load marker strings, `aegishv:type1:limine-missing`, and the status-specific Limine failure marker bytes. It writes `target/type1/aegishv-type1-kernel-inspect.txt`.
+`scripts/inspect-type1-kernel.sh` checks the built kernel ELF. When `llvm-readobj` is available it verifies the expected entry address, page-separated load segments, section layout, `.limine_requests`, and boot stack size. It always checks the host-table, backend, runtime preflight/enable/region, VMXON, VMCS-load, guest configuration/exit/completion, missing-Limine, and status-specific failure marker bytes. It writes `target/type1/aegishv-type1-kernel-inspect.txt`. This is artifact inspection, not execution evidence.
 
 `scripts/stage-type1-limine-iso.sh` stages the kernel ELF and Limine config into `target/type1/limine-iso-root` and writes `target/type1/aegishv-type1-iso-stage.txt`. It records whether `limine` and `xorriso` are present, but the staged root is not a bootable ISO.
 
@@ -85,25 +85,32 @@ cargo test --locked -p aegishv-devices --all-features
 
 They cover virtio-mmio feature negotiation and queue validation, bounded virtio-console queues, read-only virtio-blk bounds checks, write refusal, and virtio-net quarantine decisions. They do not execute MMIO exits or run a service VM.
 
-`scripts/type1-qemu-smoke.sh` is opt-in lab plumbing for a boot image once one exists. The repository does not currently ship `./target/type1/aegishv-type1.elf`. By default, success requires the complete serial lines `aegishv:type1:backend-vmx`, `aegishv:type1:vmxon-cycle-ok`, and `aegishv:type1:vmcs-load-ok` in that order. A log is rejected if it also contains a contradictory backend, runtime failure, skipped VMX operation, missing-Limine, or panic marker. The script defaults to `q35,accel=kvm` and `host,+vmx`; `AEGISHV_QEMU_MACHINE` and `AEGISHV_QEMU_CPU` can override those values for an explicitly reviewed lab. It supports kernel ELF input with `-kernel` and ISO input with `-cdrom`/`-boot d`.
+`scripts/type1-qemu-smoke.sh` is opt-in lab plumbing for the bootable Limine ISO. It deliberately refuses a raw ELF because QEMU `-kernel` does not provide the required Limine handoff. By default, success requires the complete serial lines `aegishv:type1:host-tables-ok`, `aegishv:type1:backend-vmx`, `aegishv:type1:vmxon-cycle-ok`, `aegishv:type1:vmcs-load-ok`, `aegishv:type1:guest-config-ok`, `aegishv:type1:guest-cpuid-exit-ok`, `aegishv:type1:guest-hlt-exit-ok`, and `aegishv:type1:guest-run-ok` in that order. A log is rejected if it also contains a contradictory backend, host-table or runtime failure, skipped VMX operation, guest entry/exit/resume error, exception, missing-Limine, or panic marker. The script defaults to `q35,accel=kvm` and `host,+vmx`; `AEGISHV_QEMU_MACHINE` and `AEGISHV_QEMU_CPU` can override those values for an explicitly reviewed lab.
 
 ```bash
-scripts/type1-qemu-smoke.sh --print-command ./target/type1/aegishv-type1.elf
+scripts/type1-qemu-smoke.sh --print-command ./target/type1/aegishv-type1.iso
 ```
 
-An extended ordered list can be supplied as comma-separated `AEGISHV_TYPE1_EXPECTED_MARKERS` or `--expect-markers` input. Every custom list must still contain the three required VMX markers in order, so configuration cannot weaken the evidence contract to `halt` or another bring-up-only marker. Repeating `--expect-marker` avoids comma parsing when a caller builds the command programmatically:
+An extended ordered list can be supplied as comma-separated `AEGISHV_TYPE1_EXPECTED_MARKERS` or `--expect-markers` input. Every custom list must still contain the complete eight-marker host, VMX entry, CPUID exit, resume, HLT exit, and completion chain in order, so configuration cannot weaken the evidence contract to `halt` or another bring-up-only marker. Repeating `--expect-marker` avoids comma parsing when a caller builds the command programmatically:
 
 ```bash
 scripts/type1-qemu-smoke.sh \
+  --expect-marker aegishv:type1:host-tables-ok \
   --expect-marker aegishv:type1:backend-vmx \
   --expect-marker aegishv:type1:vmxon-cycle-ok \
   --expect-marker aegishv:type1:vmcs-load-ok \
+  --expect-marker aegishv:type1:guest-config-ok \
+  --expect-marker aegishv:type1:guest-cpuid-exit-ok \
+  --expect-marker aegishv:type1:guest-hlt-exit-ok \
+  --expect-marker aegishv:type1:guest-run-ok \
   ./target/type1/aegishv-type1.iso
 ```
 
 The script exits with a clear error when the image is missing, QEMU or the timeout command is missing, a marker is absent or out of order, or a contradictory marker is observed. It never launches the intentionally halting kernel without a working timeout. Marker checks use complete serial-log lines, not substring matches. It is not wired into normal CI.
 
-`scripts/type1-qemu-evidence.sh` wraps the QEMU smoke script for local lab runs and writes `target/type1/aegishv-type1-qemu-evidence.txt`. The manifest includes the boot image digest, QEMU version, machine, CPU, boot mode, rendered command line, serial log path, ordered marker list, per-marker observations, order result, first contradictory marker, and smoke exit code. `qemu_evidence=true` requires a successful smoke, every expected marker, correct order, and no contradictory marker. This result proves only the checked VMXON and VMCS-load bring-up path; it does not prove VMLAUNCH, guest execution, VM exits, or production readiness.
+`scripts/type1-qemu-evidence.sh` wraps the QEMU smoke script for local lab runs and writes `target/type1/aegishv-type1-qemu-evidence.txt`. The manifest includes the boot image digest, QEMU version, machine, CPU, boot mode, rendered command line, serial log path, ordered marker list, per-marker observations, order result, first contradictory marker, and smoke exit code. `qemu_evidence=true` requires a successful smoke, every expected marker, correct order, and no contradictory marker. With the default contract, this proves one VMLAUNCH into the fixed guest, one CPUID exit, one VMRESUME, and one HLT exit on the recorded configuration. It does not prove a general guest runtime or production readiness.
+
+A local modern-Limine ISO has booted under QEMU TCG through owned host-table installation and runtime preflight. That environment reports no VMX support, and WHPX is unavailable, so it emits the non-VMX/skipped path and does not satisfy the strict evidence contract. This is useful boot-boundary evidence only; it must not be cited as Intel guest-execution evidence.
 
 ```bash
 scripts/type1-qemu-evidence.sh --image ./target/type1/aegishv-type1.iso --timeout 20
@@ -125,7 +132,7 @@ The Intel VMX model code lives in `aegishv-arch-x86::vmx` and is covered by norm
 cargo test --locked -p aegishv-arch-x86 --all-features
 ```
 
-The tests cover VMX feature gates, VMXON and VMCS region validation, VMCS lifecycle transitions through VMLAUNCH/VMRESUME, hardware-instruction status decoding, runtime sequencing, control-field adjustment, CPUID/MSR/CR/HLT exit handling, EPT mapping and violation decisions, VPID validation, execute/write trap windows, Monitor Trap Flag fallback behavior, and minimal Linux lab coverage validation. They do not execute privileged VMX instructions.
+The tests cover VMX feature gates, VMXON and VMCS region validation, VMCS lifecycle transitions through VMLAUNCH/VMRESUME, hardware-instruction status decoding, runtime sequencing, true-control and fixed-bit adjustment, complete minimal VMCS construction, guest paging, EPT, CPUID/MSR/CR/HLT exit handling, VPID validation, execute/write trap windows, Monitor Trap Flag fallback behavior, and the fixed toy-guest exit sequence. They do not execute privileged VMX instructions.
 
 `scripts/vmx-linux-lab-smoke.sh` is opt-in lab plumbing for a future boot image and Linux guest kernel:
 
@@ -409,9 +416,15 @@ The signing script fails if Cosign is missing, if an expected artifact is missin
 - Tracefs format diagnostics for healthy, missing, malformed, and missing-field KVM `kvm_exit` metadata.
 - Bounded trace input metric reason labels for parsed, unrelated, unsupported, malformed, degraded, and parser-bug buckets.
 
-## Still required before real type-1/EDR claims
+## Still required before production Type-1/EDR claims
 
-- Hardware-in-the-loop Intel VMX, AMD SVM, and ARM64 EL2 tests.
+- Retained nested-VMX or bare-metal evidence for the complete Intel toy-guest marker chain.
+- Hardware-in-the-loop Intel VMX, AMD SVM, and ARM64 EL2 qualification.
+- A hypervisor-owned CR3, enforced W^X mappings, and guard pages.
+- SMP/per-CPU VMX, APIC/interrupt/timer virtualization, vCPU scheduling, and preemption.
+- General guest loading, device backends, and IOMMU-enforced DMA isolation.
+- PAT, XSAVE/FPU, full required MSR context, interrupt injection, and broad exit coverage.
+- Long-duration hardware soak, hostile-guest fuzzing, secure/measured boot, update/rollback, attestation, crash recovery, and incident-response evidence.
 - Real KVM/libvirt lifecycle tests are still required.
 - Binary/perf trace ingestion tests.
 - Real PMU grouped-counter/ring-buffer sampling tests.

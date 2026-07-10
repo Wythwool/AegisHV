@@ -1,6 +1,6 @@
 # Status
 
-This tree is a hardened host-side KVM sensor and a cleaner platform for the next VMI/trap work. It is not being mislabeled as a finished type-1 hypervisor.
+This tree contains a hardened host-side KVM sensor and a separate bootable x86_64 Type-1 lab kernel. The lab kernel is a bring-up target with a wired Intel toy-guest path, not a production or general-purpose hypervisor.
 
 ## Implemented in this tree
 
@@ -37,21 +37,23 @@ This tree is a hardened host-side KVM sensor and a cleaner platform for the next
 - Detector engine library layer with a generic detector trait, scheduler, severity/confidence scoring, budget accounting, kernel text and syscall-hook normalizers, hidden process/module inventory comparison, executable anonymous and RWX mapping checks, JIT allow rules, W^X detection bridging, dedupe, incident objects, and versioned detector state parsing.
 - Synthetic trap-engine library layer with architecture-neutral Stage-2 permissions, a synthetic permission table, trap controller states, invalidation planning, single-step strategy selection, storm control, JIT temporary-window policy, trap event metadata, and backend capability negotiation.
 - `no_std` workspace crates for type-1 boundary models: core IDs, memory-map validation, physical page allocation, crash records, per-CPU state, event and command ABI rings, VM lifecycle, vCPU scheduling, x86 serial logging, x86 page-table plans, and AP startup plan validation.
-- Planned type-1 boot skeleton artifacts: a no-std boot handoff crate, minimal x86_64 kernel ELF crate with a Limine request block, checked base-revision, response revision, HHDM offset, memory-map, executable-address response state checked against the linker layout, status-specific handoff markers, CPUID/MSR-backed VMX/SVM capability selection for the runtime backend marker, CR0/CR4/EFER register preflight planning and controlled register-enable writes before VMX/SVM entry, bounded VMX/SVM runtime allocations projected only from Limine `USABLE` memory, HHDM materialization of VMXON/VMCS/VMCB pages, VMXON/VMXOFF and VMCS-load smoke-cycle markers, and ELF section-layout inspection, Limine config, x86_64 linker script, x86_64 entry symbol stub, image-plan helper, strict ordered-marker QEMU contract, kernel-build helper, ISO-root staging helper, lab-tool probe, tool-gated Limine ISO builder, QEMU evidence wrapper, opt-in lab runner, and build-plan helper. Default CI does not produce a bootable image.
+- Bootable x86_64 Type-1 lab artifacts: a no-std kernel with a modern Limine request block and configuration, validated HHDM/memory-map/executable-address handoff, aligned physical relocation support, a page-separated linker layout, owned GDT/TSS/IDT and VM-exit stacks, early serial diagnostics, bounded allocation from Limine `USABLE` memory, kernel and ISO builders, ELF inspection, tool probing, strict QEMU evidence capture, and an opt-in lab runner. A local QEMU TCG run has booted the ISO through owned host tables and runtime preflight; normal CI still does not build the ISO or run QEMU.
 - Device isolation model code for physical page ownership, huge-page split/merge planning, DMA domains, PCI inventory, ACPI DMAR/IVRS parsing, virtio-mmio state, bounded console queues, read-only block images, and virtio-net quarantine decisions.
-- Intel VMX lab models for feature detection, VMXON/VMCS region checks, VMCS lifecycle, VMX control adjustment, explicit exit handlers, EPT mapping plans, VPID/INVEPT invalidation plans, execute/write traps, Monitor Trap Flag fallback behavior, minimal Linux lab coverage validation, x86_64 VMX instruction execution wrappers, and a VMXON/VMCLEAR/VMPTRLD/VMLAUNCH/VMRESUME sequencing layer.
+- Intel VMX lab models and runtime pieces for feature detection, true-control and fixed-bit validation, VMXON/VMCS region checks, complete minimal host/guest VMCS state, VMX control adjustment, four-level guest paging and EPT, explicit exit handlers, VPID/INVEPT plans, execute/write traps, x86_64 VMX instruction wrappers, and a VMXON/VMCLEAR/VMPTRLD/VMLAUNCH/VMRESUME sequencing layer with an assembly entry/exit trampoline.
+- A wired Intel toy guest containing `mov eax, 0; cpuid; hlt`. The runtime allocates twelve VMX/guest/EPT pages from `USABLE` memory, enters through VMLAUNCH, handles CPUID, resumes the guest, handles HLT, and executes VMXOFF. Strict evidence requires the complete ordered host-table, VMX, configuration, CPUID-exit, HLT-exit, and completion markers.
 - AMD SVM lab models for feature detection, EFER.SVME value handling, VMCB layout checks, VMRUN/VMLOAD/VMSAVE/INVLPGA instruction facades, x86_64 hardware instruction wrappers, SVM runtime sequencing, explicit intercept handlers, NPT map plans, nested page fault routing, ASID management, execute/write traps, and tiny guest lab validation.
 - ARM64 EL2 lab models for capability decoding, vector table validation, 4K Stage-2 map plans, VTCR/VTTBR construction, ESR/FAR/HPFAR abort decode, TLBI planning, HVC/SMC/WFI/WFE traps, execute/write traps, GIC virtualization planning, virtual timer state, and toy guest coverage validation.
 
-## Still not implemented as runtime code
+## Still missing or unproven
 
-- The Intel VMX instruction/runtime layer is wired into the type-1 kernel as a checked runtime plan only after a CPUID/MSR capability snapshot, CR0/CR4 fixed-bit preflight, bounded allocation from Limine `USABLE` memory, controlled CR0/CR4 enable writes, HHDM materialization of the VMXON and VMCS pages, and a VMXON/VMCLEAR/VMPTRLD/VMXOFF smoke cycle; the kernel entry path does not write VMCS fields, execute VMLAUNCH/VMRESUME, or claim QEMU/hardware evidence.
-- Bare-metal guest execution through the Intel VMX lab models is not implemented.
+- Reviewed Intel guest-execution evidence is not present. The available QEMU TCG environment boots the Limine/host-table path but does not expose VMX, and WHPX is unavailable, so it cannot prove VMXON, VMLAUNCH, the CPUID exit, VMRESUME, or the HLT exit.
+- A general guest loader, reusable VM/vCPU lifecycle, multiple guests, scheduling, and recovery are not implemented; the live Intel path is one fixed BSP-only toy guest.
 - The AMD SVM instruction/runtime layer is wired into the type-1 kernel as a checked runtime plan only after a CPUID capability snapshot, EFER.SVME preflight, a controlled EFER.SVME enable write, and HHDM materialization of the VMCB page; the kernel entry path does not execute VMRUN or claim QEMU/hardware evidence.
 - Booted guest execution through the AMD SVM lab models is not implemented.
 - ARM64 EL2 runtime and vectors.
 - Bare-metal execution of the ARM64 EL2 lab models is not implemented.
-- APIC startup, real trampoline code, and checked QEMU boot evidence are not implemented. The kernel ELF, Limine config, linker script, Limine request block, ISO-root staging directory, tool-gated ISO builder, image-plan manifest, evidence wrapper, and serial-marker contract are boundary artifacts only.
+- SMP/AP startup, per-CPU VMX state, APIC and interrupt routing, timers, preemption, and interrupt injection are not implemented. The existing assembly trampoline only covers the fixed Intel toy guest on the BSP.
+- PAT, XSAVE/FPU, comprehensive MSR context, I/O and MSR bitmap policy, broad exit coverage, and hostile-guest recovery are not implemented.
 - Live device assignment, SMMU/VT-d/AMD-Vi programming, virtual switch enforcement, and SR-IOV quarantine are not implemented.
 - Guest physical memory reader.
 - Guest virtual-to-physical translation.
@@ -60,20 +62,21 @@ This tree is a hardened host-side KVM sensor and a cleaner platform for the next
 - Live Windows guest process/module/syscall/callback reads are not implemented.
 - Runtime syscall-path integrity monitoring is not implemented.
 - Runtime detector engine integration is not implemented; the detector layer is currently a library surface with tests.
-- Direct hardware EPT/NPT/Stage-2 permission flips, real TLB invalidation, and real single-step/retrap execution are not implemented. The current trap engine is a synthetic model with tests.
-- Host page-table plans are data models. They do not install CR3 or change live page tables.
+- General direct hardware EPT/NPT/Stage-2 permission flips, real TLB invalidation, and real single-step/retrap execution are not implemented. The Intel toy guest has a fixed EPT, while the general trap engine remains a synthetic model with tests.
+- Host page-table plans are data models. The lab kernel still uses Limine's mappings; it does not install a hypervisor-owned CR3, enforce runtime W^X across all aliases, or provide guard pages.
 - Libvirt API integration with lifecycle events is not implemented.
 - True PMU grouped-counter/ring-buffer sampling with PEBS/IBS/SPE semantics is not implemented.
 - Remote management service, multi-user authentication backend, online policy update service, and hardware attestation are not implemented.
+- Hardware soak, broad CPU/firmware qualification, secure/measured boot, signed and rollback-safe hypervisor updates, and a production incident/crash lifecycle are not implemented.
 - OTLP runtime export is not implemented. `docs/EVENT_EXPORT.md` is design-only.
 - OCSF and ECS runtime output is not implemented. `docs/EVENT_MAPPINGS.md` is mapping guidance only.
 
 ## Claim discipline
 
-Describe the current code as a Linux host-side KVM telemetry sensor. It reads tracefs text, emits JSONL events, exposes metrics, correlates W^X patterns, and can call configured QMP actions.
+Describe the default `aegishv` binary as a Linux host-side KVM telemetry sensor. It reads tracefs text, emits JSONL events, exposes metrics, correlates W^X patterns, and can call configured QMP actions.
 
-Do not describe this tree as type-1, full VMI, direct EPT/NPT/Stage-2 enforcement, syscall-path integrity, hardware PMU sampling, libvirt lifecycle integration, or a finished EDR product. Those claims require backend code, tests, docs, and release evidence that are not present in this tree.
+The separate no-std target may be described as a bootable x86_64 Type-1 lab kernel with an Intel VMX toy-guest path wired in code. The local TCG run may be cited only as Limine, owned-host-table, and preflight boot evidence. Do not claim demonstrated Intel guest execution without the full strict marker chain from a reviewed nested-VMX or bare-metal host.
 
-Roadmap documents may discuss those targets, but they must keep planned work separate from implemented behavior.
+Do not describe this tree as a production or general-purpose Type-1 hypervisor, full VMI, general direct EPT/NPT/Stage-2 enforcement, syscall-path integrity, hardware PMU sampling, libvirt lifecycle integration, or a finished EDR product. Those claims require runtime code and release evidence that are not present.
 
-This version removes several deployment footguns from the host sensor layer and makes the next backend work explicit. It does not fake a type-1 hypervisor.
+Roadmap documents may discuss those targets, but they must keep implemented code, locally observed boot behavior, hardware-proven execution, and production qualification separate.

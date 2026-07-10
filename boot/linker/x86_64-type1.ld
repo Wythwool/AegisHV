@@ -2,7 +2,7 @@ ENTRY(aegishv_type1_start)
 
 KERNEL_PHYS_BASE = 0x00200000;
 KERNEL_VIRT_BASE = 0xffffffff80200000;
-BOOT_STACK_SIZE = 0x00010000;
+BOOT_STACK_SIZE = 0x00040000;
 
 PHDRS
 {
@@ -25,9 +25,11 @@ SECTIONS
   .rodata ALIGN(4K) : AT(ADDR(.rodata) - KERNEL_VIRT_BASE + KERNEL_PHYS_BASE)
   {
     *(.rodata .rodata.*)
+    *(.got .got.*)
   } :rodata
 
-  .limine_requests ALIGN(8) : AT(ADDR(.limine_requests) - KERNEL_VIRT_BASE + KERNEL_PHYS_BASE)
+  . = ALIGN(4K);
+  .limine_requests : AT(ADDR(.limine_requests) - KERNEL_VIRT_BASE + KERNEL_PHYS_BASE)
   {
     KEEP(*(.limine_requests_start))
     KEEP(*(.limine_requests))
@@ -46,7 +48,7 @@ SECTIONS
     __aegishv_bss_end = .;
   } :data
 
-  .boot_stack ALIGN(4K) : AT(ADDR(.boot_stack) - KERNEL_VIRT_BASE + KERNEL_PHYS_BASE)
+  .boot_stack ALIGN(4K) (NOLOAD) : AT(ADDR(.boot_stack) - KERNEL_VIRT_BASE + KERNEL_PHYS_BASE)
   {
     __aegishv_boot_stack_bottom = .;
     . += BOOT_STACK_SIZE;
@@ -54,6 +56,13 @@ SECTIONS
   } :data
 
   __aegishv_kernel_end = .;
+
+  ASSERT((ADDR(.text) & 0xfff) == 0, "text must be page aligned")
+  ASSERT((ADDR(.rodata) & 0xfff) == 0, "rodata must be page aligned")
+  ASSERT((ADDR(.limine_requests) & 0xfff) == 0, "Limine requests must be page aligned")
+  ASSERT((ADDR(.data) & 0xfff) == 0, "data must be page aligned")
+  ASSERT(BOOT_STACK_SIZE >= 0x00020000, "boot stack is below the audited minimum")
+  ASSERT(SIZEOF(.boot_stack) == BOOT_STACK_SIZE, "boot stack size changed")
 
   /DISCARD/ :
   {

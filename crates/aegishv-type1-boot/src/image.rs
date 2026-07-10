@@ -21,7 +21,7 @@ impl<'a> QemuEvidencePlan<'a> {
             cpu: "qemu64",
             memory_mib: 256,
             serial_log_path: "target/type1/qemu-serial.log",
-            expected_serial_marker: "aegishv:type1:halt",
+            expected_serial_marker: "aegishv:type1:handoff-ok",
             timeout_seconds: 15,
         }
     }
@@ -172,7 +172,7 @@ mod tests {
         validate_boot_image_plan(plan).unwrap();
         assert_eq!(plan.format, BootImageFormat::LimineIso);
         assert_eq!(plan.qemu.machine, "q35");
-        assert_eq!(plan.qemu.expected_serial_marker, "aegishv:type1:halt");
+        assert_eq!(plan.qemu.expected_serial_marker, "aegishv:type1:handoff-ok");
     }
 
     #[test]

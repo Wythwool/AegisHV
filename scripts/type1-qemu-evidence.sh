@@ -7,7 +7,7 @@ out_dir="${AEGISHV_TYPE1_OUT:-target/type1}"
 boot_image="${AEGISHV_TYPE1_BOOT_IMAGE:-}"
 manifest="${AEGISHV_TYPE1_QEMU_MANIFEST:-$out_dir/aegishv-type1-qemu-evidence.txt}"
 serial_log="${AEGISHV_QEMU_SERIAL_LOG:-$out_dir/aegishv-type1-serial.log}"
-default_expected_markers="aegishv:type1:backend-vmx,aegishv:type1:vmxon-cycle-ok,aegishv:type1:vmcs-load-ok"
+default_expected_markers="aegishv:type1:host-tables-ok,aegishv:type1:backend-vmx,aegishv:type1:vmxon-cycle-ok,aegishv:type1:vmcs-load-ok,aegishv:type1:guest-config-ok,aegishv:type1:guest-cpuid-exit-ok,aegishv:type1:guest-hlt-exit-ok,aegishv:type1:guest-run-ok"
 expected_marker_csv="${AEGISHV_TYPE1_EXPECTED_MARKERS:-${AEGISHV_TYPE1_EXPECTED_SERIAL:-$default_expected_markers}}"
 expected_markers=()
 marker_option_mode=""
@@ -113,9 +113,14 @@ for marker in "${expected_markers[@]}"; do
 done
 
 required_vmx_markers=(
+  "aegishv:type1:host-tables-ok"
   "aegishv:type1:backend-vmx"
   "aegishv:type1:vmxon-cycle-ok"
   "aegishv:type1:vmcs-load-ok"
+  "aegishv:type1:guest-config-ok"
+  "aegishv:type1:guest-cpuid-exit-ok"
+  "aegishv:type1:guest-hlt-exit-ok"
+  "aegishv:type1:guest-run-ok"
 )
 required_marker_index=0
 for marker in "${expected_markers[@]}"; do
@@ -127,7 +132,7 @@ for marker in "${expected_markers[@]}"; do
   fi
 done
 if [ "$required_marker_index" -ne "${#required_vmx_markers[@]}" ]; then
-  fail_usage "expected serial marker list must include backend-vmx, vmxon-cycle-ok, and vmcs-load-ok in order"
+  fail_usage "expected serial marker list must include the complete host, VMX entry, CPUID, resume, and HLT proof chain in order"
 fi
 
 expected_marker_csv="$(IFS=','; printf '%s' "${expected_markers[*]}")"
@@ -150,6 +155,10 @@ if [ ! -f "$boot_image" ]; then
   echo "type1 qemu evidence: boot image does not exist: $boot_image" >&2
   exit 66
 fi
+case "$boot_image" in
+  *.iso) ;;
+  *) fail_usage "boot image must be a Limine ISO; a raw ELF has no Limine handoff" ;;
+esac
 
 if [ "$print_command" = true ]; then
   smoke_marker_args=()
@@ -199,12 +208,7 @@ if [ -n "$qemu_path" ]; then
 fi
 qemu_machine="${AEGISHV_QEMU_MACHINE:-q35,accel=kvm}"
 qemu_cpu="${AEGISHV_QEMU_CPU:-host,+vmx}"
-qemu_boot_mode=kernel
-case "$boot_image" in
-  *.iso)
-    qemu_boot_mode=iso
-    ;;
-esac
+qemu_boot_mode=iso
 
 mkdir -p "$(dirname "$manifest")"
 mkdir -p "$(dirname "$serial_log")"
@@ -296,6 +300,12 @@ if [ -f "$serial_log" ]; then
     "aegishv:type1:vmcs-load-error"
     "aegishv:type1:vmcs-load-skipped"
     "aegishv:type1:limine-missing"
+    "aegishv:type1:host-tables-error"
+    "aegishv:type1:host-exception"
+    "aegishv:type1:host-fatal"
+    "aegishv:type1:guest-entry-error"
+    "aegishv:type1:guest-exit-error"
+    "aegishv:type1:guest-resume-error"
     "aegishv:type1:panic"
   )
   for candidate in "${forbidden_markers[@]}"; do
@@ -358,7 +368,7 @@ timeout_seconds=$timeout_seconds
 qemu_smoke_exit_status=$smoke_status
 qemu_evidence=$qemu_evidence
 
-This manifest records a local QEMU smoke attempt. A true qemu_evidence value requires every expected marker in order and rejects contradictory backend, failure, skipped, and panic markers. It does not prove guest entry or VM-exit handling.
+This manifest records a local QEMU smoke attempt. A true qemu_evidence value requires every expected marker in order and rejects contradictory backend, failure, skipped, and panic markers. With the default contract it proves only the fixed toy guest's VMLAUNCH, CPUID exit, VMRESUME, HLT exit, and VMXOFF sequence on the recorded host; it is not general-runtime or production evidence.
 PLAN
 } > "$manifest"
 

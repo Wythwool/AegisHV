@@ -1,6 +1,6 @@
 # Backlog
 
-This backlog tracks planned work after AegisHV 0.4.0. The current runtime remains a Linux userspace KVM telemetry sensor with VMI and type-1 backend boundaries.
+This backlog tracks planned work after AegisHV 0.4.0. The default runtime remains a Linux userspace KVM telemetry sensor; the repository also has a separate bootable x86_64 lab kernel with a BSP-only Intel VMX toy-guest path.
 
 Creator: https://github.com/Wythwool  
 Organization: https://github.com/Nullbit1
@@ -115,9 +115,9 @@ No item below is marked complete. An item may move out of open status only when 
 
 ### B015 - Intel VMX backend
 
-- Status: open
-- Scope: Implement a real Intel VMX runtime path for VMXON, VMCS setup, VM entry, VM exits, EPT, VPID, and INVEPT.
-- Acceptance criteria: tests cover VMX capability checks, VMCS validation, EPT violations, exit qualification decoding, nested refusal, and teardown.
+- Status: partial; fixed BSP toy-guest entry is implemented, general runtime and hardware evidence remain open.
+- Scope: Evolve the VMXON, complete VMCS/EPT, VMLAUNCH, CPUID-exit, VMRESUME, HLT-exit, and VMXOFF bring-up path into per-CPU VMX with general exits, VPID, INVEPT, scheduling, and recovery.
+- Acceptance criteria: existing model/build tests cover capability checks, control fields, VMCS validation, EPT, exit decoding, and teardown; retained nested-VMX or bare-metal evidence and hostile-guest negative tests are still required.
 - Production gate: bare-metal Intel hardware tests pass without claiming support on unsupported CPUs.
 
 ### B016 - AMD SVM backend

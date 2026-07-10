@@ -65,16 +65,24 @@ pub const PRIMARY_HLT_EXITING: u32 = 1 << 7;
 pub const PRIMARY_CR3_LOAD_EXITING: u32 = 1 << 15;
 pub const PRIMARY_CR3_STORE_EXITING: u32 = 1 << 16;
 pub const PRIMARY_USE_MSR_BITMAPS: u32 = 1 << 28;
+pub const PRIMARY_MONITOR_TRAP_FLAG: u32 = 1 << 27;
 pub const PRIMARY_ACTIVATE_SECONDARY_CONTROLS: u32 = 1 << 31;
 
 pub const SECONDARY_ENABLE_EPT: u32 = 1 << 1;
 pub const SECONDARY_ENABLE_VPID: u32 = 1 << 5;
 pub const SECONDARY_ENABLE_RDTSCP: u32 = 1 << 3;
 pub const SECONDARY_ENABLE_INVPCID: u32 = 1 << 12;
-pub const SECONDARY_MONITOR_TRAP_FLAG: u32 = 1 << 27;
 
 pub const EXIT_HOST_ADDRESS_SPACE_SIZE: u32 = 1 << 9;
+pub const EXIT_SAVE_IA32_EFER: u32 = 1 << 20;
+pub const EXIT_LOAD_IA32_EFER: u32 = 1 << 21;
 pub const ENTRY_IA32E_MODE_GUEST: u32 = 1 << 9;
+pub const ENTRY_LOAD_IA32_EFER: u32 = 1 << 15;
+
+const TRUE_PIN_BASED_RESERVED_DEFAULT_ONES: u32 = 0x0000_0016;
+const TRUE_PRIMARY_RESERVED_DEFAULT_ONES: u32 = 0x0400_6172;
+const TRUE_EXIT_RESERVED_DEFAULT_ONES: u32 = 0x0003_6dfb;
+const TRUE_ENTRY_RESERVED_DEFAULT_ONES: u32 = 0x0000_11fb;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct VmxControlRequest {
@@ -88,11 +96,11 @@ pub struct VmxControlRequest {
 impl VmxControlRequest {
     pub const fn toy_hlt_guest() -> Self {
         Self {
-            pin_based: 0,
+            pin_based: PIN_BASED_NMI_EXITING,
             primary: PRIMARY_HLT_EXITING | PRIMARY_ACTIVATE_SECONDARY_CONTROLS,
-            secondary: SECONDARY_ENABLE_EPT | SECONDARY_ENABLE_VPID,
-            exit: EXIT_HOST_ADDRESS_SPACE_SIZE,
-            entry: ENTRY_IA32E_MODE_GUEST,
+            secondary: SECONDARY_ENABLE_EPT,
+            exit: EXIT_HOST_ADDRESS_SPACE_SIZE | EXIT_SAVE_IA32_EFER | EXIT_LOAD_IA32_EFER,
+            entry: ENTRY_IA32E_MODE_GUEST | ENTRY_LOAD_IA32_EFER,
         }
     }
 }
@@ -117,13 +125,67 @@ pub struct VmxControlFields {
 
 impl VmxControlMsrs {
     pub fn build(self, request: VmxControlRequest) -> Result<VmxControlFields, VmxError> {
-        Ok(VmxControlFields {
+        self.build_with_mandatory_defaults(request, false)
+    }
+
+    pub fn build_true_controls(
+        self,
+        request: VmxControlRequest,
+    ) -> Result<VmxControlFields, VmxError> {
+        self.build_with_mandatory_defaults(request, true)
+    }
+
+    fn build_with_mandatory_defaults(
+        self,
+        request: VmxControlRequest,
+        allow_mandatory_defaults: bool,
+    ) -> Result<VmxControlFields, VmxError> {
+        let fields = VmxControlFields {
             pin_based: self.pin_based.adjust(request.pin_based)?,
             primary: self.primary.adjust(request.primary)?,
             secondary: self.secondary.adjust(request.secondary)?,
             exit: self.exit.adjust(request.exit)?,
             entry: self.entry.adjust(request.entry)?,
-        })
+        };
+        let supported_pin = PIN_BASED_NMI_EXITING;
+        let supported_primary = PRIMARY_HLT_EXITING | PRIMARY_ACTIVATE_SECONDARY_CONTROLS;
+        let supported_secondary = SECONDARY_ENABLE_EPT;
+        let supported_exit =
+            EXIT_HOST_ADDRESS_SPACE_SIZE | EXIT_SAVE_IA32_EFER | EXIT_LOAD_IA32_EFER;
+        let supported_entry = ENTRY_IA32E_MODE_GUEST | ENTRY_LOAD_IA32_EFER;
+        let pin_exempt = if allow_mandatory_defaults {
+            self.pin_based.must_be_one & TRUE_PIN_BASED_RESERVED_DEFAULT_ONES
+        } else {
+            0
+        };
+        let primary_exempt = if allow_mandatory_defaults {
+            self.primary.must_be_one & TRUE_PRIMARY_RESERVED_DEFAULT_ONES
+        } else {
+            0
+        };
+        let secondary_exempt = 0;
+        let exit_exempt = if allow_mandatory_defaults {
+            self.exit.must_be_one & TRUE_EXIT_RESERVED_DEFAULT_ONES
+        } else {
+            0
+        };
+        let entry_exempt = if allow_mandatory_defaults {
+            self.entry.must_be_one & TRUE_ENTRY_RESERVED_DEFAULT_ONES
+        } else {
+            0
+        };
+        if fields.pin_based & !supported_pin & !pin_exempt != 0
+            || fields.primary & !supported_primary & !primary_exempt != 0
+            || fields.secondary & !supported_secondary & !secondary_exempt != 0
+            || fields.exit & !supported_exit & !exit_exempt != 0
+            || fields.entry & !supported_entry & !entry_exempt != 0
+        {
+            return Err(VmxError::new(
+                VmxErrorKind::InvalidControlBits,
+                "CPU requires a VMX control that the toy guest runtime does not implement",
+            ));
+        }
+        Ok(fields)
     }
 }
 
@@ -167,7 +229,62 @@ mod tests {
             .unwrap();
 
         assert_ne!(fields.primary & PRIMARY_HLT_EXITING, 0);
+        assert_ne!(fields.pin_based & PIN_BASED_NMI_EXITING, 0);
         assert_ne!(fields.secondary & SECONDARY_ENABLE_EPT, 0);
+        assert_eq!(fields.secondary & SECONDARY_ENABLE_VPID, 0);
         assert_ne!(fields.exit & EXIT_HOST_ADDRESS_SPACE_SIZE, 0);
+        assert_ne!(fields.exit & EXIT_SAVE_IA32_EFER, 0);
+        assert_ne!(fields.exit & EXIT_LOAD_IA32_EFER, 0);
+        assert_ne!(fields.entry & ENTRY_LOAD_IA32_EFER, 0);
+    }
+
+    #[test]
+    fn toy_hlt_guest_rejects_forced_controls_without_runtime_support() {
+        let mut msrs = permissive_msrs();
+        msrs.primary.must_be_one = PRIMARY_USE_MSR_BITMAPS;
+
+        let error = msrs.build(VmxControlRequest::toy_hlt_guest()).unwrap_err();
+
+        assert_eq!(error.kind, VmxErrorKind::InvalidControlBits);
+    }
+
+    #[test]
+    fn true_controls_accept_reserved_mandatory_one_defaults() {
+        let controls = VmxControlMsrs {
+            pin_based: VmxControlMsr::new(VmxControlGroup::PinBased, 0x16, u32::MAX),
+            primary: VmxControlMsr::new(VmxControlGroup::PrimaryProcessor, 0x0400_6172, u32::MAX),
+            secondary: VmxControlMsr::new(VmxControlGroup::SecondaryProcessor, 0, u32::MAX),
+            exit: VmxControlMsr::new(VmxControlGroup::Exit, 0x0003_6dfb, u32::MAX),
+            entry: VmxControlMsr::new(VmxControlGroup::Entry, 0x0000_11fb, u32::MAX),
+        }
+        .build_true_controls(VmxControlRequest::toy_hlt_guest())
+        .unwrap();
+
+        assert_eq!(controls.pin_based & 0x16, 0x16);
+        assert_eq!(controls.primary & 0x0400_6172, 0x0400_6172);
+        assert_eq!(controls.exit & 0x0003_6dfb, 0x0003_6dfb);
+        assert_eq!(controls.entry & 0x0000_11fb, 0x0000_11fb);
+    }
+
+    #[test]
+    fn true_controls_still_reject_optional_unsupported_requests() {
+        let mut request = VmxControlRequest::toy_hlt_guest();
+        request.secondary |= SECONDARY_ENABLE_VPID;
+
+        let error = permissive_msrs().build_true_controls(request).unwrap_err();
+
+        assert_eq!(error.kind, VmxErrorKind::InvalidControlBits);
+    }
+
+    #[test]
+    fn true_controls_reject_forced_functional_controls_without_backing_state() {
+        let mut msrs = permissive_msrs();
+        msrs.primary.must_be_one = PRIMARY_USE_MSR_BITMAPS;
+
+        let error = msrs
+            .build_true_controls(VmxControlRequest::toy_hlt_guest())
+            .unwrap_err();
+
+        assert_eq!(error.kind, VmxErrorKind::InvalidControlBits);
     }
 }

@@ -1,22 +1,37 @@
 # Type-1 / VMI / trap backend roadmap
 
-A real type-1 EDR is a separate runtime, not a bigger tracefs parser. The current code keeps the host sensor honest and adds interface boundaries for the backend work.
+A production Type-1 EDR is a separate runtime, not a larger tracefs parser. AegisHV now has that separation: the default `aegishv` binary remains the Linux host sensor, while `aegishv-type1-kernel` is an opt-in, bootable x86_64 lab target.
 
-The phase backlog for this work lives in `BACKLOG.md`. That file tracks IDs, scope, acceptance criteria, and production gates. This document explains the backend boundary and implementation order.
+The phase backlog lives in `../BACKLOG.md`. That file tracks IDs, scope, acceptance criteria, and production gates. This document records the current low-level boundary and the remaining implementation order. VMI safety and consistency rules live in `VMI.md`.
 
-VMI safety and consistency rules for the offline infrastructure live in `docs/VMI.md`.
+## Type-1 foundation now present
 
-## Backend contract now present
+- A current Limine configuration, page-separated x86_64 ELF layout, kernel builder, ISO builder, and bounded QEMU evidence tooling.
+- Validated Limine base revision, HHDM, memory-map, and executable-address handoff with aligned physical relocation support.
+- Early transition fault handling and owned GDT, TSS, IDT, double-fault/NMI/machine-check stacks, boot stack, and VM-exit stack state.
+- Bounded physical allocation only from Limine `USABLE` memory for VMXON, VMCS, guest, guest-page-table, and EPT pages.
+- Intel VMX feature, feature-control, CR0/CR4 fixed-bit, true-control, host-state, and EPT capability validation.
+- A complete VMCS, four-level guest paging, four-level EPT, and an assembly VM-entry/exit trampoline for one isolated 64-bit guest.
+- A fixed guest containing `mov eax, 0; cpuid; hlt`, with code paths for VMLAUNCH, CPUID exit handling, VMRESUME, HLT exit handling, and VMXOFF.
+- A strict eight-marker evidence contract that rejects contradictory backends, skipped VMX operations, host faults, and guest entry/exit/resume failures.
 
-`src/hypervisor.rs` defines the minimum shape of a backend that can eventually drive VMX/SVM/EL2 exits:
+## Evidence boundary
 
-- VM identity and vCPU identity.
-- VM-exit classification.
-- Stage-2 permission updates.
-- Backend event pump.
-- Backend health snapshot.
+A modern Limine ISO has booted locally under QEMU TCG through owned host-table installation and runtime preflight. The available TCG environment did not expose VMX, and WHPX was unavailable. That run proves the boot boundary only; it does not prove VMXON, VMLAUNCH, guest execution, VMRESUME, or VM-exit handling.
 
-`src/vmi.rs` defines the semantic layer needed above that backend:
+Intel guest execution remains unproven until a reviewed nested-VMX or bare-metal run captures the complete marker chain described in `TYPE1_BOOT_BOUNDARY.md`. Even a successful chain proves only one BSP, one fixed guest, one CPUID exit, one resume, and one HLT exit. It is not production qualification.
+
+## Backend contracts now present
+
+`../src/hypervisor.rs` defines the architecture-neutral shape needed by a future live backend adapter:
+
+- VM identity and vCPU identity;
+- VM-exit classification;
+- Stage-2 permission updates;
+- backend event pump;
+- backend health snapshot.
+
+`../src/vmi.rs` defines the semantic layer needed above that adapter:
 
 - guest physical memory reads;
 - vCPU register reads;
@@ -26,27 +41,29 @@ VMI safety and consistency rules for the offline infrastructure live in `docs/VM
 - syscall-path reporting;
 - trap lifecycle calls.
 
-The current implementation intentionally provides contracts and a no-backend boundary, not fake VMX/SVM/EL2 code.
+These userspace contracts are not wired to the bare-metal toy guest. The repository has real Intel bring-up code, but it does not yet have a live VMI backend or a general trap runtime.
 
-## Required runtime subsystems for actual type-1
+## Required subsystems for production
 
-- Boot path, measured init, and early allocator.
-- Per-CPU virtualization state.
-- Intel VMX backend: VMXON, VMCS setup, VMLAUNCH/VMRESUME, VM-exit handlers, EPT, VPID, INVEPT.
-- AMD SVM backend: VMCB, VMRUN, intercept vectors, NPT, ASIDs, INVLPGA, MSRPM/IOPM.
-- ARM64 backend: EL2 entry, vectors, HCR_EL2, VTCR_EL2, VTTBR_EL2, Stage-2 tables, GIC virtualization.
-- ARM64 GIC plan: prefer GICv3 when present, keep GICv2 as a compatibility target, save VGIC list-register state with vCPU state, and treat missing GIC virtualization as a typed unsupported condition.
-- Memory manager and Stage-2 permission manager.
-- IOMMU and device-isolation backend code only after page ownership, DMA domain, PCI inventory, SMMU, VT-d, AMD-Vi, and quarantine models pass unit tests.
-- Interrupt/device/IOMMU isolation.
-- Guest lifecycle, SMP, crash recovery, secure update.
-- Hardware test matrix on Intel, AMD, and arm64.
+- A hypervisor-owned host CR3, enforced W^X mappings across all aliases, guard pages, and explicit teardown.
+- SMP/AP startup, per-CPU VMX state, vCPU scheduling, APIC/interrupt routing, timers, preemption, and interrupt injection.
+- Full architectural context policy, including PAT, XSAVE/FPU state, required MSRs, I/O and MSR bitmaps, and broad exit coverage.
+- A general guest/module loader, reusable VM/vCPU lifecycle, multiple address spaces, memory reclamation, and guest crash recovery.
+- A runtime Stage-2 permission manager with huge-page splits, invalidation, single-step/retrap, storm control, concurrency tests, and hostile-guest coverage.
+- Device emulation plus an IOMMU-enforced DMA boundary for any passthrough path. Page ownership, DMA-domain, PCI, VT-d/AMD-Vi/SMMU, and quarantine models are not hardware programming.
+- A live guest memory/register adapter and consistent snapshot/retry rules before the offline VMI layer can inspect a running guest.
+- Linux and Windows profile distribution, symbol resolution, process/module attribution, and syscall-path checks on live data.
+- Live AMD SVM and ARM64 EL2 entry paths before those architectures are claimed.
+- Panic/watchdog recovery, crash evidence, long-duration hardware soak, broad CPU/firmware coverage, fuzzing, secure/measured boot, attestation, signed rollback-safe updates, and incident response.
 
 ## Next implementation sequence
 
-1. Replace best-effort identity with real libvirt lifecycle discovery and QMP socket discovery.
-2. Add guest memory/register access through a backend that can be tested before bare metal.
-3. Add OS profile database and symbol resolution for Linux first.
-4. Implement syscall path checks against LSTAR, kernel text, syscall table, modules, ftrace/kprobe/eBPF surfaces.
-5. Build a trap engine with permission flips, huge-page split, TLB invalidation, single-step/retrap, storm control, and JIT allowlists.
-6. Only then split or port the backend into a real type-1 runtime.
+1. Capture the complete Intel toy-guest chain on a reviewed nested-VMX or bare-metal host and fix any VM-instruction error without weakening the evidence contract.
+2. Replace inherited Limine mappings with a hypervisor-owned CR3, enforced W^X aliases, and guard pages.
+3. Add AP startup, per-CPU host/VMX state, APIC interrupts, timers, and a minimal preemptible vCPU scheduler.
+4. Complete architectural context handling: PAT, XSAVE/FPU, MSRs, bitmaps, interrupt injection, and recovery paths.
+5. Replace the fixed guest with a bounded general loader and explicit VM/vCPU lifecycle.
+6. Add device emulation and an IOMMU-backed DMA isolation policy before any passthrough work.
+7. Wire live memory/register reads and then the Stage-2 trap lifecycle into the VMI contracts.
+8. Add AMD SVM and ARM64 EL2 runtime paths with architecture-specific evidence gates.
+9. Qualify hardware, firmware, boot security, update/rollback, observability, crash handling, and long-duration operations before production wording.

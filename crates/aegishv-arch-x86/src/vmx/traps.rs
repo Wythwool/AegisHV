@@ -1,6 +1,6 @@
 use aegishv_hypervisor_core::ids::GuestPhysical;
 
-use super::controls::SECONDARY_MONITOR_TRAP_FLAG;
+use super::controls::PRIMARY_MONITOR_TRAP_FLAG;
 use super::ept::{EptAccess, EptMapping, EptPermissions};
 use super::features::{VmxError, VmxErrorKind};
 
@@ -121,9 +121,9 @@ pub struct MonitorTrapFlag {
 }
 
 impl MonitorTrapFlag {
-    pub const fn from_secondary_controls(secondary_controls: u32) -> Self {
+    pub const fn from_primary_controls(primary_controls: u32) -> Self {
         Self {
-            supported: secondary_controls & SECONDARY_MONITOR_TRAP_FLAG != 0,
+            supported: primary_controls & PRIMARY_MONITOR_TRAP_FLAG != 0,
             active_gpa: None,
         }
     }
@@ -217,6 +217,12 @@ mod tests {
             trap.await_single_step(&mut mtf).unwrap_err().kind,
             VmxErrorKind::UnsupportedCapability
         );
+    }
+
+    #[test]
+    fn mtf_support_comes_from_primary_controls() {
+        assert!(MonitorTrapFlag::from_primary_controls(PRIMARY_MONITOR_TRAP_FLAG).supported);
+        assert!(!MonitorTrapFlag::from_primary_controls(0).supported);
     }
 
     #[test]

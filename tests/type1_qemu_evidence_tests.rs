@@ -149,9 +149,14 @@ fn clear_lab_environment(command: &mut Command) {
 }
 
 fn default_vmx_markers() -> &'static str {
-    "aegishv:type1:backend-vmx\n\
+    "aegishv:type1:host-tables-ok\n\
+aegishv:type1:backend-vmx\n\
 aegishv:type1:vmxon-cycle-ok\n\
-aegishv:type1:vmcs-load-ok\n"
+aegishv:type1:vmcs-load-ok\n\
+aegishv:type1:guest-config-ok\n\
+aegishv:type1:guest-cpuid-exit-ok\n\
+aegishv:type1:guest-hlt-exit-ok\n\
+aegishv:type1:guest-run-ok\n"
 }
 
 #[test]
@@ -165,9 +170,14 @@ fn qemu_smoke_requires_the_default_vmx_markers_in_order() {
     );
 
     let wrong_order = lab.smoke(
-        "aegishv:type1:backend-vmx\n\
+        "aegishv:type1:host-tables-ok\n\
+aegishv:type1:backend-vmx\n\
 aegishv:type1:vmcs-load-ok\n\
-aegishv:type1:vmxon-cycle-ok\n",
+aegishv:type1:vmxon-cycle-ok\n\
+aegishv:type1:guest-config-ok\n\
+aegishv:type1:guest-cpuid-exit-ok\n\
+aegishv:type1:guest-hlt-exit-ok\n\
+aegishv:type1:guest-run-ok\n",
         &[],
     );
     assert_eq!(wrong_order.status.code(), Some(70));
@@ -186,11 +196,21 @@ fn qemu_smoke_accepts_repeated_marker_arguments() {
         default_vmx_markers(),
         &[
             "--expect-marker",
+            "aegishv:type1:host-tables-ok",
+            "--expect-marker",
             "aegishv:type1:backend-vmx",
             "--expect-marker",
             "aegishv:type1:vmxon-cycle-ok",
             "--expect-marker",
             "aegishv:type1:vmcs-load-ok",
+            "--expect-marker",
+            "aegishv:type1:guest-config-ok",
+            "--expect-marker",
+            "aegishv:type1:guest-cpuid-exit-ok",
+            "--expect-marker",
+            "aegishv:type1:guest-hlt-exit-ok",
+            "--expect-marker",
+            "aegishv:type1:guest-run-ok",
         ],
     );
 
@@ -205,15 +225,13 @@ fn qemu_smoke_accepts_repeated_marker_arguments() {
 fn qemu_smoke_rejects_a_weak_custom_marker_contract() {
     let lab = FakeQemuLab::new();
     let output = lab.smoke(
-        "aegishv:type1:halt\n",
-        &["--expect-markers", "aegishv:type1:halt"],
+        "aegishv:type1:handoff-ok\n",
+        &["--expect-markers", "aegishv:type1:handoff-ok"],
     );
 
     assert_eq!(output.status.code(), Some(64));
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains(
-            "expected serial marker list must include backend-vmx, vmxon-cycle-ok, and vmcs-load-ok in order"
-        ),
+        String::from_utf8_lossy(&output.stderr).contains("complete host, VMX entry, CPUID"),
         "unexpected stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
@@ -240,14 +258,14 @@ fn qemu_smoke_rejects_backend_none_even_if_vmx_markers_follow() {
 fn qemu_smoke_rejects_failure_marker_after_success_chain() {
     let lab = FakeQemuLab::new();
     let output = lab.smoke(
-        &format!("{}aegishv:type1:vmcs-load-error\n", default_vmx_markers()),
+        &format!("{}aegishv:type1:guest-entry-error\n", default_vmx_markers()),
         &[],
     );
 
     assert_eq!(output.status.code(), Some(70));
     assert!(
         String::from_utf8_lossy(&output.stderr)
-            .contains("forbidden serial marker was observed: aegishv:type1:vmcs-load-error"),
+            .contains("forbidden serial marker was observed: aegishv:type1:guest-entry-error"),
         "unexpected stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
@@ -316,8 +334,8 @@ fn evidence_manifest_records_order_and_backend_none_refusal() {
     let manifest_text =
         fs::read_to_string(repo_root().join(manifest)).expect("read QEMU evidence manifest");
     for expected in [
-        "expected_serial_marker_count=3",
-        "expected_serial_markers=aegishv:type1:backend-vmx,aegishv:type1:vmxon-cycle-ok,aegishv:type1:vmcs-load-ok",
+        "expected_serial_marker_count=8",
+        "expected_serial_markers=aegishv:type1:host-tables-ok,aegishv:type1:backend-vmx,aegishv:type1:vmxon-cycle-ok,aegishv:type1:vmcs-load-ok,aegishv:type1:guest-config-ok,aegishv:type1:guest-cpuid-exit-ok,aegishv:type1:guest-hlt-exit-ok,aegishv:type1:guest-run-ok",
         "serial_markers_present=true",
         "serial_markers_in_order=true",
         "forbidden_backend_none_observed=true",

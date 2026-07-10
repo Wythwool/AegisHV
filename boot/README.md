@@ -1,24 +1,51 @@
-# Boot Boundary Artifacts
+# Boot Boundary Runtime
 
-This directory contains planned type-1 boot artifacts. They define the first image layout, Limine handoff expectations, and x86_64 entry symbol names.
+This directory contains the x86_64 entry, linker, host-state, VMX trampoline, and Limine configuration used by the separate `aegishv-type1-kernel` lab target. These are live boot inputs, not future image sketches.
 
-The artifacts are not wired into a bootable image build yet. The normal binary remains the host-side sensor until the runtime entry path, architecture backend, and QEMU evidence are added.
+The default `aegishv` binary remains the Linux host-side sensor. Building or booting the lab kernel does not turn that userspace binary into a Type-1 hypervisor.
 
 ## Files
 
-- `limine/limine.conf` records the first Limine menu entry and kernel path.
-- `linker/x86_64-type1.ld` records the planned ELF layout and exported stack symbols.
-- `x86_64/entry.S` records the first entry symbol and a halt loop for early bring-up.
-- The kernel ELF carries a writable `.limine_requests` section with base revision, delimiter, memory-map, HHDM, executable-address, RSDP, bootloader-info, and command-line requests for the first lab handoff.
+- `limine/limine.conf` contains the current Limine menu entry and `boot():` kernel path used by the ISO.
+- `linker/x86_64-type1.ld` defines page-separated RX text, R rodata/GOT, and RW request/data/BSS load segments plus a 256 KiB NOLOAD boot stack and exported layout symbols.
+- `x86_64/entry.S` disables interrupts, installs the transition IDT, clears BSS, switches to the boot stack, installs owned host tables, and enters Rust.
+- `x86_64/host_tables.S` defines the owned GDT, 64-bit TSS, IDT, transition IDT, dedicated fault stacks, selector reload, descriptor verification support, and terminal host exception path.
+- `x86_64/vmx_entry.S` defines the non-returning VMLAUNCH/VMRESUME entry points and VM-exit GPR frame on the dedicated host stack. VM exit reloads the owned descriptor tables before Rust dispatch.
+- The kernel ELF carries the Limine base-revision block and memory-map, HHDM, executable-address, RSDP, bootloader-info, and command-line requests used by the checked handoff.
 
-`scripts/build-type1-skeleton.sh` validates the boot handoff crate and writes a manifest under `target/type1`. That manifest is review material, not a bootable hypervisor image.
+## Build And Inspection
 
-`scripts/plan-type1-image.sh` validates the checked-in boot inputs and writes the current kernel ELF, output image, and QEMU serial-marker contract to `target/type1/aegishv-type1-image-plan.txt`. That manifest is not QEMU boot evidence.
+`scripts/build-type1-skeleton.sh` validates the boot-handoff crate and writes a review manifest under `target/type1`. That manifest alone is not a boot image or execution evidence.
 
-`scripts/build-type1-kernel.sh` builds the minimal `x86_64-unknown-none` kernel ELF to `target/type1/aegishv-type1.elf`. The ELF writes the early success marker only after the minimal Limine handoff fields, including response revisions, HHDM offset, memory-map entries pointer, and executable address bases matching the linker layout, are present; then it writes the runtime backend marker for the checked VMX/SVM planning boundary. Otherwise it writes a missing-handoff marker plus a status-specific marker and halts. It is not packaged as a bootable ISO yet.
+`scripts/plan-type1-image.sh` validates the checked-in boot inputs and writes the kernel ELF, output ISO, expected bases, and serial contract to `target/type1/aegishv-type1-image-plan.txt`.
 
-`scripts/inspect-type1-kernel.sh` checks the built ELF for the expected entry address, section layout, `.limine_requests` section, and boot stack size when `llvm-readobj` is available, and always checks that the success marker, runtime backend marker, missing-handoff marker, and status-specific handoff markers are present.
+`scripts/build-type1-kernel.sh` builds `target/type1/aegishv-type1.elf` for `x86_64-unknown-none`. The ELF validates the Limine handoff, owned host state, CPU capabilities, VMX controls, runtime regions, and explicit error paths. On an eligible Intel host, the runtime proceeds through VMXON, complete VMCS/EPT setup, VMLAUNCH into a fixed `CPUID; HLT` guest, CPUID exit handling, VMRESUME, HLT exit handling, and VMXOFF.
 
-`scripts/stage-type1-limine-iso.sh` copies the kernel ELF and `limine.conf` into `target/type1/limine-iso-root`. It records whether `limine` and `xorriso` are available, but it does not create a bootable ISO yet.
+The ELF is not a standalone QEMU boot input. Passing it through QEMU `-kernel` does not provide the required Limine handoff.
 
-`scripts/build-type1-limine-iso.sh` builds `target/type1/aegishv-type1.iso` only when `xorriso`, the `limine` command, and `AEGISHV_LIMINE_DIR` are available. The ISO build still does not count as QEMU boot evidence.
+`scripts/inspect-type1-kernel.sh` checks the ELF entry, page-separated load layout, request section, boot stack, and required host/runtime/guest marker strings. Artifact inspection proves neither boot nor privileged VMX execution.
+
+`scripts/stage-type1-limine-iso.sh` copies the kernel and Limine configuration into `target/type1/limine-iso-root`.
+
+`scripts/build-type1-limine-iso.sh` uses the Limine command, reviewed Limine files, and xorriso to produce `target/type1/aegishv-type1.iso`. A successful ISO build proves image assembly only.
+
+## Execution Evidence
+
+`scripts/type1-qemu-smoke.sh` accepts the Limine ISO, runs QEMU under a bounded timeout, and requires this complete ordered serial chain by default:
+
+```text
+aegishv:type1:host-tables-ok
+aegishv:type1:backend-vmx
+aegishv:type1:vmxon-cycle-ok
+aegishv:type1:vmcs-load-ok
+aegishv:type1:guest-config-ok
+aegishv:type1:guest-cpuid-exit-ok
+aegishv:type1:guest-hlt-exit-ok
+aegishv:type1:guest-run-ok
+```
+
+Contradictory backends, skipped VMX operations, host faults, runtime failures, guest entry/exit/resume errors, missing handoff, or panic invalidate the run. `scripts/type1-qemu-evidence.sh` records the image digest, environment, command, log, and marker results; `scripts/run-type1-lab.sh` drives the opt-in build and evidence chain.
+
+A modern Limine ISO has booted locally under QEMU TCG through owned host-table installation and runtime preflight. TCG exposed no VMX in the available environment, and WHPX was unavailable, so the observed run followed the non-VMX/skipped path and is not Intel guest-execution evidence.
+
+A valid eight-marker log from a reviewed nested-VMX or bare-metal host would prove only this fixed BSP toy-guest sequence. It would not prove SMP, a general loader, full architectural context, devices/IOMMU isolation, production host paging, AMD/ARM runtime support, hardware soak, or a secure production lifecycle. See `docs/TYPE1_BOOT_BOUNDARY.md` and `docs/TYPE1_READINESS_GATE.md` for the claim boundary.

@@ -6,35 +6,17 @@
 - Added role, audit, approval, policy bundle, dump evidence, and startup hash helper primitives.
 - Added benchmark helper scripts for replay ingest, W^X state handling, offline VMI translation, and synthetic trap transitions.
 - Added hardware, performance, security, release, VMI alpha, and type-1 readiness gate documents.
-- Added planned type-1 boot boundary artifacts: boot handoff crate, Limine config, x86_64 linker script, x86_64 entry symbol, and build-plan helper.
-- Added type-1 image input planning and a QEMU serial-marker evidence contract for future boot smoke runs.
-- Added a minimal x86_64 type-1 kernel ELF build path that writes the planned serial marker and records that ISO/QEMU evidence is still absent.
-- Added type-1 kernel ELF inspection and Limine ISO-root staging helpers without claiming bootable ISO or QEMU evidence.
-- Added a tool-gated Limine ISO builder and ISO-aware QEMU smoke command construction.
-- Added a type-1 lab tool probe for reviewed ISO and QEMU prerequisites.
-- Added a QEMU smoke evidence wrapper that records boot image digest, serial marker state, and smoke exit status.
-- Added an opt-in type-1 lab runner that chains tool checks, Limine ISO build, and QEMU evidence capture.
-- Added the first kernel-side Limine request block and ELF inspection for the `.limine_requests` section.
-- Made the early type-1 kernel success marker depend on the minimal Limine handoff being present.
-- Tightened the minimal Limine handoff gate to check HHDM offset, nonempty memory-map, and executable-address response fields before the ready marker.
-- Added status-specific serial markers for incomplete Limine handoff checks.
-- Checked Limine response revisions and memory-map entries pointer before the ready marker.
-- Checked executable-address response bases against the type-1 linker layout before the ready marker.
-- Added ELF inspection for type-1 section layout and boot stack size.
-- Recorded expected type-1 kernel bases in image-plan and kernel-build manifests.
-- Made the type-1 kernel build use static relocation and the x86_64 kernel code model explicitly.
-- Tightened the x86_64 type-1 entry stub by clearing direction state and zeroing `.bss` before the Rust entry.
-- Added Intel VMX VMLAUNCH/VMRESUME lifecycle handling, an x86_64 hardware instruction executor, and a VMX runtime sequencing layer.
+- Added a bootable x86_64 Type-1 lab kernel with current Limine configuration, a validated HHDM/memory-map/executable-address handoff, aligned physical relocation support, and a page-separated RX/R/RW linker layout.
+- Added early transition fault handling plus owned GDT, TSS, IDT, double-fault/NMI/machine-check stacks, boot stack, and VM-exit stack state before the Rust and VMX paths run.
+- Added kernel ELF inspection, ISO staging/building, tool probing, image manifests, bounded QEMU execution, strict serial-log review, and opt-in evidence capture. Raw ELF QEMU boot is refused because it cannot provide the Limine handoff.
+- Added explicit host-table, runtime, VMXON, VMCS-load, guest configuration, CPUID-exit, HLT-exit, completion, and failure markers.
+- Added Intel VMX VMLAUNCH/VMRESUME lifecycle handling, hardware instruction wrappers, complete minimal host/guest/control VMCS construction, four-level guest paging, four-level EPT, and an assembly VM-entry/exit trampoline.
+- Added a fixed isolated Intel guest containing `mov eax, 0; cpuid; hlt`; the runtime handles the CPUID exit, resumes the guest, handles HLT, and shuts VMX down.
+- Allocated VMXON, VMCS, guest, paging, and EPT pages only from bounded Limine `USABLE` memory below 4 GiB; bootloader-reclaimable pages remain reserved.
+- Validated VMX CR0/CR4 fixed bits, true-control MSRs including mandatory default-one bits, host architectural state, and required write-back four-level EPT capabilities before guest entry.
+- Tightened Intel QEMU evidence to require the complete ordered eight-marker host/VMX/CPUID/resume/HLT chain and reject contradictory backends, skipped operations, host faults, and guest entry/exit/resume errors.
+- Booted the modern Limine ISO locally under QEMU TCG through owned host-table installation and runtime preflight. TCG did not expose VMX and WHPX was unavailable, so this is not Intel guest-execution evidence.
 - Added AMD SVM hardware instruction wrappers and a checked runtime sequence for EFER.SVME, VMLOAD, VMRUN, VMSAVE, and INVLPGA.
-- Added a type-1 kernel runtime-planning bridge that constructs Intel VMX and AMD SVM runtime objects from checked, page-aligned kernel-side regions.
-- Added type-1 kernel CPU capability snapshots so the runtime backend marker can be selected from CPUID/MSR data before privileged VM entry is wired.
-- Added type-1 kernel register preflight planning for VMX CR0/CR4 fixed bits, CR4.VMXE, and SVM EFER.SVME before any privileged entry path is wired.
-- Added controlled type-1 register-enable writes for VMX CR0/CR4 and SVM EFER.SVME.
-- Added type-1 runtime page materialization for VMXON, VMCS, and VMCB regions through the Limine HHDM.
-- Added a type-1 VMXON/VMXOFF smoke cycle with explicit serial markers.
-- Added a type-1 VMCLEAR/VMPTRLD smoke cycle while still stopping before VMCS field writes or guest launch.
-- Replaced fixed type-1 runtime page addresses with bounded allocations from Limine `USABLE` memory below 4 GiB; bootloader-reclaimable pages remain reserved.
-- Tightened QEMU VMX evidence to require ordered backend, VMXON, and VMCS-load markers and to reject `backend-none` logs.
 - Corrected guest CR3 typing, VM-entry failure decoding, and EPT qualification semantics in the Intel model layer.
 - Expanded synthetic Linux and Windows VMI fixture corpus.
 

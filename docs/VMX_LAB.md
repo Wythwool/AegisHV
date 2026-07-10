@@ -1,6 +1,6 @@
 # Intel VMX Lab Boundary
 
-This document records the Intel VMX model code now present in `aegishv-arch-x86`. The current repository still does not ship a bootable type-1 image, a wired guest run, or host hardware evidence.
+This document records the Intel VMX code now present in `aegishv-arch-x86` and the wired toy-guest path in `aegishv-type1-kernel`. The repository can build a bootable lab ISO when external Limine/xorriso inputs are supplied, but it does not contain reviewed Intel hardware evidence or a production guest runtime.
 
 ## Implemented Model Pieces
 
@@ -15,10 +15,14 @@ This document records the Intel VMX model code now present in `aegishv-arch-x86`
 - Explicit handlers for HLT, CPUID, RDMSR, WRMSR, CR access, EPT violation, and Monitor Trap Flag exits.
 - EPT mapping plans, EPT violation decoding, VPID validation, and INVEPT/VPID invalidation plans.
 - Execute and write trap lifecycle models with temporary write-window reporting and Monitor Trap Flag single-step fallback behavior.
+- True-control and EPT capability snapshots, complete minimal host/guest/control VMCS state, four-level guest paging, and four-level EPT materialization.
+- A bare-metal assembly trampoline that treats successful VMLAUNCH/VMRESUME as non-returning, saves all guest GPRs, and dispatches VM exits on a dedicated host stack.
 
-These pieces are library code with tests. Normal tests do not execute privileged VMX instructions. The type-1 kernel can now select a checked VMX runtime plan, apply the CR0/CR4 enable values, read the VMCS revision from `IA32_VMX_BASIC`, materialize the VMXON and VMCS pages, and run a VMXON/VMCLEAR/VMPTRLD/VMXOFF smoke cycle before halting. VMCS field writes, VMLAUNCH, VMRESUME, guest execution, and hardware evidence are not wired into the boot image yet.
+Normal tests do not execute privileged VMX instructions. On a VMX-capable boot, the type-1 kernel performs the checked VMXON/VMCS-load cycle, constructs an isolated eight-byte guest (`mov eax, 0; cpuid; hlt`), writes the complete VMCS, and calls the assembly VMLAUNCH path. The CPUID exit proves initial entry; the subsequent HLT exit proves VMRESUME. Any other exit or VM-entry/resume failure is terminal and emits a failure marker.
 
-The boot path copies a bounded Limine memory map and allocates VMXON and VMCS only from `USABLE` pages between 1 MiB and 4 GiB. Bootloader-reclaimable memory is deliberately excluded because it can still contain Limine responses and active bootloader page tables.
+The boot path copies a bounded Limine memory map and allocates all twelve VMX and toy-guest pages only from `USABLE` memory between 1 MiB and 4 GiB. Bootloader-reclaimable memory is deliberately excluded because it can still contain Limine responses and active bootloader page tables.
+
+The live path remains BSP-only and lacks interrupts, timers, devices, XSAVE state, general guest loading, and hardware qualification. A source build or model test is not VMX execution evidence; use the strict full marker chain described in `TYPE1_BOOT_BOUNDARY.md` on a reviewed nested-VMX or bare-metal host.
 
 ## Required Exit Coverage
 
