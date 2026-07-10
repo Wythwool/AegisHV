@@ -18,7 +18,9 @@ pub use toy_guest::{
     TYPE1_TOY_DEADLINE_FALLBACK_RIP, TYPE1_TOY_DEADLINE_FALLBACK_TSC_TICKS,
     TYPE1_TOY_DEADLINE_PROBE_RIPS, TYPE1_TOY_GUEST_PML4_GPA, TYPE1_TOY_GUEST_RIP,
     TYPE1_TOY_GUEST_RSP, TYPE1_TOY_HLT_RIP, TYPE1_TOY_IO_BITMAP_B_RIP, TYPE1_TOY_IO_RIP,
-    TYPE1_TOY_RDMSR_INDEX, TYPE1_TOY_RDMSR_RIP, TYPE1_TOY_STACK_GPA,
+    TYPE1_TOY_PAT_INDEX, TYPE1_TOY_PAT_MISMATCH_HLT_RIP, TYPE1_TOY_PAT_RDMSR_RIP,
+    TYPE1_TOY_RDMSR_INDEX, TYPE1_TOY_RDMSR_RIP, TYPE1_TOY_SIMD_GUARD_RIP, TYPE1_TOY_STACK_GPA,
+    TYPE1_TOY_X87_GUARD_RIP,
 };
 
 use aegishv_arch_x86::svm::features::EferValue;
@@ -61,12 +63,19 @@ pub const SERIAL_VMX_GUEST_IO_EXIT_OK_MARKER: &str = "aegishv:type1:guest-io-exi
 pub const SERIAL_VMX_GUEST_IO_B_EXIT_OK_MARKER: &str = "aegishv:type1:guest-io-b-exit-ok";
 pub const SERIAL_VMX_GUEST_CPUID_EXIT_OK_MARKER: &str = "aegishv:type1:guest-cpuid-exit-ok";
 pub const SERIAL_VMX_GUEST_RDMSR_EXIT_OK_MARKER: &str = "aegishv:type1:guest-rdmsr-exit-ok";
+pub const SERIAL_VMX_GUEST_PAT_STATE_OK_MARKER: &str = "aegishv:type1:guest-pat-state-ok";
+pub const SERIAL_VMX_GUEST_NM_X87_EXIT_OK_MARKER: &str = "aegishv:type1:guest-nm-x87-exit-ok";
+pub const SERIAL_VMX_GUEST_NM_SIMD_EXIT_OK_MARKER: &str = "aegishv:type1:guest-nm-simd-exit-ok";
 pub const SERIAL_VMX_GUEST_HLT_EXIT_OK_MARKER: &str = "aegishv:type1:guest-hlt-exit-ok";
 pub const SERIAL_VMX_GUEST_CONFIG_OK_MARKER: &str = "aegishv:type1:guest-config-ok";
 pub const SERIAL_VMX_GUEST_ENTRY_ERROR_MARKER: &str = "aegishv:type1:guest-entry-error";
 pub const SERIAL_VMX_GUEST_EXIT_ERROR_MARKER: &str = "aegishv:type1:guest-exit-error";
 pub const SERIAL_VMX_GUEST_RESUME_ERROR_MARKER: &str = "aegishv:type1:guest-resume-error";
 pub const SERIAL_VMX_GUEST_TIMEOUT_MARKER: &str = "aegishv:type1:guest-timeout";
+pub const SERIAL_VMX_GUEST_PAT_STATE_ERROR_MARKER: &str = "aegishv:type1:guest-pat-state-error";
+pub const SERIAL_VMX_GUEST_NM_X87_EXIT_ERROR_MARKER: &str = "aegishv:type1:guest-nm-x87-exit-error";
+pub const SERIAL_VMX_GUEST_NM_SIMD_EXIT_ERROR_MARKER: &str =
+    "aegishv:type1:guest-nm-simd-exit-error";
 pub const SERIAL_VMX_GUEST_RUN_OK_MARKER: &str = "aegishv:type1:guest-run-ok";
 pub const SERIAL_VMX_CPU_SIGNATURE_PREFIX: &str = "aegishv:type1:vmx-cpu-signature=0x";
 pub const SERIAL_VMX_TIMER_RATE_PREFIX: &str = "aegishv:type1:vmx-timer-rate=0x";
@@ -118,6 +127,7 @@ pub const IA32_VMX_CR0_FIXED1_MSR: u32 = 0x0000_0487;
 pub const IA32_VMX_CR4_FIXED0_MSR: u32 = 0x0000_0488;
 pub const IA32_VMX_CR4_FIXED1_MSR: u32 = 0x0000_0489;
 pub const IA32_VMX_BASIC_MSR: u32 = 0x0000_0480;
+pub const IA32_PAT_MSR: u32 = 0x0000_0277;
 pub const IA32_EFER_MSR: u32 = 0xc000_0080;
 pub const TYPE1_CR4_VMXE: u64 = 1 << 13;
 pub const TYPE1_VMX_BASIC_REVISION_MASK: u64 = 0x7fff_ffff;
@@ -1256,10 +1266,18 @@ mod tests {
             SERIAL_VMX_GUEST_CONFIG_OK_MARKER,
             SERIAL_VMX_GUEST_PREEMPT_EXIT_OK_MARKER,
             SERIAL_VMX_GUEST_IO_EXIT_OK_MARKER,
+            SERIAL_VMX_GUEST_IO_B_EXIT_OK_MARKER,
             SERIAL_VMX_GUEST_CPUID_EXIT_OK_MARKER,
+            SERIAL_VMX_GUEST_RDMSR_EXIT_OK_MARKER,
+            SERIAL_VMX_GUEST_PAT_STATE_OK_MARKER,
+            SERIAL_VMX_GUEST_NM_X87_EXIT_OK_MARKER,
+            SERIAL_VMX_GUEST_NM_SIMD_EXIT_OK_MARKER,
             SERIAL_VMX_GUEST_HLT_EXIT_OK_MARKER,
             SERIAL_VMX_GUEST_RUN_OK_MARKER,
             SERIAL_VMX_GUEST_TIMEOUT_MARKER,
+            SERIAL_VMX_GUEST_PAT_STATE_ERROR_MARKER,
+            SERIAL_VMX_GUEST_NM_X87_EXIT_ERROR_MARKER,
+            SERIAL_VMX_GUEST_NM_SIMD_EXIT_ERROR_MARKER,
         ] {
             assert!(marker_line(marker, &mut out).is_some());
         }

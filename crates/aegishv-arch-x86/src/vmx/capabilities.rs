@@ -22,6 +22,16 @@ pub const IA32_VMX_TRUE_EXIT_CTLS_MSR: u32 = 0x48f;
 pub const IA32_VMX_TRUE_ENTRY_CTLS_MSR: u32 = 0x490;
 
 pub const VMX_BASIC_TRUE_CONTROLS: u64 = 1 << 55;
+pub const CPUID_LEAF1_EDX_FPU: u32 = 1 << 0;
+pub const CPUID_LEAF1_EDX_PAT: u32 = 1 << 16;
+pub const CPUID_LEAF1_EDX_FXSR: u32 = 1 << 24;
+pub const CPUID_LEAF1_EDX_SSE: u32 = 1 << 25;
+pub const CPUID_LEAF1_EDX_SSE2: u32 = 1 << 26;
+pub const VMX_TOY_REQUIRED_CPUID_LEAF1_EDX: u32 = CPUID_LEAF1_EDX_FPU
+    | CPUID_LEAF1_EDX_PAT
+    | CPUID_LEAF1_EDX_FXSR
+    | CPUID_LEAF1_EDX_SSE
+    | CPUID_LEAF1_EDX_SSE2;
 pub const VMX_MISC_PREEMPTION_TIMER_RATE_MASK: u64 = 0x1f;
 pub const VMX_TOY_GUEST_BUDGET_TSC_TICKS: u64 = 1 << 24;
 const VMX_PREEMPTION_TIMER_MIN_RELOAD: u64 = 2;
@@ -49,6 +59,7 @@ const VMX_REGION_PAGE_SIZE: u64 = 4096;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct VmxCapabilitySnapshot {
     pub processor_signature: u32,
+    pub cpuid_leaf1_edx: u32,
     pub basic: u64,
     pub misc: u64,
     pub pin_based: u64,
@@ -133,6 +144,14 @@ impl VmxCapabilitySnapshot {
 
     pub fn prepare_toy_guest(self) -> Result<VmxToyCapabilities, VmxError> {
         self.validate_basic()?;
+        if self.cpuid_leaf1_edx & VMX_TOY_REQUIRED_CPUID_LEAF1_EDX
+            != VMX_TOY_REQUIRED_CPUID_LEAF1_EDX
+        {
+            return Err(VmxError::new(
+                VmxErrorKind::MissingCpuidBit,
+                "toy VMX PAT and FPU guards require FPU, PAT, FXSR, SSE, and SSE2",
+            ));
+        }
         if VmxPreemptionTimer::processor_is_known_broken(self.processor_signature) {
             return Err(VmxError::new(
                 VmxErrorKind::UnsupportedCapability,
@@ -204,14 +223,16 @@ impl VmxCapabilitySnapshot {
 mod tests {
     use super::*;
     use crate::vmx::controls::{
-        ENTRY_IA32E_MODE_GUEST, PRIMARY_HLT_EXITING, PRIMARY_UNCONDITIONAL_IO_EXITING,
-        PRIMARY_USE_IO_BITMAPS, PRIMARY_USE_MSR_BITMAPS, SECONDARY_ENABLE_EPT,
+        ENTRY_IA32E_MODE_GUEST, ENTRY_LOAD_IA32_PAT, EXIT_LOAD_IA32_PAT, EXIT_SAVE_IA32_PAT,
+        PRIMARY_HLT_EXITING, PRIMARY_UNCONDITIONAL_IO_EXITING, PRIMARY_USE_IO_BITMAPS,
+        PRIMARY_USE_MSR_BITMAPS, SECONDARY_ENABLE_EPT,
     };
     use crate::vmx::ept::{EPT_VPID_CAP_MEMORY_TYPE_WB, EPT_VPID_CAP_PAGE_WALK_LENGTH_4};
 
     fn permissive_snapshot() -> VmxCapabilitySnapshot {
         VmxCapabilitySnapshot {
             processor_signature: 0x0009_06e9,
+            cpuid_leaf1_edx: VMX_TOY_REQUIRED_CPUID_LEAF1_EDX,
             basic: (4096 << VMX_BASIC_VMCS_REGION_SIZE_SHIFT)
                 | (VMX_MEMORY_TYPE_WRITE_BACK << VMX_BASIC_MEMORY_TYPE_SHIFT)
                 | VMX_BASIC_TRUE_CONTROLS
@@ -253,6 +274,9 @@ mod tests {
         );
         assert_ne!(prepared.controls.secondary & SECONDARY_ENABLE_EPT, 0);
         assert_ne!(prepared.controls.entry & ENTRY_IA32E_MODE_GUEST, 0);
+        assert_ne!(prepared.controls.entry & ENTRY_LOAD_IA32_PAT, 0);
+        assert_ne!(prepared.controls.exit & EXIT_SAVE_IA32_PAT, 0);
+        assert_ne!(prepared.controls.exit & EXIT_LOAD_IA32_PAT, 0);
         assert!(prepared.ept.supports_4_level_walk());
         assert_eq!(prepared.preemption_timer.rate_shift, 5);
         assert_eq!(prepared.preemption_timer.reload_value, 1 << 19);
@@ -261,6 +285,25 @@ mod tests {
             VMX_TOY_GUEST_BUDGET_TSC_TICKS
         );
         assert_eq!(prepared.cr4_fixed.fixed0, 0x2020);
+    }
+
+    #[test]
+    fn snapshot_rejects_each_missing_pat_or_fpu_feature() {
+        for bit in [
+            CPUID_LEAF1_EDX_FPU,
+            CPUID_LEAF1_EDX_PAT,
+            CPUID_LEAF1_EDX_FXSR,
+            CPUID_LEAF1_EDX_SSE,
+            CPUID_LEAF1_EDX_SSE2,
+        ] {
+            let mut snapshot = permissive_snapshot();
+            snapshot.cpuid_leaf1_edx &= !bit;
+
+            assert_eq!(
+                snapshot.prepare_toy_guest().unwrap_err().kind,
+                VmxErrorKind::MissingCpuidBit
+            );
+        }
     }
 
     #[test]
@@ -298,6 +341,22 @@ mod tests {
 
         let mut snapshot = permissive_snapshot();
         snapshot.primary &= !(u64::from(PRIMARY_USE_MSR_BITMAPS) << 32);
+        assert_eq!(
+            snapshot.prepare_toy_guest().unwrap_err().kind,
+            VmxErrorKind::InvalidControlBits
+        );
+
+        for bit in [EXIT_SAVE_IA32_PAT, EXIT_LOAD_IA32_PAT] {
+            let mut snapshot = permissive_snapshot();
+            snapshot.exit &= !(u64::from(bit) << 32);
+            assert_eq!(
+                snapshot.prepare_toy_guest().unwrap_err().kind,
+                VmxErrorKind::InvalidControlBits
+            );
+        }
+
+        let mut snapshot = permissive_snapshot();
+        snapshot.entry &= !(u64::from(ENTRY_LOAD_IA32_PAT) << 32);
         assert_eq!(
             snapshot.prepare_toy_guest().unwrap_err().kind,
             VmxErrorKind::InvalidControlBits

@@ -1,10 +1,11 @@
 use aegishv_hypervisor_core::ids::{GuestPhysical, GuestVirtual, HostPhysical};
 
 use super::controls::{
-    VmxControlFields, ENTRY_IA32E_MODE_GUEST, ENTRY_LOAD_IA32_EFER, EXIT_HOST_ADDRESS_SPACE_SIZE,
-    EXIT_LOAD_IA32_EFER, EXIT_SAVE_IA32_EFER, PIN_BASED_NMI_EXITING,
-    PIN_BASED_VMX_PREEMPTION_TIMER, PRIMARY_ACTIVATE_SECONDARY_CONTROLS, PRIMARY_HLT_EXITING,
-    PRIMARY_USE_IO_BITMAPS, PRIMARY_USE_MSR_BITMAPS, SECONDARY_ENABLE_EPT, SECONDARY_ENABLE_VPID,
+    VmxControlFields, ENTRY_IA32E_MODE_GUEST, ENTRY_LOAD_IA32_EFER, ENTRY_LOAD_IA32_PAT,
+    EXIT_HOST_ADDRESS_SPACE_SIZE, EXIT_LOAD_IA32_EFER, EXIT_LOAD_IA32_PAT, EXIT_SAVE_IA32_EFER,
+    EXIT_SAVE_IA32_PAT, PIN_BASED_NMI_EXITING, PIN_BASED_VMX_PREEMPTION_TIMER,
+    PRIMARY_ACTIVATE_SECONDARY_CONTROLS, PRIMARY_HLT_EXITING, PRIMARY_USE_IO_BITMAPS,
+    PRIMARY_USE_MSR_BITMAPS, SECONDARY_ENABLE_EPT, SECONDARY_ENABLE_VPID,
 };
 use super::ept::EptPointer;
 use super::features::{
@@ -14,14 +15,67 @@ use super::instructions::VmxInstructionExecutor;
 use super::vmcs::VmcsField;
 
 pub const VMX_CR0_PROTECTED_MODE_ENABLE: u64 = 1 << 0;
+pub const VMX_CR0_MONITOR_COPROCESSOR: u64 = 1 << 1;
+pub const VMX_CR0_EMULATION: u64 = 1 << 2;
+pub const VMX_CR0_TASK_SWITCHED: u64 = 1 << 3;
 pub const VMX_CR0_NUMERIC_ERROR: u64 = 1 << 5;
 pub const VMX_CR0_PAGING: u64 = 1 << 31;
 pub const VMX_CR4_PAE: u64 = 1 << 5;
+pub const VMX_CR4_OSFXSR: u64 = 1 << 9;
 pub const VMX_CR4_VMXE: u64 = 1 << 13;
 pub const VMX_EFER_LME: u64 = 1 << 8;
 pub const VMX_EFER_LMA: u64 = 1 << 10;
 pub const VMX_INTERCEPTION_BITMAP_PAGE_SIZE: u64 = 4096;
 pub const VMX_INTERCEPTION_BITMAP_MAX_PHYSICAL_EXCLUSIVE: u64 = 1_u64 << 32;
+pub const VMX_TOY_EXCEPTION_BITMAP: u32 = u32::MAX;
+pub const VMX_TOY_GUEST_PAT_RAW: u64 = 0x0006_0705_0401_0006;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct VmxPat(u64);
+
+impl VmxPat {
+    pub const fn new(raw: u64) -> Result<Self, VmxError> {
+        let mut remaining = raw;
+        let mut index = 0;
+        while index < 8 {
+            match remaining as u8 {
+                0 | 1 | 4 | 5 | 6 | 7 => {}
+                _ => {
+                    return Err(VmxError::new(
+                        VmxErrorKind::InvalidVmcsField,
+                        "each IA32_PAT entry must encode UC, WC, WT, WP, WB, or UC-",
+                    ));
+                }
+            }
+            remaining >>= 8;
+            index += 1;
+        }
+        Ok(Self(raw))
+    }
+
+    pub const fn toy_guest() -> Self {
+        Self(VMX_TOY_GUEST_PAT_RAW)
+    }
+
+    pub const fn raw(self) -> u64 {
+        self.0
+    }
+
+    pub fn validate_owned_host_mappings(self) -> Result<Self, VmxError> {
+        self.validate()?;
+        if self.0 as u8 != 6 {
+            return Err(VmxError::new(
+                VmxErrorKind::InvalidVmcsField,
+                "owned host mappings require write-back in IA32_PAT entry zero",
+            ));
+        }
+        Ok(self)
+    }
+
+    fn validate(self) -> Result<Self, VmxError> {
+        Self::new(self.0)
+    }
+}
 
 const SEGMENT_ACCESS_RIGHTS_RESERVED: u32 = 0xfffe_0f00;
 const SEGMENT_ACCESS_RIGHTS_PRESENT: u32 = 1 << 7;
@@ -167,6 +221,7 @@ pub struct VmcsHostState64 {
     pub sysenter_cs: u32,
     pub sysenter_esp: u64,
     pub sysenter_eip: u64,
+    pub pat: VmxPat,
     pub efer: u64,
     pub rsp: u64,
     pub rip: u64,
@@ -175,6 +230,7 @@ pub struct VmcsHostState64 {
 impl VmcsHostState64 {
     pub fn validate(self) -> Result<Self, VmxError> {
         self.selectors.validate()?;
+        self.pat.validate()?;
         if self.cr0 & (VMX_CR0_PROTECTED_MODE_ENABLE | VMX_CR0_PAGING)
             != (VMX_CR0_PROTECTED_MODE_ENABLE | VMX_CR0_PAGING)
             || self.cr4 & (VMX_CR4_PAE | VMX_CR4_VMXE) != (VMX_CR4_PAE | VMX_CR4_VMXE)
@@ -241,6 +297,7 @@ impl VmcsHostState64 {
             )?;
             executor.vmwrite(VmcsField::HOST_IA32_SYSENTER_ESP.raw(), self.sysenter_esp)?;
             executor.vmwrite(VmcsField::HOST_IA32_SYSENTER_EIP.raw(), self.sysenter_eip)?;
+            executor.vmwrite(VmcsField::HOST_IA32_PAT.raw(), self.pat.raw())?;
             executor.vmwrite(VmcsField::HOST_IA32_EFER.raw(), self.efer)?;
             executor.vmwrite(VmcsField::HOST_RSP.raw(), self.rsp)?;
             executor.vmwrite(VmcsField::HOST_RIP.raw(), self.rip)?;
@@ -315,6 +372,7 @@ pub struct VmcsGuestState64 {
     pub sysenter_cs: u32,
     pub sysenter_esp: u64,
     pub sysenter_eip: u64,
+    pub pat: VmxPat,
     pub efer: u64,
 }
 
@@ -328,6 +386,8 @@ impl VmcsGuestState64 {
     ) -> Result<Self, VmxError> {
         let cr0 = validate_control_register(
             VMX_CR0_PROTECTED_MODE_ENABLE
+                | VMX_CR0_MONITOR_COPROCESSOR
+                | VMX_CR0_TASK_SWITCHED
                 | VMX_CR0_NUMERIC_ERROR
                 | VMX_CR0_PAGING
                 | cr0_fixed.fixed0,
@@ -335,7 +395,7 @@ impl VmcsGuestState64 {
             "toy guest CR0 cannot satisfy the CPU's VMX fixed bits",
         )?;
         let cr4 = validate_control_register(
-            VMX_CR4_PAE | VMX_CR4_VMXE | cr4_fixed.fixed0,
+            VMX_CR4_PAE | VMX_CR4_OSFXSR | VMX_CR4_VMXE | cr4_fixed.fixed0,
             cr4_fixed,
             "toy guest CR4 cannot satisfy the CPU's VMX fixed bits",
         )?;
@@ -357,12 +417,14 @@ impl VmcsGuestState64 {
             sysenter_cs: 0,
             sysenter_esp: 0,
             sysenter_eip: 0,
+            pat: VmxPat::toy_guest(),
             efer: VMX_EFER_LME | VMX_EFER_LMA,
         };
         state.validate()
     }
 
     pub fn validate(self) -> Result<Self, VmxError> {
+        self.pat.validate()?;
         if self.cr0 & (VMX_CR0_PROTECTED_MODE_ENABLE | VMX_CR0_PAGING)
             != (VMX_CR0_PROTECTED_MODE_ENABLE | VMX_CR0_PAGING)
             || self.cr0 & VMX_CR0_NUMERIC_ERROR == 0
@@ -513,6 +575,7 @@ impl VmcsGuestState64 {
             )?;
             executor.vmwrite(VmcsField::GUEST_IA32_SYSENTER_ESP.raw(), self.sysenter_esp)?;
             executor.vmwrite(VmcsField::GUEST_IA32_SYSENTER_EIP.raw(), self.sysenter_eip)?;
+            executor.vmwrite(VmcsField::GUEST_IA32_PAT.raw(), self.pat.raw())?;
             executor.vmwrite(VmcsField::GUEST_IA32_EFER.raw(), self.efer)?;
             executor.vmwrite(VmcsField::VMCS_LINK_POINTER.raw(), u64::MAX)?;
         }
@@ -580,6 +643,7 @@ pub struct VmcsExecutionState {
     pub ept_pointer: EptPointer,
     pub interception_bitmaps: VmcsInterceptionBitmaps,
     pub preemption_timer_value: u32,
+    pub exception_bitmap: u32,
     pub cr0_guest_host_mask: u64,
     pub cr4_guest_host_mask: u64,
     pub cr0_read_shadow: u64,
@@ -600,12 +664,20 @@ impl VmcsExecutionState {
             ept_pointer,
             interception_bitmaps,
             preemption_timer_value: 0,
+            exception_bitmap: VMX_TOY_EXCEPTION_BITMAP,
             cr0_guest_host_mask: cr0_fixed.fixed0
                 | !cr0_fixed.fixed1
                 | VMX_CR0_PROTECTED_MODE_ENABLE
+                | VMX_CR0_MONITOR_COPROCESSOR
+                | VMX_CR0_EMULATION
+                | VMX_CR0_TASK_SWITCHED
                 | VMX_CR0_NUMERIC_ERROR
                 | VMX_CR0_PAGING,
-            cr4_guest_host_mask: cr4_fixed.fixed0 | !cr4_fixed.fixed1 | VMX_CR4_PAE | VMX_CR4_VMXE,
+            cr4_guest_host_mask: cr4_fixed.fixed0
+                | !cr4_fixed.fixed1
+                | VMX_CR4_PAE
+                | VMX_CR4_OSFXSR
+                | VMX_CR4_VMXE,
             cr0_read_shadow: guest.cr0,
             cr4_read_shadow: guest.cr4 & !VMX_CR4_VMXE,
         };
@@ -613,6 +685,23 @@ impl VmcsExecutionState {
     }
 
     pub fn validate(self, guest: VmcsGuestState64) -> Result<Self, VmxError> {
+        guest.validate()?;
+        if guest.pat != VmxPat::toy_guest() {
+            return Err(VmxError::new(
+                VmxErrorKind::InvalidVmcsField,
+                "isolated toy guest must use the deliberate IA32_PAT profile",
+            ));
+        }
+        if guest.cr0 & (VMX_CR0_MONITOR_COPROCESSOR | VMX_CR0_TASK_SWITCHED)
+            != (VMX_CR0_MONITOR_COPROCESSOR | VMX_CR0_TASK_SWITCHED)
+            || guest.cr0 & VMX_CR0_EMULATION != 0
+            || guest.cr4 & VMX_CR4_OSFXSR == 0
+        {
+            return Err(VmxError::new(
+                VmxErrorKind::InvalidGuestState,
+                "isolated toy guest requires the fixed FPU/SIMD guard state",
+            ));
+        }
         self.interception_bitmaps.validate()?;
         self.validate_interception_controls()?;
         if self.controls.pin_based & PIN_BASED_NMI_EXITING == 0
@@ -622,12 +711,16 @@ impl VmcsExecutionState {
             || self.controls.secondary & SECONDARY_ENABLE_EPT == 0
             || self.controls.secondary & SECONDARY_ENABLE_VPID != 0
             || self.controls.exit & EXIT_HOST_ADDRESS_SPACE_SIZE == 0
+            || self.controls.exit & EXIT_SAVE_IA32_PAT == 0
+            || self.controls.exit & EXIT_LOAD_IA32_PAT == 0
             || self.controls.exit & EXIT_SAVE_IA32_EFER == 0
             || self.controls.exit & EXIT_LOAD_IA32_EFER == 0
             || self.controls.entry & ENTRY_IA32E_MODE_GUEST == 0
+            || self.controls.entry & ENTRY_LOAD_IA32_PAT == 0
             || self.controls.entry & ENTRY_LOAD_IA32_EFER == 0
             || self.ept_pointer.root().get() == 0
             || self.preemption_timer_value != 0
+            || self.exception_bitmap != VMX_TOY_EXCEPTION_BITMAP
         {
             return Err(VmxError::new(
                 VmxErrorKind::InvalidControlBits,
@@ -635,10 +728,20 @@ impl VmcsExecutionState {
             ));
         }
         if self.cr0_guest_host_mask
-            & (VMX_CR0_PROTECTED_MODE_ENABLE | VMX_CR0_NUMERIC_ERROR | VMX_CR0_PAGING)
-            != (VMX_CR0_PROTECTED_MODE_ENABLE | VMX_CR0_NUMERIC_ERROR | VMX_CR0_PAGING)
-            || self.cr4_guest_host_mask & (VMX_CR4_PAE | VMX_CR4_VMXE)
-                != (VMX_CR4_PAE | VMX_CR4_VMXE)
+            & (VMX_CR0_PROTECTED_MODE_ENABLE
+                | VMX_CR0_MONITOR_COPROCESSOR
+                | VMX_CR0_EMULATION
+                | VMX_CR0_TASK_SWITCHED
+                | VMX_CR0_NUMERIC_ERROR
+                | VMX_CR0_PAGING)
+            != (VMX_CR0_PROTECTED_MODE_ENABLE
+                | VMX_CR0_MONITOR_COPROCESSOR
+                | VMX_CR0_EMULATION
+                | VMX_CR0_TASK_SWITCHED
+                | VMX_CR0_NUMERIC_ERROR
+                | VMX_CR0_PAGING)
+            || self.cr4_guest_host_mask & (VMX_CR4_PAE | VMX_CR4_OSFXSR | VMX_CR4_VMXE)
+                != (VMX_CR4_PAE | VMX_CR4_OSFXSR | VMX_CR4_VMXE)
             || self.cr0_read_shadow != guest.cr0
             || self.cr4_read_shadow != guest.cr4 & !VMX_CR4_VMXE
         {
@@ -710,7 +813,10 @@ impl VmcsExecutionState {
                 VmcsField::VMX_PREEMPTION_TIMER_VALUE.raw(),
                 self.preemption_timer_value.into(),
             )?;
-            executor.vmwrite(VmcsField::EXCEPTION_BITMAP.raw(), u32::MAX.into())?;
+            executor.vmwrite(
+                VmcsField::EXCEPTION_BITMAP.raw(),
+                self.exception_bitmap.into(),
+            )?;
             executor.vmwrite(VmcsField::PAGE_FAULT_ERROR_CODE_MASK.raw(), 0)?;
             executor.vmwrite(VmcsField::PAGE_FAULT_ERROR_CODE_MATCH.raw(), 0)?;
             executor.vmwrite(VmcsField::CR3_TARGET_COUNT.raw(), 0)?;
@@ -749,9 +855,19 @@ impl VmcsExecutionState {
         self.validate_interception_controls()?;
         let expected = [
             (
+                VmcsField::PIN_BASED_CONTROLS,
+                u64::from(self.controls.pin_based),
+            ),
+            (
                 VmcsField::PRIMARY_PROCESSOR_CONTROLS,
                 u64::from(self.controls.primary),
             ),
+            (
+                VmcsField::SECONDARY_PROCESSOR_CONTROLS,
+                u64::from(self.controls.secondary),
+            ),
+            (VmcsField::EXIT_CONTROLS, u64::from(self.controls.exit)),
+            (VmcsField::ENTRY_CONTROLS, u64::from(self.controls.entry)),
             (
                 VmcsField::IO_BITMAP_A,
                 self.interception_bitmaps.io_bitmap_a().get(),
@@ -764,6 +880,16 @@ impl VmcsExecutionState {
                 VmcsField::MSR_BITMAP,
                 self.interception_bitmaps.msr_bitmap().get(),
             ),
+            (
+                VmcsField::EXCEPTION_BITMAP,
+                u64::from(self.exception_bitmap),
+            ),
+            (VmcsField::CR0_GUEST_HOST_MASK, self.cr0_guest_host_mask),
+            (VmcsField::CR4_GUEST_HOST_MASK, self.cr4_guest_host_mask),
+            (VmcsField::CR0_READ_SHADOW, self.cr0_read_shadow),
+            (VmcsField::CR4_READ_SHADOW, self.cr4_read_shadow),
+            (VmcsField::GUEST_CR0, self.cr0_read_shadow),
+            (VmcsField::GUEST_CR4, self.cr4_read_shadow | VMX_CR4_VMXE),
         ];
         for (field, value) in expected {
             // SAFETY: the caller established that this CPU owns a current VMCS
@@ -771,7 +897,7 @@ impl VmcsExecutionState {
             if unsafe { executor.vmread(field.raw())? } != value {
                 return Err(VmxError::new(
                     VmxErrorKind::InvalidVmcsField,
-                    "VMCS interception control readback differs from the validated state",
+                    "VMCS isolation-field readback differs from the validated state",
                 ));
             }
         }
@@ -789,7 +915,14 @@ pub struct MinimalVmcsConfiguration {
 impl MinimalVmcsConfiguration {
     pub fn validate(self) -> Result<Self, VmxError> {
         self.host.validate()?;
+        self.host.pat.validate_owned_host_mappings()?;
         self.guest.validate()?;
+        if self.guest.pat != VmxPat::toy_guest() || self.host.pat == self.guest.pat {
+            return Err(VmxError::new(
+                VmxErrorKind::InvalidVmcsField,
+                "toy guest PAT must use the deliberate profile and differ from host PAT",
+            ));
+        }
         self.execution.validate(self.guest)?;
         Ok(self)
     }
@@ -811,6 +944,35 @@ impl MinimalVmcsConfiguration {
             self.execution.write_to(self.guest, executor)?;
             self.guest.write_to(executor)?;
             self.host.write_to(executor)?;
+        }
+        Ok(())
+    }
+
+    /// Reads back every VMCS field required for the live PAT and FPU guards.
+    ///
+    /// # Safety
+    ///
+    /// The caller must own the loaded current VMCS on this CPU and must call
+    /// this only after this complete configuration was written to that VMCS.
+    pub unsafe fn verify_isolation_fields<E: VmxInstructionExecutor>(
+        self,
+        executor: &mut E,
+    ) -> Result<(), VmxError> {
+        self.validate()?;
+        // SAFETY: the caller guarantees that this configuration owns the
+        // current VMCS and was written before the readback.
+        unsafe { self.execution.verify_interception_fields(executor)? };
+        for (field, value) in [
+            (VmcsField::GUEST_IA32_PAT, self.guest.pat.raw()),
+            (VmcsField::HOST_IA32_PAT, self.host.pat.raw()),
+        ] {
+            // SAFETY: the caller established exclusive current-VMCS ownership.
+            if unsafe { executor.vmread(field.raw())? } != value {
+                return Err(VmxError::new(
+                    VmxErrorKind::InvalidVmcsField,
+                    "VMCS PAT readback differs from the validated configuration",
+                ));
+            }
         }
         Ok(())
     }
@@ -890,6 +1052,7 @@ mod tests {
             sysenter_cs: 0,
             sysenter_esp: 0,
             sysenter_eip: 0,
+            pat: VmxPat::new(0x0007_0406_0007_0406).unwrap(),
             efer: VMX_EFER_LME | VMX_EFER_LMA,
             rsp: 0xffff_8000_0000_4000,
             rip: 0xffff_8000_0000_5000,
@@ -956,6 +1119,10 @@ mod tests {
         assert_eq!(guest.segments.ss.access_rights, 0xc093);
         assert_eq!(guest.segments.ldtr.access_rights, 0x10000);
         assert_eq!(guest.segments.tr.access_rights, 0x008b);
+        assert_eq!(guest.pat, VmxPat::toy_guest());
+        assert_ne!(guest.cr0 & VMX_CR0_TASK_SWITCHED, 0);
+        assert_eq!(guest.cr0 & VMX_CR0_EMULATION, 0);
+        assert_ne!(guest.cr4 & VMX_CR4_OSFXSR, 0);
         assert!(guest.validate().is_ok());
     }
 
@@ -971,6 +1138,30 @@ mod tests {
     }
 
     #[test]
+    fn pat_validation_accepts_only_architectural_memory_types() {
+        assert_eq!(
+            VmxPat::new(VMX_TOY_GUEST_PAT_RAW).unwrap(),
+            VmxPat::toy_guest()
+        );
+        for byte in 0..8 {
+            let invalid = VMX_TOY_GUEST_PAT_RAW & !(0xff_u64 << (byte * 8)) | (2_u64 << (byte * 8));
+            assert_eq!(
+                VmxPat::new(invalid).unwrap_err().kind,
+                VmxErrorKind::InvalidVmcsField
+            );
+        }
+
+        assert_eq!(
+            VmxPat::new(0x0007_0406_0007_0400)
+                .unwrap()
+                .validate_owned_host_mappings()
+                .unwrap_err()
+                .kind,
+            VmxErrorKind::InvalidVmcsField
+        );
+    }
+
+    #[test]
     fn complete_configuration_writes_ept_and_required_state_once() {
         let mut executor = MockVmxInstructions::default();
 
@@ -980,6 +1171,18 @@ mod tests {
         assert_eq!(recorded(&executor, VmcsField::IO_BITMAP_A), Some(0xa000));
         assert_eq!(recorded(&executor, VmcsField::IO_BITMAP_B), Some(0xb000));
         assert_eq!(recorded(&executor, VmcsField::MSR_BITMAP), Some(0xc000));
+        assert_eq!(
+            recorded(&executor, VmcsField::GUEST_IA32_PAT),
+            Some(VMX_TOY_GUEST_PAT_RAW)
+        );
+        assert_eq!(
+            recorded(&executor, VmcsField::HOST_IA32_PAT),
+            Some(host().pat.raw())
+        );
+        assert_eq!(
+            recorded(&executor, VmcsField::EXCEPTION_BITMAP),
+            Some(u64::from(VMX_TOY_EXCEPTION_BITMAP))
+        );
         assert_eq!(
             recorded(&executor, VmcsField::VMX_PREEMPTION_TIMER_VALUE),
             Some(0)
@@ -1002,11 +1205,11 @@ mod tests {
         );
         assert_eq!(
             recorded(&executor, VmcsField::CR4_GUEST_HOST_MASK),
-            Some(VMX_CR4_PAE | VMX_CR4_VMXE)
+            Some(VMX_CR4_PAE | VMX_CR4_OSFXSR | VMX_CR4_VMXE)
         );
         assert_eq!(
             recorded(&executor, VmcsField::CR4_READ_SHADOW),
-            Some(VMX_CR4_PAE)
+            Some(VMX_CR4_PAE | VMX_CR4_OSFXSR)
         );
         assert_eq!(recorded(&executor, VmcsField::HOST_RIP), Some(host().rip));
         assert!(executor.write_count > 70);
@@ -1052,6 +1255,77 @@ mod tests {
             config.validate().unwrap_err().kind,
             VmxErrorKind::InvalidControlBits
         );
+
+        for (entry, exit) in [
+            (ENTRY_LOAD_IA32_PAT, 0),
+            (0, EXIT_SAVE_IA32_PAT),
+            (0, EXIT_LOAD_IA32_PAT),
+        ] {
+            let mut config = configuration();
+            config.execution.controls.entry &= !entry;
+            config.execution.controls.exit &= !exit;
+            assert_eq!(
+                config.validate().unwrap_err().kind,
+                VmxErrorKind::InvalidControlBits
+            );
+        }
+
+        let mut config = configuration();
+        config.execution.exception_bitmap &= !(1 << 7);
+        assert_eq!(
+            config.validate().unwrap_err().kind,
+            VmxErrorKind::InvalidControlBits
+        );
+    }
+
+    #[test]
+    fn configuration_rejects_mutated_pat_or_fpu_guard_state() {
+        let mut config = configuration();
+        config.guest.cr0 &= !VMX_CR0_TASK_SWITCHED;
+        assert_eq!(
+            config.validate().unwrap_err().kind,
+            VmxErrorKind::InvalidGuestState
+        );
+
+        let mut config = configuration();
+        config.guest.cr0 |= VMX_CR0_EMULATION;
+        assert_eq!(
+            config.validate().unwrap_err().kind,
+            VmxErrorKind::InvalidGuestState
+        );
+
+        let mut config = configuration();
+        config.guest.cr4 &= !VMX_CR4_OSFXSR;
+        assert_eq!(
+            config.validate().unwrap_err().kind,
+            VmxErrorKind::InvalidGuestState
+        );
+
+        let mut config = configuration();
+        config.host.pat = VmxPat::toy_guest();
+        assert_eq!(
+            config.validate().unwrap_err().kind,
+            VmxErrorKind::InvalidVmcsField
+        );
+
+        let mut config = configuration();
+        config.host.pat = VmxPat::new(0x0007_0406_0007_0400).unwrap();
+        assert_eq!(
+            config.validate().unwrap_err().kind,
+            VmxErrorKind::InvalidVmcsField
+        );
+    }
+
+    #[test]
+    fn generic_state_validation_does_not_impose_the_toy_isolation_profile() {
+        let mut generic_guest = guest();
+        generic_guest.cr0 &= !(VMX_CR0_MONITOR_COPROCESSOR | VMX_CR0_TASK_SWITCHED);
+        generic_guest.cr4 &= !VMX_CR4_OSFXSR;
+        assert!(generic_guest.validate().is_ok());
+
+        let mut generic_host = host();
+        generic_host.pat = VmxPat::new(0x0007_0406_0007_0400).unwrap();
+        assert!(generic_host.validate().is_ok());
     }
 
     #[test]
@@ -1072,14 +1346,14 @@ mod tests {
     }
 
     struct InterceptionReadback {
-        state: VmcsExecutionState,
+        configuration: MinimalVmcsConfiguration,
         corrupt_field: Option<u64>,
     }
 
     impl InterceptionReadback {
-        fn new(state: VmcsExecutionState) -> Self {
+        fn new(configuration: MinimalVmcsConfiguration) -> Self {
             Self {
-                state,
+                configuration,
                 corrupt_field: None,
             }
         }
@@ -1111,14 +1385,41 @@ mod tests {
         }
 
         unsafe fn vmread(&mut self, field: u64) -> Result<u64, VmxError> {
-            let expected = if field == VmcsField::PRIMARY_PROCESSOR_CONTROLS.raw() {
-                u64::from(self.state.controls.primary)
+            let state = self.configuration.execution;
+            let expected = if field == VmcsField::PIN_BASED_CONTROLS.raw() {
+                u64::from(state.controls.pin_based)
+            } else if field == VmcsField::PRIMARY_PROCESSOR_CONTROLS.raw() {
+                u64::from(state.controls.primary)
+            } else if field == VmcsField::SECONDARY_PROCESSOR_CONTROLS.raw() {
+                u64::from(state.controls.secondary)
+            } else if field == VmcsField::EXIT_CONTROLS.raw() {
+                u64::from(state.controls.exit)
+            } else if field == VmcsField::ENTRY_CONTROLS.raw() {
+                u64::from(state.controls.entry)
             } else if field == VmcsField::IO_BITMAP_A.raw() {
-                self.state.interception_bitmaps.io_bitmap_a().get()
+                state.interception_bitmaps.io_bitmap_a().get()
             } else if field == VmcsField::IO_BITMAP_B.raw() {
-                self.state.interception_bitmaps.io_bitmap_b().get()
+                state.interception_bitmaps.io_bitmap_b().get()
             } else if field == VmcsField::MSR_BITMAP.raw() {
-                self.state.interception_bitmaps.msr_bitmap().get()
+                state.interception_bitmaps.msr_bitmap().get()
+            } else if field == VmcsField::EXCEPTION_BITMAP.raw() {
+                u64::from(state.exception_bitmap)
+            } else if field == VmcsField::CR0_GUEST_HOST_MASK.raw() {
+                state.cr0_guest_host_mask
+            } else if field == VmcsField::CR4_GUEST_HOST_MASK.raw() {
+                state.cr4_guest_host_mask
+            } else if field == VmcsField::CR0_READ_SHADOW.raw() {
+                state.cr0_read_shadow
+            } else if field == VmcsField::CR4_READ_SHADOW.raw() {
+                state.cr4_read_shadow
+            } else if field == VmcsField::GUEST_CR0.raw() {
+                self.configuration.guest.cr0
+            } else if field == VmcsField::GUEST_CR4.raw() {
+                self.configuration.guest.cr4
+            } else if field == VmcsField::GUEST_IA32_PAT.raw() {
+                self.configuration.guest.pat.raw()
+            } else if field == VmcsField::HOST_IA32_PAT.raw() {
+                self.configuration.host.pat.raw()
             } else {
                 return Err(VmxError::new(
                     VmxErrorKind::InvalidVmcsField,
@@ -1139,13 +1440,13 @@ mod tests {
 
     #[test]
     fn interception_field_readback_is_exact_and_fails_closed() {
-        let state = configuration().execution;
-        let mut executor = InterceptionReadback::new(state);
-        unsafe { state.verify_interception_fields(&mut executor) }.unwrap();
+        let configuration = configuration();
+        let mut executor = InterceptionReadback::new(configuration);
+        unsafe { configuration.verify_isolation_fields(&mut executor) }.unwrap();
 
-        executor.corrupt_field = Some(VmcsField::IO_BITMAP_B.raw());
+        executor.corrupt_field = Some(VmcsField::HOST_IA32_PAT.raw());
         assert_eq!(
-            unsafe { state.verify_interception_fields(&mut executor) }
+            unsafe { configuration.verify_isolation_fields(&mut executor) }
                 .unwrap_err()
                 .kind,
             VmxErrorKind::InvalidVmcsField

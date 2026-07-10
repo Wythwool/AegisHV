@@ -31,16 +31,22 @@ pub const TYPE1_TOY_IO_RIP: u64 = TYPE1_TOY_CODE_GPA + 28;
 pub const TYPE1_TOY_IO_BITMAP_B_RIP: u64 = TYPE1_TOY_CODE_GPA + 34;
 pub const TYPE1_TOY_CPUID_RIP: u64 = TYPE1_TOY_CODE_GPA + 39;
 pub const TYPE1_TOY_RDMSR_RIP: u64 = TYPE1_TOY_CODE_GPA + 46;
-pub const TYPE1_TOY_HLT_RIP: u64 = TYPE1_TOY_CODE_GPA + 48;
+pub const TYPE1_TOY_PAT_RDMSR_RIP: u64 = TYPE1_TOY_CODE_GPA + 53;
+pub const TYPE1_TOY_X87_GUARD_RIP: u64 = TYPE1_TOY_CODE_GPA + 70;
+pub const TYPE1_TOY_SIMD_GUARD_RIP: u64 = TYPE1_TOY_CODE_GPA + 72;
+pub const TYPE1_TOY_HLT_RIP: u64 = TYPE1_TOY_CODE_GPA + 76;
+pub const TYPE1_TOY_PAT_MISMATCH_HLT_RIP: u64 = TYPE1_TOY_CODE_GPA + 77;
 pub const TYPE1_TOY_RDMSR_INDEX: u32 = aegishv_arch_x86::vmx::toy_exit::TOY_RDMSR_IA32_EFER;
+pub const TYPE1_TOY_PAT_INDEX: u32 = 0x0000_0277;
 pub const TYPE1_TOY_GUEST_RSP: u64 = TYPE1_TOY_STACK_GPA + 0xff0;
 pub const TYPE1_TOY_DEADLINE_FALLBACK_TSC_TICKS: u32 = 1 << 27;
 pub const TYPE1_TOY_DEADLINE_FALLBACK_ITERATIONS: u32 = 1 << 24;
-pub const TYPE1_TOY_CODE: [u8; 49] = [
+pub const TYPE1_TOY_CODE: [u8; 78] = [
     0x0f, 0x31, 0x89, 0xc1, 0x81, 0xc1, 0x00, 0x00, 0x00, 0x08, 0xbb, 0x00, 0x00, 0x00, 0x01, 0x0f,
     0x31, 0x29, 0xc8, 0x79, 0x04, 0xff, 0xcb, 0x75, 0xf6, 0xf4, 0xb0, b'A', 0xe6, 0xe9, 0x66, 0xba,
     0x00, 0x80, 0xee, 0x31, 0xc0, 0x31, 0xc9, 0x0f, 0xa2, 0xb9, 0x80, 0x00, 0x00, 0xc0, 0x0f, 0x32,
-    0xf4,
+    0xb9, 0x77, 0x02, 0x00, 0x00, 0x0f, 0x32, 0x3d, 0x06, 0x00, 0x01, 0x04, 0x75, 0x0f, 0x81, 0xfa,
+    0x05, 0x07, 0x06, 0x00, 0x75, 0x07, 0xd9, 0xd0, 0x66, 0x0f, 0x6f, 0xc0, 0xf4, 0xf4,
 ];
 
 const PAGE_SIZE: u64 = 4096;
@@ -48,7 +54,16 @@ const PAGE_ADDRESS_MASK: u64 = 0x000f_ffff_ffff_f000;
 const PAGE_PRESENT: u64 = 1 << 0;
 const PAGE_WRITABLE: u64 = 1 << 1;
 const BUILD_WRITE_COUNT: usize = 14;
-const VMX_INTERCEPTION_BITMAP: [u8; PAGE_SIZE as usize] = [0xff; PAGE_SIZE as usize];
+const MSR_BITMAP_PAT_READ_BYTE: usize = (TYPE1_TOY_PAT_INDEX as usize) / 8;
+const MSR_BITMAP_PAT_READ_BIT: u8 = 1 << (TYPE1_TOY_PAT_INDEX % 8);
+const VMX_IO_INTERCEPTION_BITMAP: [u8; PAGE_SIZE as usize] = [0xff; PAGE_SIZE as usize];
+const VMX_MSR_INTERCEPTION_BITMAP: [u8; PAGE_SIZE as usize] = build_msr_interception_bitmap();
+
+const fn build_msr_interception_bitmap() -> [u8; PAGE_SIZE as usize] {
+    let mut bitmap = [0xff; PAGE_SIZE as usize];
+    bitmap[MSR_BITMAP_PAT_READ_BYTE] &= !MSR_BITMAP_PAT_READ_BIT;
+    bitmap
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Type1ToyGuestError {
@@ -182,14 +197,18 @@ pub fn materialize_type1_toy_guest(
         scrub_pages(&pages, writer)?;
         return Err(Type1ToyGuestError::Core(error.kind));
     }
-    for page in plan.pages.interception_bitmaps() {
-        if let Err(error) = writer.write_bytes(page, 0, &VMX_INTERCEPTION_BITMAP) {
+    for (page, bitmap) in [
+        (plan.pages.io_bitmap_a, &VMX_IO_INTERCEPTION_BITMAP),
+        (plan.pages.io_bitmap_b, &VMX_IO_INTERCEPTION_BITMAP),
+        (plan.pages.msr_bitmap, &VMX_MSR_INTERCEPTION_BITMAP),
+    ] {
+        if let Err(error) = writer.write_bytes(page, 0, bitmap) {
             scrub_pages(&pages, writer)?;
             return Err(Type1ToyGuestError::Core(error.kind));
         }
     }
     for page in plan.pages.interception_bitmaps() {
-        for offset in 0..VMX_INTERCEPTION_BITMAP.len() {
+        for offset in 0..PAGE_SIZE as usize {
             let byte = match writer.read_u8(page, offset) {
                 Ok(byte) => byte,
                 Err(error) => {
@@ -197,7 +216,12 @@ pub fn materialize_type1_toy_guest(
                     return Err(Type1ToyGuestError::Core(error.kind));
                 }
             };
-            if byte != 0xff {
+            let expected = if page == plan.pages.msr_bitmap {
+                VMX_MSR_INTERCEPTION_BITMAP[offset]
+            } else {
+                VMX_IO_INTERCEPTION_BITMAP[offset]
+            };
+            if byte != expected {
                 scrub_pages(&pages, writer)?;
                 return Err(Type1ToyGuestError::BitmapVerificationFailed);
             }
@@ -330,9 +354,12 @@ mod tests {
                 0x0f, 0x31, 0x89, 0xc1, 0x81, 0xc1, 0x00, 0x00, 0x00, 0x08, 0xbb, 0x00, 0x00, 0x00,
                 0x01, 0x0f, 0x31, 0x29, 0xc8, 0x79, 0x04, 0xff, 0xcb, 0x75, 0xf6, 0xf4, 0xb0, b'A',
                 0xe6, 0xe9, 0x66, 0xba, 0x00, 0x80, 0xee, 0x31, 0xc0, 0x31, 0xc9, 0x0f, 0xa2, 0xb9,
-                0x80, 0x00, 0x00, 0xc0, 0x0f, 0x32, 0xf4
+                0x80, 0x00, 0x00, 0xc0, 0x0f, 0x32, 0xb9, 0x77, 0x02, 0x00, 0x00, 0x0f, 0x32, 0x3d,
+                0x06, 0x00, 0x01, 0x04, 0x75, 0x0f, 0x81, 0xfa, 0x05, 0x07, 0x06, 0x00, 0x75, 0x07,
+                0xd9, 0xd0, 0x66, 0x0f, 0x6f, 0xc0, 0xf4, 0xf4
             ]
         );
+        assert_eq!(TYPE1_TOY_CODE.len(), 78);
         assert_eq!(TYPE1_TOY_DEADLINE_FALLBACK_TSC_TICKS, 1 << 27);
         let encoded_fallback = u32::from_le_bytes(TYPE1_TOY_CODE[6..10].try_into().unwrap());
         assert_eq!(encoded_fallback, TYPE1_TOY_DEADLINE_FALLBACK_TSC_TICKS);
@@ -355,8 +382,27 @@ mod tests {
         assert_eq!(TYPE1_TOY_IO_BITMAP_B_RIP, TYPE1_TOY_GUEST_RIP + 34);
         assert_eq!(TYPE1_TOY_CPUID_RIP, TYPE1_TOY_GUEST_RIP + 39);
         assert_eq!(TYPE1_TOY_RDMSR_RIP, TYPE1_TOY_GUEST_RIP + 46);
-        assert_eq!(TYPE1_TOY_HLT_RIP, TYPE1_TOY_GUEST_RIP + 48);
+        assert_eq!(TYPE1_TOY_PAT_RDMSR_RIP, TYPE1_TOY_GUEST_RIP + 53);
+        assert_eq!(TYPE1_TOY_X87_GUARD_RIP, TYPE1_TOY_GUEST_RIP + 70);
+        assert_eq!(TYPE1_TOY_SIMD_GUARD_RIP, TYPE1_TOY_GUEST_RIP + 72);
+        assert_eq!(TYPE1_TOY_HLT_RIP, TYPE1_TOY_GUEST_RIP + 76);
+        assert_eq!(TYPE1_TOY_PAT_MISMATCH_HLT_RIP, TYPE1_TOY_GUEST_RIP + 77);
         assert_eq!(TYPE1_TOY_RDMSR_INDEX, 0xc000_0080);
+        assert_eq!(TYPE1_TOY_PAT_INDEX, 0x277);
+        assert_eq!(
+            u32::from_le_bytes(TYPE1_TOY_CODE[49..53].try_into().unwrap()),
+            TYPE1_TOY_PAT_INDEX
+        );
+        let pat_low = u32::from_le_bytes(TYPE1_TOY_CODE[56..60].try_into().unwrap());
+        let pat_high = u32::from_le_bytes(TYPE1_TOY_CODE[64..68].try_into().unwrap());
+        assert_eq!(
+            u64::from(pat_low) | (u64::from(pat_high) << 32),
+            aegishv_arch_x86::vmx::vmcs_config::VMX_TOY_GUEST_PAT_RAW
+        );
+        assert_eq!(TYPE1_TOY_CODE[60], 0x75);
+        assert_eq!(60 + 2 + TYPE1_TOY_CODE[61] as usize, 77);
+        assert_eq!(TYPE1_TOY_CODE[68], 0x75);
+        assert_eq!(68 + 2 + TYPE1_TOY_CODE[69] as usize, 77);
     }
 
     #[test]
@@ -376,7 +422,8 @@ mod tests {
         writes: usize,
         code: [u8; TYPE1_TOY_CODE.len()],
         bitmaps: [[u8; PAGE_SIZE as usize]; 3],
-        corrupt_read: Option<(HostPhysical, usize)>,
+        bitmap_reads: [usize; 3],
+        corrupt_read: Option<(HostPhysical, usize, u8)>,
     }
 
     impl RecordingWriter {
@@ -387,6 +434,7 @@ mod tests {
                 writes: 0,
                 code: [0; TYPE1_TOY_CODE.len()],
                 bitmaps: [[0; PAGE_SIZE as usize]; 3],
+                bitmap_reads: [0; 3],
                 corrupt_read: None,
             }
         }
@@ -478,20 +526,24 @@ mod tests {
         }
 
         fn read_u8(&mut self, page: HostPhysical, offset: usize) -> Result<u8, CoreError> {
-            if self.corrupt_read == Some((page, offset)) {
-                return Ok(0);
+            if let Some((corrupt_page, corrupt_offset, value)) = self.corrupt_read {
+                if (page, offset) == (corrupt_page, corrupt_offset) {
+                    return Ok(value);
+                }
             }
             let index = self.bitmap_index(page).ok_or(CoreError::new(
                 CoreErrorKind::InvalidAddress,
                 "test writer rejected byte source",
             ))?;
-            self.bitmaps[index]
+            let byte = self.bitmaps[index]
                 .get(offset)
                 .copied()
                 .ok_or(CoreError::new(
                     CoreErrorKind::InvalidArgument,
                     "test writer rejected byte offset",
-                ))
+                ))?;
+            self.bitmap_reads[index] += 1;
+            Ok(byte)
         }
     }
 
@@ -505,17 +557,44 @@ mod tests {
         assert!(writer.zeroed.iter().all(|value| *value));
         assert_eq!(writer.writes, BUILD_WRITE_COUNT);
         assert_eq!(writer.code, TYPE1_TOY_CODE);
-        assert!(writer
-            .bitmaps
-            .iter()
-            .all(|bitmap| bitmap.iter().all(|byte| *byte == 0xff)));
+        assert!(writer.bitmaps[0].iter().all(|byte| *byte == 0xff));
+        assert!(writer.bitmaps[1].iter().all(|byte| *byte == 0xff));
+        assert_eq!(writer.bitmaps[2], VMX_MSR_INTERCEPTION_BITMAP);
+        assert_eq!(writer.bitmap_reads, [PAGE_SIZE as usize; 3]);
+        assert_eq!(writer.bitmaps[2][0x4e], 0x7f);
+        assert_eq!(writer.bitmaps[2][0x410], 0xff);
+        assert_eq!(writer.bitmaps[2][0x84e], 0xff);
+        assert_eq!(
+            writer.bitmaps[2]
+                .iter()
+                .map(|byte| byte.count_zeros())
+                .sum::<u32>(),
+            1
+        );
     }
 
     #[test]
     fn materializer_scrubs_all_pages_after_bitmap_readback_mismatch() {
         let plan = Type1ToyGuestBuildPlan::new(pages(), capabilities()).unwrap();
         let mut writer = RecordingWriter::new(plan.pages);
-        writer.corrupt_read = Some((plan.pages.msr_bitmap, PAGE_SIZE as usize - 1));
+        writer.corrupt_read = Some((plan.pages.msr_bitmap, PAGE_SIZE as usize - 1, 0));
+
+        assert_eq!(
+            materialize_type1_toy_guest(&plan, &mut writer).unwrap_err(),
+            Type1ToyGuestError::BitmapVerificationFailed
+        );
+        assert_eq!(writer.code, [0; TYPE1_TOY_CODE.len()]);
+        assert!(writer
+            .bitmaps
+            .iter()
+            .all(|bitmap| bitmap.iter().all(|byte| *byte == 0)));
+    }
+
+    #[test]
+    fn materializer_rejects_a_trapped_pat_read_bit_on_readback() {
+        let plan = Type1ToyGuestBuildPlan::new(pages(), capabilities()).unwrap();
+        let mut writer = RecordingWriter::new(plan.pages);
+        writer.corrupt_read = Some((plan.pages.msr_bitmap, MSR_BITMAP_PAT_READ_BYTE, 0xff));
 
         assert_eq!(
             materialize_type1_toy_guest(&plan, &mut writer).unwrap_err(),

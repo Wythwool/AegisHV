@@ -34,9 +34,13 @@ const VMX_TOY_AWAITING_CPUID: u8 = 4;
 #[cfg(all(target_os = "none", target_arch = "x86_64"))]
 const VMX_TOY_AWAITING_RDMSR: u8 = 5;
 #[cfg(all(target_os = "none", target_arch = "x86_64"))]
-const VMX_TOY_AWAITING_HLT: u8 = 6;
+const VMX_TOY_AWAITING_X87_GUARD: u8 = 6;
 #[cfg(all(target_os = "none", target_arch = "x86_64"))]
-const VMX_TOY_COMPLETE: u8 = 7;
+const VMX_TOY_AWAITING_SIMD_GUARD: u8 = 7;
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+const VMX_TOY_AWAITING_HLT: u8 = 8;
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+const VMX_TOY_COMPLETE: u8 = 9;
 #[cfg(all(target_os = "none", target_arch = "x86_64"))]
 const VMX_TOY_FAILED: u8 = u8::MAX;
 
@@ -57,6 +61,12 @@ const X86_CPUID_ADDRESS_SIZE_LEAF: u32 = 0x8000_0008;
 static VMX_TOY_EXIT_STATE: AtomicU8 = AtomicU8::new(VMX_TOY_AWAITING_PREEMPTION);
 #[cfg(all(target_os = "none", target_arch = "x86_64"))]
 static VMX_TOY_PREEMPTION_RELOAD: AtomicU32 = AtomicU32::new(0);
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+static VMX_EXPECTED_HOST_PAT: AtomicU64 = AtomicU64::new(0);
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+static VMX_EXPECTED_GUEST_CR0: AtomicU64 = AtomicU64::new(0);
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+static VMX_EXPECTED_GUEST_CR4: AtomicU64 = AtomicU64::new(0);
 #[cfg(all(target_os = "none", target_arch = "x86_64"))]
 static VMX_LAST_INSTRUCTION_ERROR: AtomicU32 = AtomicU32::new(0);
 #[cfg(all(target_os = "none", target_arch = "x86_64"))]
@@ -1119,9 +1129,9 @@ unsafe fn read_vmx_capability_snapshot() -> Result<
     // SAFETY: CPUID has already selected the Intel VMX backend, making the
     // architectural IA32_VMX_BASIC capability MSR available on this CPU.
     let basic = unsafe { read_msr(IA32_VMX_BASIC_MSR) };
-    // SAFETY: CPUID leaf 1 is architectural on every x86-64 processor and the
-    // EAX signature is needed to reject documented broken VMX timers.
-    let processor_signature = unsafe { __cpuid_count(1, 0).eax };
+    // SAFETY: CPUID leaf 1 is architectural on every x86-64 processor. Its
+    // signature rejects broken VMX timers and EDX proves x87/SSE support.
+    let cpuid_leaf1 = unsafe { __cpuid_count(1, 0) };
     if !VmxCapabilitySnapshot::uses_true_controls(basic) {
         return Err(aegishv_arch_x86::vmx::VmxError::new(
             aegishv_arch_x86::vmx::VmxErrorKind::UnsupportedCapability,
@@ -1162,7 +1172,8 @@ unsafe fn read_vmx_capability_snapshot() -> Result<
         )
     };
     Ok(VmxCapabilitySnapshot {
-        processor_signature,
+        processor_signature: cpuid_leaf1.eax,
+        cpuid_leaf1_edx: cpuid_leaf1.edx,
         basic,
         misc,
         pin_based,
@@ -1214,7 +1225,9 @@ unsafe fn capture_vmx_host_state(
     cr0_fixed: aegishv_arch_x86::vmx::features::CrFixedBits,
     cr4_fixed: aegishv_arch_x86::vmx::features::CrFixedBits,
 ) -> Result<aegishv_arch_x86::vmx::vmcs_config::VmcsHostState64, aegishv_arch_x86::vmx::VmxError> {
-    use aegishv_arch_x86::vmx::vmcs_config::{VmcsHostSelectors, VmcsHostState64};
+    use aegishv_arch_x86::vmx::vmcs_config::{
+        VmcsHostSelectors, VmcsHostState64, VmxPat, VMX_TOY_GUEST_PAT_RAW,
+    };
     // SAFETY: VMX preflight runs at CPL0 on the bootstrap CPU; these
     // read-only snapshots capture the control registers used by HOST state.
     let (raw_cr3, cr0, cr4) = unsafe { (read_cr3(), read_cr0(), read_cr4()) };
@@ -1234,18 +1247,26 @@ unsafe fn capture_vmx_host_state(
         cr4_fixed,
         "host CR4 violates the CPU's VMX fixed bits",
     )?;
-    // SAFETY: long mode defines the FS/GS base, SYSENTER, and EFER MSRs; this
-    // CPL0 BSP only reads them to reproduce the current host return context.
-    let (fs_base, gs_base, sysenter_cs, sysenter_esp, sysenter_eip, efer) = unsafe {
+    // SAFETY: long mode defines the FS/GS base, SYSENTER, PAT, and EFER MSRs;
+    // this CPL0 BSP only reads them to reproduce the host return context.
+    let (fs_base, gs_base, sysenter_cs, sysenter_esp, sysenter_eip, pat, efer) = unsafe {
         (
             read_msr(0xc000_0100),
             read_msr(0xc000_0101),
             read_msr(0x174) as u32,
             read_msr(0x175),
             read_msr(0x176),
+            read_msr(aegishv_type1_kernel::IA32_PAT_MSR),
             read_msr(aegishv_type1_kernel::IA32_EFER_MSR),
         )
     };
+    let pat = VmxPat::new(pat)?.validate_owned_host_mappings()?;
+    if pat.raw() == VMX_TOY_GUEST_PAT_RAW {
+        return Err(aegishv_arch_x86::vmx::VmxError::new(
+            aegishv_arch_x86::vmx::VmxErrorKind::InvalidGuestState,
+            "host PAT must differ from the toy guest isolation pattern",
+        ));
+    }
     let state = VmcsHostState64 {
         cr0,
         cr3,
@@ -1267,6 +1288,7 @@ unsafe fn capture_vmx_host_state(
         sysenter_cs,
         sysenter_esp,
         sysenter_eip,
+        pat,
         efer,
         rsp: core::ptr::addr_of!(__aegishv_vmx_exit_stack_top) as u64,
         rip: aegishv_vmx_vmexit_entry as usize as u64,
@@ -1455,6 +1477,7 @@ unsafe fn run_type1_vmx_toy_guest(
     use aegishv_arch_x86::vmx::instructions::VmxInstructionExecutor;
     use aegishv_arch_x86::vmx::vmcs_config::{
         MinimalVmcsConfiguration, VmcsExecutionState, VmcsGuestState64, VmcsInterceptionBitmaps,
+        VmxPat,
     };
 
     // SAFETY: runtime dispatch selected Intel VMX from CPUID and the bootstrap
@@ -1597,6 +1620,15 @@ unsafe fn run_type1_vmx_toy_guest(
         Ok(image) => image,
         Err(()) => host_paging_error(),
     };
+    // SAFETY: CPUID reported PAT support and this BSP reads its current PAT
+    // before switching to leaves whose cache selector is fixed at index zero.
+    let host_pat_before_owned_paging = unsafe { read_msr(aegishv_type1_kernel::IA32_PAT_MSR) };
+    if VmxPat::new(host_pat_before_owned_paging)
+        .and_then(VmxPat::validate_owned_host_mappings)
+        .is_err()
+    {
+        host_paging_error();
+    }
     // SAFETY: the inherited CR3 root was reserved before any allocation and
     // remains available for rollback until the new root passes live readback.
     if unsafe { activate_owned_host_paging(&owned_host_paging, runtime_memory.inherited_cr3) }
@@ -1654,12 +1686,15 @@ unsafe fn run_type1_vmx_toy_guest(
         unsafe { vmx_guest_cleanup_after_error(&mut executor) };
     }
     // SAFETY: the same owned VMCS remains current after configuration writes;
-    // exact control/address readback must pass before configuration evidence.
-    if unsafe { execution.verify_interception_fields(&mut executor) }.is_err() {
+    // exact isolation, PAT, control, and address readback must pass first.
+    if unsafe { configuration.verify_isolation_fields(&mut executor) }.is_err() {
         // SAFETY: VMXON succeeded and this terminal path abandons all VMX state.
         unsafe { vmx_guest_cleanup_after_error(&mut executor) };
     }
 
+    VMX_EXPECTED_HOST_PAT.store(host.pat.raw(), Ordering::Release);
+    VMX_EXPECTED_GUEST_CR0.store(guest.cr0, Ordering::Release);
+    VMX_EXPECTED_GUEST_CR4.store(guest.cr4, Ordering::Release);
     serial_write_line(aegishv_type1_kernel::SERIAL_VMX_GUEST_CONFIG_OK_MARKER);
     VMX_TOY_PREEMPTION_RELOAD.store(
         capabilities.preemption_timer.reload_value,
@@ -1817,11 +1852,44 @@ extern "C" fn aegishv_type1_host_fatal() -> ! {
     halt_loop()
 }
 
+#[cfg(any(all(target_os = "none", target_arch = "x86_64"), test))]
+fn vmx_toy_exit_error_marker(
+    error: aegishv_arch_x86::vmx::toy_exit::ToyVmxExitError,
+    sequence: aegishv_arch_x86::vmx::toy_exit::ToyVmxExitSequence,
+) -> &'static str {
+    match error {
+        aegishv_arch_x86::vmx::toy_exit::ToyVmxExitError::ExecutionDeadlineExpired => {
+            aegishv_type1_kernel::SERIAL_VMX_GUEST_TIMEOUT_MARKER
+        }
+        aegishv_arch_x86::vmx::toy_exit::ToyVmxExitError::GuestPatMismatch
+        | aegishv_arch_x86::vmx::toy_exit::ToyVmxExitError::InvalidGuestPat => {
+            aegishv_type1_kernel::SERIAL_VMX_GUEST_PAT_STATE_ERROR_MARKER
+        }
+        _ => match sequence {
+            aegishv_arch_x86::vmx::toy_exit::ToyVmxExitSequence::AwaitingX87Guard => {
+                aegishv_type1_kernel::SERIAL_VMX_GUEST_NM_X87_EXIT_ERROR_MARKER
+            }
+            aegishv_arch_x86::vmx::toy_exit::ToyVmxExitSequence::AwaitingSimdGuard => {
+                aegishv_type1_kernel::SERIAL_VMX_GUEST_NM_SIMD_EXIT_ERROR_MARKER
+            }
+            _ => aegishv_type1_kernel::SERIAL_VMX_GUEST_EXIT_ERROR_MARKER,
+        },
+    }
+}
+
 #[cfg(all(target_os = "none", target_arch = "x86_64"))]
 #[no_mangle]
 extern "C" fn aegishv_vmx_exit_dispatch(
     frame: *mut aegishv_arch_x86::vmx::exits::GeneralRegisters,
 ) -> u64 {
+    // SAFETY: IA32_PAT is architectural on the selected Intel 64 VMX backend.
+    // Every normal exit checks it before inspecting or resuming guest state.
+    let live_host_pat = unsafe { read_msr(aegishv_type1_kernel::IA32_PAT_MSR) };
+    if live_host_pat != VMX_EXPECTED_HOST_PAT.load(Ordering::Acquire) {
+        VMX_TOY_EXIT_STATE.store(VMX_TOY_FAILED, Ordering::Release);
+        serial_write_line(aegishv_type1_kernel::SERIAL_VMX_GUEST_PAT_STATE_ERROR_MARKER);
+        return 1;
+    }
     if frame.is_null()
         || (frame as usize)
             % core::mem::align_of::<aegishv_arch_x86::vmx::exits::GeneralRegisters>()
@@ -1848,6 +1916,12 @@ extern "C" fn aegishv_vmx_exit_dispatch(
         VMX_TOY_AWAITING_RDMSR => {
             aegishv_arch_x86::vmx::toy_exit::ToyVmxExitSequence::AwaitingRdmsr
         }
+        VMX_TOY_AWAITING_X87_GUARD => {
+            aegishv_arch_x86::vmx::toy_exit::ToyVmxExitSequence::AwaitingX87Guard
+        }
+        VMX_TOY_AWAITING_SIMD_GUARD => {
+            aegishv_arch_x86::vmx::toy_exit::ToyVmxExitSequence::AwaitingSimdGuard
+        }
         VMX_TOY_AWAITING_HLT => aegishv_arch_x86::vmx::toy_exit::ToyVmxExitSequence::AwaitingHlt,
         VMX_TOY_COMPLETE => aegishv_arch_x86::vmx::toy_exit::ToyVmxExitSequence::Complete,
         _ => {
@@ -1864,11 +1938,18 @@ extern "C" fn aegishv_vmx_exit_dispatch(
         io_bitmap_b_rip: aegishv_type1_kernel::TYPE1_TOY_IO_BITMAP_B_RIP,
         cpuid_rip: aegishv_type1_kernel::TYPE1_TOY_CPUID_RIP,
         rdmsr_rip: aegishv_type1_kernel::TYPE1_TOY_RDMSR_RIP,
+        pat_rdmsr_rip: aegishv_type1_kernel::TYPE1_TOY_PAT_RDMSR_RIP,
+        x87_guard_rip: aegishv_type1_kernel::TYPE1_TOY_X87_GUARD_RIP,
+        simd_guard_rip: aegishv_type1_kernel::TYPE1_TOY_SIMD_GUARD_RIP,
         hlt_rip: aegishv_type1_kernel::TYPE1_TOY_HLT_RIP,
+        pat_mismatch_hlt_rip: aegishv_type1_kernel::TYPE1_TOY_PAT_MISMATCH_HLT_RIP,
         io_port: 0xe9,
         io_bitmap_b_port: 0x8000,
         io_value: b'A',
         preemption_timer_reload: VMX_TOY_PREEMPTION_RELOAD.load(Ordering::Acquire),
+        guest_pat: aegishv_arch_x86::vmx::vmcs_config::VmxPat::toy_guest(),
+        guest_cr0: VMX_EXPECTED_GUEST_CR0.load(Ordering::Acquire),
+        guest_cr4: VMX_EXPECTED_GUEST_CR4.load(Ordering::Acquire),
     };
     let mut executor = aegishv_arch_x86::vmx::hardware::HardwareVmxInstructions::new();
     // SAFETY: this function is reached only at the VMCS HOST_RIP. The current
@@ -1922,10 +2003,27 @@ extern "C" fn aegishv_vmx_exit_dispatch(
             0
         }
         Ok(aegishv_arch_x86::vmx::toy_exit::ToyVmxExitAction::Resume)
+            if sequence
+                == aegishv_arch_x86::vmx::toy_exit::ToyVmxExitSequence::AwaitingX87Guard =>
+        {
+            VMX_TOY_EXIT_STATE.store(VMX_TOY_AWAITING_X87_GUARD, Ordering::Release);
+            serial_write_line(aegishv_type1_kernel::SERIAL_VMX_GUEST_RDMSR_EXIT_OK_MARKER);
+            0
+        }
+        Ok(aegishv_arch_x86::vmx::toy_exit::ToyVmxExitAction::Resume)
+            if sequence
+                == aegishv_arch_x86::vmx::toy_exit::ToyVmxExitSequence::AwaitingSimdGuard =>
+        {
+            VMX_TOY_EXIT_STATE.store(VMX_TOY_AWAITING_SIMD_GUARD, Ordering::Release);
+            serial_write_line(aegishv_type1_kernel::SERIAL_VMX_GUEST_PAT_STATE_OK_MARKER);
+            serial_write_line(aegishv_type1_kernel::SERIAL_VMX_GUEST_NM_X87_EXIT_OK_MARKER);
+            0
+        }
+        Ok(aegishv_arch_x86::vmx::toy_exit::ToyVmxExitAction::Resume)
             if sequence == aegishv_arch_x86::vmx::toy_exit::ToyVmxExitSequence::AwaitingHlt =>
         {
             VMX_TOY_EXIT_STATE.store(VMX_TOY_AWAITING_HLT, Ordering::Release);
-            serial_write_line(aegishv_type1_kernel::SERIAL_VMX_GUEST_RDMSR_EXIT_OK_MARKER);
+            serial_write_line(aegishv_type1_kernel::SERIAL_VMX_GUEST_NM_SIMD_EXIT_OK_MARKER);
             0
         }
         Ok(aegishv_arch_x86::vmx::toy_exit::ToyVmxExitAction::Stop)
@@ -1935,9 +2033,9 @@ extern "C" fn aegishv_vmx_exit_dispatch(
             serial_write_line(aegishv_type1_kernel::SERIAL_VMX_GUEST_HLT_EXIT_OK_MARKER);
             1
         }
-        Err(aegishv_arch_x86::vmx::toy_exit::ToyVmxExitError::ExecutionDeadlineExpired) => {
+        Err(error) => {
             VMX_TOY_EXIT_STATE.store(VMX_TOY_FAILED, Ordering::Release);
-            serial_write_line(aegishv_type1_kernel::SERIAL_VMX_GUEST_TIMEOUT_MARKER);
+            serial_write_line(vmx_toy_exit_error_marker(error, sequence));
             1
         }
         _ => {
@@ -2273,7 +2371,57 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{hhdm_page_virtual_address, validate_limine_object_range};
+    use super::{
+        hhdm_page_virtual_address, validate_limine_object_range, vmx_toy_exit_error_marker,
+    };
+
+    #[test]
+    fn vmx_exit_errors_have_explicit_fail_closed_markers() {
+        use aegishv_arch_x86::vmx::toy_exit::{ToyVmxExitError, ToyVmxExitSequence};
+
+        assert_eq!(
+            vmx_toy_exit_error_marker(
+                ToyVmxExitError::ExecutionDeadlineExpired,
+                ToyVmxExitSequence::AwaitingPreemption,
+            ),
+            aegishv_type1_kernel::SERIAL_VMX_GUEST_TIMEOUT_MARKER
+        );
+        assert_eq!(
+            vmx_toy_exit_error_marker(
+                ToyVmxExitError::GuestPatMismatch,
+                ToyVmxExitSequence::AwaitingX87Guard,
+            ),
+            aegishv_type1_kernel::SERIAL_VMX_GUEST_PAT_STATE_ERROR_MARKER
+        );
+        assert_eq!(
+            vmx_toy_exit_error_marker(
+                ToyVmxExitError::InvalidGuestPat,
+                ToyVmxExitSequence::AwaitingSimdGuard,
+            ),
+            aegishv_type1_kernel::SERIAL_VMX_GUEST_PAT_STATE_ERROR_MARKER
+        );
+        assert_eq!(
+            vmx_toy_exit_error_marker(
+                ToyVmxExitError::InvalidFpuGuardState,
+                ToyVmxExitSequence::AwaitingX87Guard,
+            ),
+            aegishv_type1_kernel::SERIAL_VMX_GUEST_NM_X87_EXIT_ERROR_MARKER
+        );
+        assert_eq!(
+            vmx_toy_exit_error_marker(
+                ToyVmxExitError::InvalidFpuGuardState,
+                ToyVmxExitSequence::AwaitingSimdGuard,
+            ),
+            aegishv_type1_kernel::SERIAL_VMX_GUEST_NM_SIMD_EXIT_ERROR_MARKER
+        );
+        assert_eq!(
+            vmx_toy_exit_error_marker(
+                ToyVmxExitError::InvalidFpuGuardState,
+                ToyVmxExitSequence::AwaitingHlt,
+            ),
+            aegishv_type1_kernel::SERIAL_VMX_GUEST_EXIT_ERROR_MARKER
+        );
+    }
 
     #[test]
     fn limine_object_range_rejects_wrap_and_noncanonical_endpoints() {

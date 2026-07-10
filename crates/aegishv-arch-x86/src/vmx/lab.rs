@@ -31,6 +31,7 @@ impl RequiredExitCoverage {
 
     pub fn mark(&mut self, reason: VmxExitReason) {
         match reason {
+            VmxExitReason::ExceptionOrNmi => {}
             VmxExitReason::Cpuid => self.cpuid = true,
             VmxExitReason::Hlt => self.hlt = true,
             VmxExitReason::Rdmsr => self.rdmsr = true,

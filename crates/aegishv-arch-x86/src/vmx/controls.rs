@@ -77,9 +77,12 @@ pub const SECONDARY_ENABLE_RDTSCP: u32 = 1 << 3;
 pub const SECONDARY_ENABLE_INVPCID: u32 = 1 << 12;
 
 pub const EXIT_HOST_ADDRESS_SPACE_SIZE: u32 = 1 << 9;
+pub const EXIT_SAVE_IA32_PAT: u32 = 1 << 18;
+pub const EXIT_LOAD_IA32_PAT: u32 = 1 << 19;
 pub const EXIT_SAVE_IA32_EFER: u32 = 1 << 20;
 pub const EXIT_LOAD_IA32_EFER: u32 = 1 << 21;
 pub const ENTRY_IA32E_MODE_GUEST: u32 = 1 << 9;
+pub const ENTRY_LOAD_IA32_PAT: u32 = 1 << 14;
 pub const ENTRY_LOAD_IA32_EFER: u32 = 1 << 15;
 
 const TRUE_PIN_BASED_RESERVED_DEFAULT_ONES: u32 = 0x0000_0016;
@@ -105,8 +108,12 @@ impl VmxControlRequest {
                 | PRIMARY_USE_MSR_BITMAPS
                 | PRIMARY_ACTIVATE_SECONDARY_CONTROLS,
             secondary: SECONDARY_ENABLE_EPT,
-            exit: EXIT_HOST_ADDRESS_SPACE_SIZE | EXIT_SAVE_IA32_EFER | EXIT_LOAD_IA32_EFER,
-            entry: ENTRY_IA32E_MODE_GUEST | ENTRY_LOAD_IA32_EFER,
+            exit: EXIT_HOST_ADDRESS_SPACE_SIZE
+                | EXIT_SAVE_IA32_PAT
+                | EXIT_LOAD_IA32_PAT
+                | EXIT_SAVE_IA32_EFER
+                | EXIT_LOAD_IA32_EFER,
+            entry: ENTRY_IA32E_MODE_GUEST | ENTRY_LOAD_IA32_PAT | ENTRY_LOAD_IA32_EFER,
         }
     }
 }
@@ -160,9 +167,12 @@ impl VmxControlMsrs {
             | PRIMARY_USE_MSR_BITMAPS
             | PRIMARY_ACTIVATE_SECONDARY_CONTROLS;
         let supported_secondary = SECONDARY_ENABLE_EPT;
-        let supported_exit =
-            EXIT_HOST_ADDRESS_SPACE_SIZE | EXIT_SAVE_IA32_EFER | EXIT_LOAD_IA32_EFER;
-        let supported_entry = ENTRY_IA32E_MODE_GUEST | ENTRY_LOAD_IA32_EFER;
+        let supported_exit = EXIT_HOST_ADDRESS_SPACE_SIZE
+            | EXIT_SAVE_IA32_PAT
+            | EXIT_LOAD_IA32_PAT
+            | EXIT_SAVE_IA32_EFER
+            | EXIT_LOAD_IA32_EFER;
+        let supported_entry = ENTRY_IA32E_MODE_GUEST | ENTRY_LOAD_IA32_PAT | ENTRY_LOAD_IA32_EFER;
         let pin_exempt = if allow_mandatory_defaults {
             self.pin_based.must_be_one & TRUE_PIN_BASED_RESERVED_DEFAULT_ONES
         } else {
@@ -247,9 +257,36 @@ mod tests {
         assert_ne!(fields.secondary & SECONDARY_ENABLE_EPT, 0);
         assert_eq!(fields.secondary & SECONDARY_ENABLE_VPID, 0);
         assert_ne!(fields.exit & EXIT_HOST_ADDRESS_SPACE_SIZE, 0);
+        assert_ne!(fields.exit & EXIT_SAVE_IA32_PAT, 0);
+        assert_ne!(fields.exit & EXIT_LOAD_IA32_PAT, 0);
         assert_ne!(fields.exit & EXIT_SAVE_IA32_EFER, 0);
         assert_ne!(fields.exit & EXIT_LOAD_IA32_EFER, 0);
+        assert_ne!(fields.entry & ENTRY_LOAD_IA32_PAT, 0);
         assert_ne!(fields.entry & ENTRY_LOAD_IA32_EFER, 0);
+    }
+
+    #[test]
+    fn toy_hlt_guest_rejects_any_unsupported_pat_transition() {
+        for (group, bit) in [
+            (VmxControlGroup::Exit, EXIT_SAVE_IA32_PAT),
+            (VmxControlGroup::Exit, EXIT_LOAD_IA32_PAT),
+            (VmxControlGroup::Entry, ENTRY_LOAD_IA32_PAT),
+        ] {
+            let mut msrs = permissive_msrs();
+            let controls = match group {
+                VmxControlGroup::Exit => &mut msrs.exit,
+                VmxControlGroup::Entry => &mut msrs.entry,
+                _ => unreachable!("test covers only PAT entry and exit controls"),
+            };
+            controls.allowed_one &= !bit;
+
+            assert_eq!(
+                msrs.build(VmxControlRequest::toy_hlt_guest())
+                    .unwrap_err()
+                    .kind,
+                VmxErrorKind::InvalidControlBits
+            );
+        }
     }
 
     #[test]

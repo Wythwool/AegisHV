@@ -2,6 +2,7 @@ use super::features::{VmxError, VmxErrorKind};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum VmxExitReason {
+    ExceptionOrNmi,
     Cpuid,
     Hlt,
     Rdmsr,
@@ -21,6 +22,7 @@ impl VmxExitReason {
             return Self::VmEntryFailure(raw & 0xffff);
         }
         match raw & 0xffff {
+            0 => Self::ExceptionOrNmi,
             10 => Self::Cpuid,
             12 => Self::Hlt,
             28 => Self::CrAccess,
@@ -477,6 +479,10 @@ mod tests {
 
     #[test]
     fn exit_reason_preserves_vm_entry_failure() {
+        assert_eq!(
+            VmxExitReason::from_basic_reason(0),
+            VmxExitReason::ExceptionOrNmi
+        );
         assert_eq!(
             VmxExitReason::from_basic_reason((1 << 31) | 33),
             VmxExitReason::VmEntryFailure(33)
