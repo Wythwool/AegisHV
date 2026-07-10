@@ -48,7 +48,7 @@ Queue overflow happens before a trace line becomes an event, so AegisHV does not
 
 `src/hypervisor.rs` and `src/vmi.rs` define the future separation between this host-side sensor and a live VMI/trap backend. `NoHypervisorBackend` reports `BackendArch::None`; it does not pretend to be Intel VMX.
 
-The separate `aegishv-type1-kernel` target is a bootable x86_64 lab path, not a backend for the userspace sensor. It wires one BSP-only Intel VMX toy guest and a bounded owned CR3 for that final path; complete early/dynamic/per-CPU paging, SMP, interrupt, device, lifecycle, and hardware-evidence gates remain open.
+The separate `aegishv-type1-kernel` target is a bootable x86_64 lab path, not a backend for the userspace sensor. It wires one BSP-only Intel VMX toy guest, a single fifteen-page allocation ledger, immutable trap-all I/O A/B/MSR pages with checked VMCS addresses, and a bounded owned CR3 for that final path. The fixed guest exercises two contained port exits and one synthetic RDMSR response without replaying those operations on the host. Complete early/dynamic/per-CPU paging, stateful MSR/WRMSR handling, selective bitmap policy, SMP, interrupt, device/IOMMU, lifecycle, and hardware-evidence gates remain open.
 
 ## Architecture decisions
 
