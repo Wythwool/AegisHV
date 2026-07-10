@@ -3898,9 +3898,10 @@ mod shutdown_tests {
         std::fs::File::create(tracefs.join("trace_pipe")).expect("create trace_pipe");
         write_kvm_exit_format(&tracefs);
         let libvirt_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/libvirt");
+        let libvirt_dir = libvirt_dir.display().to_string().replace('\\', "/");
         let config = temp_config(&format!(
             "[identity]\nlibvirt_xml_dir = \"{}\"\n",
-            libvirt_dir.display()
+            libvirt_dir
         ));
         let json = temp_path("snapshot-inventory-json");
 
