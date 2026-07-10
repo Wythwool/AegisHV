@@ -1,6 +1,7 @@
 #![no_std]
 
 pub mod early_memory;
+pub mod host_paging;
 pub mod toy_guest;
 
 pub use early_memory::{
@@ -50,6 +51,8 @@ pub const SERIAL_RUNTIME_VMCS_LOAD_ERROR_MARKER: &str = "aegishv:type1:vmcs-load
 pub const SERIAL_RUNTIME_VMCS_LOAD_SKIPPED_MARKER: &str = "aegishv:type1:vmcs-load-skipped";
 pub const SERIAL_HOST_TABLES_OK_MARKER: &str = "aegishv:type1:host-tables-ok";
 pub const SERIAL_HOST_TABLES_ERROR_MARKER: &str = "aegishv:type1:host-tables-error";
+pub const SERIAL_HOST_PAGING_OK_MARKER: &str = "aegishv:type1:host-paging-ok";
+pub const SERIAL_HOST_PAGING_ERROR_MARKER: &str = "aegishv:type1:host-paging-error";
 pub const SERIAL_HOST_EXCEPTION_MARKER: &str = "aegishv:type1:host-exception";
 pub const SERIAL_HOST_FATAL_MARKER: &str = "aegishv:type1:host-fatal";
 pub const SERIAL_VMX_GUEST_PREEMPT_EXIT_OK_MARKER: &str = "aegishv:type1:guest-preempt-exit-ok";
@@ -1245,6 +1248,8 @@ mod tests {
         assert!(marker_line(SERIAL_RUNTIME_VMCS_LOAD_ERROR_MARKER, &mut out).is_some());
         assert!(marker_line(SERIAL_RUNTIME_VMCS_LOAD_SKIPPED_MARKER, &mut out).is_some());
         for marker in [
+            SERIAL_HOST_PAGING_OK_MARKER,
+            SERIAL_HOST_PAGING_ERROR_MARKER,
             SERIAL_VMX_GUEST_CONFIG_OK_MARKER,
             SERIAL_VMX_GUEST_PREEMPT_EXIT_OK_MARKER,
             SERIAL_VMX_GUEST_IO_EXIT_OK_MARKER,
