@@ -86,21 +86,26 @@ fn image_plan_script_can_require_the_future_kernel_elf() {
 }
 
 #[test]
-fn qemu_smoke_requires_serial_evidence_marker() {
+fn qemu_smoke_requires_ordered_vmx_evidence_markers() {
     let script = read_repo_file("scripts/type1-qemu-smoke.sh");
     let testing = read_repo_file("docs/TESTING.md");
 
     assert_contains_all(
         &script,
         &[
-            "AEGISHV_TYPE1_EXPECTED_SERIAL",
-            "--expect-serial",
-            "aegishv:type1:halt",
+            "AEGISHV_TYPE1_EXPECTED_MARKERS",
+            "--expect-markers",
+            "--expect-marker",
+            "aegishv:type1:backend-vmx",
+            "aegishv:type1:vmxon-cycle-ok",
+            "aegishv:type1:vmcs-load-ok",
+            "aegishv:type1:backend-none",
             "serial log was not written",
-            "expected serial marker was not observed",
+            "expected serial marker was not observed in required order",
             "exit 70",
         ],
     );
-    assert!(testing.contains("AEGISHV_TYPE1_EXPECTED_SERIAL"));
-    assert!(testing.contains("serial marker"));
+    assert!(testing.contains("AEGISHV_TYPE1_EXPECTED_MARKERS"));
+    assert!(testing.contains("complete serial lines"));
+    assert!(testing.contains("backend-none"));
 }

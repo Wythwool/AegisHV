@@ -13,7 +13,7 @@ The type-1 lab milestone is blocked until `docs/TYPE1_READINESS_GATE.md` passes.
 - local tool manifest from `scripts/check-type1-lab-tools.sh`;
 - image input manifest from `scripts/plan-type1-image.sh`;
 - QEMU command line;
-- serial log containing the expected marker;
+- serial log containing the ordered VMX backend, VMXON-cycle, and VMCS-load markers, with no contradictory backend, failure, skipped, missing-handoff, or panic marker;
 - QEMU smoke evidence manifest from `scripts/type1-qemu-evidence.sh`;
 - local lab-chain summary from `scripts/run-type1-lab.sh`;
 - VM-exit trace;
