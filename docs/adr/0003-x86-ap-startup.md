@@ -6,7 +6,7 @@ Accepted.
 
 ## Context
 
-The x86 type-1 runtime will need each application processor to enter a known state before any scheduler, VM-exit, or trap work can be trusted. The current repository does not contain AP startup assembly or a bootable image.
+The x86 Type-1 lab runtime now has a bootable Limine ISO, owned BSP descriptor tables and stacks, and a wired Intel VMX toy-guest path. It remains BSP-only. Each application processor will need to enter a known state before any scheduler, VM-exit, interrupt, or trap work can be trusted.
 
 The model already needs stable boundaries for trampoline placement, per-CPU stack ownership, event buffers, and scheduler attachment. Those boundaries can be tested before SIPI delivery code exists.
 
@@ -27,10 +27,10 @@ The intended sequence is:
 
 ## Consequences
 
-The runtime cannot claim multiprocessor bring-up until there is tested APIC, trampoline, descriptor-table, and entry-code support.
+The current boot and VMX paths establish no SMP coverage. The runtime cannot claim multiprocessor bring-up until there is tested APIC, trampoline, per-CPU descriptor/stack/VMX ownership, entry-code, interrupt, and teardown support.
 
 The scheduler model can still reject invalid pCPU/vCPU mappings before that hardware path exists.
 
 ## Test Impact
 
-Unit tests cover the AP startup plan constraints: low-memory trampoline, stack size, stack alignment, and nonzero AP count. Later APIC and trampoline code must add hardware-gated tests or opt-in QEMU evidence.
+Unit tests cover the AP startup plan constraints: low-memory trampoline, stack size, stack alignment, and nonzero AP count. The observed QEMU TCG boot is BSP-only and is not AP evidence. Later APIC and trampoline code must add hardware-gated tests or opt-in QEMU evidence that records CPU count, per-CPU entry, descriptor state, and failure handling.

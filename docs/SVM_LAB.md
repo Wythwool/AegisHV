@@ -1,6 +1,6 @@
 # AMD SVM Lab Boundary
 
-This document records the AMD SVM model code now present in `aegishv-arch-x86`. The current repository still does not ship a bootable type-1 image, a wired guest run, or host hardware evidence.
+This document records the AMD SVM model code now present in `aegishv-arch-x86`. The bootable x86_64 lab image does not wire VMRUN, an AMD guest run, or AMD hardware evidence.
 
 ## Implemented Model Pieces
 

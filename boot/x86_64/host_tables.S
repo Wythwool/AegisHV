@@ -1,22 +1,49 @@
 .section .text.host_tables, "ax"
 .p2align 4
 
+.global aegishv_install_transition_idt
+.type aegishv_install_transition_idt, @function
+aegishv_install_transition_idt:
+    lea rdi, [rip + __aegishv_transition_idt + 2 * 16]
+    lea rax, [rip + aegishv_host_fatal]
+    xor edx, edx
+    call .Lset_gate
+
+    lea rdi, [rip + __aegishv_transition_idt + 6 * 16]
+    lea rax, [rip + aegishv_host_ud]
+    call .Lset_gate
+
+    lea rdi, [rip + __aegishv_transition_idt + 8 * 16]
+    lea rax, [rip + aegishv_host_df]
+    call .Lset_gate
+
+    lea rdi, [rip + __aegishv_transition_idt + 13 * 16]
+    lea rax, [rip + aegishv_host_gp]
+    call .Lset_gate
+
+    lea rdi, [rip + __aegishv_transition_idt + 14 * 16]
+    lea rax, [rip + aegishv_host_pf]
+    call .Lset_gate
+
+    lea rdi, [rip + __aegishv_transition_idt + 18 * 16]
+    lea rax, [rip + aegishv_host_mc]
+    call .Lset_gate
+
+    lidt [rip + __aegishv_transition_idtr]
+    ret
+.size aegishv_install_transition_idt, . - aegishv_install_transition_idt
+
 .global aegishv_install_host_tables
 .type aegishv_install_host_tables, @function
 aegishv_install_host_tables:
-    lea rdi, [rip + __aegishv_transition_idt]
-    lea rsi, [rip + __aegishv_host_idt]
+    lea rdi, [rip + __aegishv_host_idt]
     lea rax, [rip + aegishv_host_fatal]
     xor edx, edx
     mov ecx, 256
 
 .Lfill_idt:
     call .Lset_gate
-    xchg rdi, rsi
-    call .Lset_gate
-    xchg rdi, rsi
     add rdi, 16
-    add rsi, 16
     dec ecx
     jnz .Lfill_idt
 
@@ -45,12 +72,19 @@ aegishv_install_host_tables:
     xor edx, edx
     call .Lset_gate
 
+    lea rdi, [rip + __aegishv_host_idt + 18 * 16]
+    lea rax, [rip + aegishv_host_mc]
+    mov dl, 3
+    call .Lset_gate
+
     lea rax, [rip + __aegishv_boot_stack_top]
     mov [rip + __aegishv_host_tss + 4], rax
     lea rax, [rip + __aegishv_double_fault_stack_top]
     mov [rip + __aegishv_host_tss + 36], rax
     lea rax, [rip + __aegishv_nmi_stack_top]
     mov [rip + __aegishv_host_tss + 44], rax
+    lea rax, [rip + __aegishv_machine_check_stack_top]
+    mov [rip + __aegishv_host_tss + 52], rax
     mov word ptr [rip + __aegishv_host_tss + 102], 104
 
     lea rax, [rip + __aegishv_host_tss]
@@ -132,6 +166,14 @@ aegishv_host_pf:
     jmp .Lhost_exception_common
 .size aegishv_host_pf, . - aegishv_host_pf
 
+.global aegishv_host_mc
+.type aegishv_host_mc, @function
+aegishv_host_mc:
+    push 0
+    push 18
+    jmp .Lhost_exception_common
+.size aegishv_host_mc, . - aegishv_host_mc
+
 .Lhost_exception_common:
     cli
     cld
@@ -185,6 +227,11 @@ __aegishv_host_idtr:
     .word 4095
     .quad __aegishv_host_idt
 
+.p2align 4
+.global __aegishv_transition_idt
+__aegishv_transition_idt:
+    .skip 4096
+
 .section .bss.host_tables, "aw", @nobits
 .p2align 4
 .global __aegishv_host_tss
@@ -203,10 +250,11 @@ __aegishv_nmi_stack:
 .global __aegishv_nmi_stack_top
 __aegishv_nmi_stack_top:
 
-.p2align 4
-.global __aegishv_transition_idt
-__aegishv_transition_idt:
-    .skip 4096
+.p2align 12
+__aegishv_machine_check_stack:
+    .skip 16384
+.global __aegishv_machine_check_stack_top
+__aegishv_machine_check_stack_top:
 
 .p2align 4
 .global __aegishv_host_idt

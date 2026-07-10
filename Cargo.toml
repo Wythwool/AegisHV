@@ -34,3 +34,7 @@ lto = "thin"
 codegen-units = 1
 opt-level = "z"
 strip = "symbols"
+
+[profile.type1]
+inherits = "release"
+strip = "none"

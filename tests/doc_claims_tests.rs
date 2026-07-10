@@ -129,7 +129,7 @@ fn validate_status_claim_discipline(text: &str) -> Result<(), ClaimDocError> {
 
     for required in [
         "Linux host-side KVM telemetry sensor",
-        "Do not describe this tree as type-1",
+        "Do not describe this tree as a production or general-purpose Type-1 hypervisor",
         "hardware PMU sampling",
         "Roadmap documents may discuss those targets",
     ] {

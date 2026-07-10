@@ -15,8 +15,11 @@
 | QEMU QMP actions | Supported for mapped sockets |
 | PMU fallback heartbeat | Supported as host-thread target discovery with unavailable hardware counters reported as `null` |
 | Guest memory introspection | Not implemented |
-| VMX/SVM/EL2 backends | Intel VMX and AMD SVM have instruction executors and runtime sequencing libraries; boot wiring and EL2 backend are not implemented |
-| EPT/NPT/Stage-2 permission enforcement | Not implemented |
+| x86_64 Limine lab boot | Bootable ISO path implemented; locally observed under QEMU TCG through owned host tables and runtime preflight |
+| Intel VMX toy-guest runtime | VMXON/VMCS/EPT plus VMLAUNCH-to-CPUID and VMRESUME-to-HLT paths are implemented in the lab kernel; reviewed hardware execution evidence is not present |
+| Intel VMX guest execution coverage | Not established; the observed TCG environment exposed no VMX and WHPX was unavailable |
+| General VMX/SVM/EL2 backends | Intel has one fixed toy-guest path; AMD SVM has instruction/runtime models; live AMD guest entry and ARM64 EL2 are not implemented |
+| EPT/NPT/Stage-2 permission enforcement | A fixed EPT is built for the Intel toy guest; general live permission flips, invalidation, and retrapping are not implemented |
 | AMD SVM lab models | Implemented as library models; booted guest execution is not implemented |
 | SEV, SEV-ES, SEV-SNP guest inspection | Degraded or unsupported; no bypass is claimed |
 | ARM64 EL2 lab models | Implemented as library models; bare-metal execution is not implemented |
@@ -29,6 +32,10 @@
 - pKVM, Arm CCA realms, vendor protected guests, and similar ARM64 protections can make protected guest memory unavailable. AegisHV does not claim introspection for protected guest memory.
 - Huge pages, live migration, snapshots, nested virtualization and multi-tenant QMP policies need dedicated test coverage before stronger deployment claims.
 - Tracefs text formats depend on kernel tracepoint formatting. Use replay and format autodiscovery tests for every kernel family you support.
+
+The Type-1 lab target is BSP-only and has no compatibility claim for SMP, APIC/interrupt/timer virtualization, general guest loading, PAT/XSAVE/FPU context, full MSR state, device emulation, passthrough, or IOMMU isolation. It still uses Limine's host mappings rather than a hypervisor-owned CR3 with enforced W^X and guard pages.
+
+A source build, model test, or TCG boot is not Intel VMX execution coverage. That claim requires the complete strict marker chain from a recorded nested-VMX or bare-metal configuration. Even that chain covers only the fixed `CPUID; HLT` toy guest and is not production qualification.
 
 Treat this matrix literally. Unsupported means unsupported.
 

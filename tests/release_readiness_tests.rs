@@ -50,8 +50,9 @@ fn release_gate_docs_cover_host_vmi_and_type1_boundaries() {
         &gaps,
         &[
             "Live guest memory reads are not implemented",
-            "Bootable type-1 image is not present",
-            "VMI alpha and type-1 lab milestones must remain separate",
+            "modern Limine ISO and x86_64 lab-kernel boot path are present",
+            "Intel guest execution remains unproven",
+            "must keep separate evidence and gates",
         ],
     );
     assert_contains_all(
@@ -73,17 +74,17 @@ fn release_gate_docs_cover_host_vmi_and_type1_boundaries() {
     assert_contains_all(
         &gate,
         &[
-            "does not pass this gate",
-            "no bootable type-1 runtime",
-            "must not say that the current binary is a type-1 hypervisor",
+            "The boot boundary is implemented",
+            "does not pass the Intel guest-entry evidence gate",
+            "production or general-purpose Type-1 hypervisor",
         ],
     );
     assert_contains_all(
         &milestone,
         &[
-            "not a bootable hypervisor",
+            "boot-boundary milestone is implemented",
             "boot image path and checksum",
-            "Do not describe the current host-side binary as a type-1 hypervisor",
+            "Do not claim demonstrated VMX guest execution",
         ],
     );
     assert!(status.contains("Release gate documents"));

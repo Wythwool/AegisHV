@@ -44,6 +44,8 @@ aegishv_vmx_launch:
 .global aegishv_vmx_vmexit_entry
 .type aegishv_vmx_vmexit_entry, @function
 aegishv_vmx_vmexit_entry:
+    lgdt [rip + __aegishv_host_gdtr]
+    lidt [rip + __aegishv_host_idtr]
     sub rsp, 144
 
     mov [rsp + 0], rax

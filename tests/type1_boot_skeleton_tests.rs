@@ -53,9 +53,9 @@ fn boot_artifacts_define_limine_linker_and_entry_boundaries() {
     assert_contains_all(
         &limine,
         &[
-            "PROTOCOL=limine",
-            "KERNEL_PATH=boot:///aegishv-type1.elf",
-            "CMDLINE=serial=on",
+            "protocol: limine",
+            "path: boot():/aegishv-type1.elf",
+            "cmdline: serial=on",
         ],
     );
     assert_contains_all(
@@ -68,6 +68,9 @@ fn boot_artifacts_define_limine_linker_and_entry_boundaries() {
             "KEEP(*(.limine_requests_start))",
             "KEEP(*(.limine_requests_end))",
             "KEEP(*(.text.entry))",
+            "*(.got .got.*)",
+            ".boot_stack ALIGN(4K) (NOLOAD)",
+            "ASSERT((ADDR(.text) & 0xfff) == 0",
         ],
     );
     assert_contains_all(
@@ -75,6 +78,7 @@ fn boot_artifacts_define_limine_linker_and_entry_boundaries() {
         &[
             ".global aegishv_type1_start",
             "cld",
+            "call aegishv_install_transition_idt",
             "__aegishv_bss_start",
             "__aegishv_bss_end",
             "rep stosb",
@@ -86,9 +90,9 @@ fn boot_artifacts_define_limine_linker_and_entry_boundaries() {
     assert_contains_all(
         &readme,
         &[
-            "planned type-1 boot artifacts",
-            "not wired into a bootable image build yet",
-            "not a bootable hypervisor image",
+            "live boot inputs",
+            "default `aegishv` binary remains the Linux host-side sensor",
+            "not a boot image or execution evidence",
         ],
     );
 }
@@ -115,12 +119,12 @@ fn boot_skeleton_script_writes_manifest_without_claiming_image_output() {
     assert_contains_all(
         &doc,
         &[
-            "planned type-1 boot boundary",
-            "not a bootable hypervisor image",
-            "Bootable type-1 ISO is not produced",
-            "QEMU boot evidence is not present",
+            "bootable x86_64 Type-1 lab kernel",
+            "complete ordered chain",
+            "not a production hypervisor",
+            "TCG does not provide VMX",
         ],
     );
-    assert!(status.contains("Planned type-1 boot skeleton artifacts"));
+    assert!(status.contains("Bootable x86_64 Type-1 lab artifacts"));
     assert!(testing.contains("scripts/build-type1-skeleton.sh"));
 }

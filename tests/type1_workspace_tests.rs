@@ -83,8 +83,8 @@ fn boot_strategy_adr_records_first_boot_path_without_claiming_runtime_support() 
         "Multiboot2",
         "Custom loader",
         "Use Limine as the first boot protocol",
-        "does not ship a bootable hypervisor image",
-        "does not make the current binary a type-1 hypervisor",
+        "bootable x86_64 Type-1 lab kernel",
+        "does not make the default userspace binary a hypervisor",
     ] {
         assert!(
             adr.contains(required),
@@ -117,10 +117,10 @@ fn type1_invariants_doc_covers_memory_wx_rings_and_lifecycle() {
 
     for required in [
         "Memory Ownership",
-        "W^X Mapping Intent",
+        "W^X Mapping Boundary",
         "Event Ring Loss",
-        "CPU And VM State",
-        "does not claim the repository boots as a type-1 hypervisor",
+        "CPU And VM State Models",
+        "does not prove a general or production hypervisor",
     ] {
         assert!(
             doc.contains(required),
@@ -152,7 +152,7 @@ fn qemu_smoke_script_is_opt_in_and_refuses_missing_boot_images() {
         "exit 70",
         "command -v \"$qemu\"",
         "qemu-system-x86_64",
-        "-kernel \"$image\"",
+        "a raw ELF has no Limine handoff",
         "-cdrom \"$image\"",
         "-boot d",
     ] {
@@ -174,7 +174,8 @@ fn vmx_lab_docs_and_script_keep_hardware_scope_explicit() {
 
     for required in [
         "Intel VMX Lab Boundary",
-        "does not ship a bootable type-1 image",
+        "bootable lab ISO",
+        "does not contain reviewed Intel hardware evidence",
         "VMXON and VMCS region initialization",
         "Required Exit Coverage",
         "CPUID",
@@ -210,7 +211,7 @@ fn svm_lab_docs_and_script_keep_hardware_scope_explicit() {
 
     for required in [
         "AMD SVM Lab Boundary",
-        "does not ship a bootable type-1 image",
+        "bootable x86_64 lab image does not wire VMRUN",
         "VMCB control and state-save structures",
         "Required Intercept Coverage",
         "nested page fault",

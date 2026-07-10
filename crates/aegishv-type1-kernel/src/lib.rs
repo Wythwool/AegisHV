@@ -25,7 +25,7 @@ use aegishv_arch_x86::vmx::runtime::VmxRuntime;
 use aegishv_arch_x86::vmx::vmcs::VmcsRegion;
 use aegishv_hypervisor_core::ids::HostPhysical;
 
-pub const SERIAL_READY_MARKER: &str = "aegishv:type1:halt";
+pub const SERIAL_READY_MARKER: &str = "aegishv:type1:handoff-ok";
 pub const SERIAL_PANIC_MARKER: &str = "aegishv:type1:panic";
 pub const SERIAL_LIMINE_MISSING_MARKER: &str = "aegishv:type1:limine-missing";
 pub const SERIAL_RUNTIME_BACKEND_NONE_MARKER: &str = "aegishv:type1:backend-none";
@@ -50,9 +50,12 @@ pub const SERIAL_HOST_EXCEPTION_MARKER: &str = "aegishv:type1:host-exception";
 pub const SERIAL_HOST_FATAL_MARKER: &str = "aegishv:type1:host-fatal";
 pub const SERIAL_VMX_GUEST_CPUID_EXIT_OK_MARKER: &str = "aegishv:type1:guest-cpuid-exit-ok";
 pub const SERIAL_VMX_GUEST_HLT_EXIT_OK_MARKER: &str = "aegishv:type1:guest-hlt-exit-ok";
+pub const SERIAL_VMX_GUEST_CONFIG_OK_MARKER: &str = "aegishv:type1:guest-config-ok";
+pub const SERIAL_VMX_GUEST_ENTRY_ERROR_MARKER: &str = "aegishv:type1:guest-entry-error";
 pub const SERIAL_VMX_GUEST_EXIT_ERROR_MARKER: &str = "aegishv:type1:guest-exit-error";
 pub const SERIAL_VMX_GUEST_RESUME_ERROR_MARKER: &str = "aegishv:type1:guest-resume-error";
 pub const SERIAL_VMX_GUEST_RUN_OK_MARKER: &str = "aegishv:type1:guest-run-ok";
+pub const SERIAL_VMX_INSTRUCTION_ERROR_PREFIX: &str = "aegishv:type1:vm-instruction-error=0x";
 pub const SERIAL_LIMINE_BASE_REVISION_MARKER: &str = "aegishv:type1:limine-base-revision";
 pub const SERIAL_LIMINE_HHDM_MISSING_MARKER: &str = "aegishv:type1:limine-hhdm-missing";
 pub const SERIAL_LIMINE_HHDM_REVISION_MARKER: &str = "aegishv:type1:limine-hhdm-revision";
@@ -265,17 +268,11 @@ pub const fn limine_minimal_handoff_status(handoff: LimineMinimalHandoff) -> Lim
     if handoff.hhdm_response == 0 {
         return LimineHandoffStatus::HhdmResponseMissing;
     }
-    if handoff.hhdm_revision != 0 {
-        return LimineHandoffStatus::HhdmRevisionUnsupported;
-    }
     if handoff.hhdm_offset == 0 {
         return LimineHandoffStatus::HhdmOffsetMissing;
     }
     if handoff.memmap_response == 0 {
         return LimineHandoffStatus::MemmapResponseMissing;
-    }
-    if handoff.memmap_revision != 0 {
-        return LimineHandoffStatus::MemmapRevisionUnsupported;
     }
     if handoff.memmap_entry_count == 0 {
         return LimineHandoffStatus::MemmapEmpty;
@@ -286,13 +283,10 @@ pub const fn limine_minimal_handoff_status(handoff: LimineMinimalHandoff) -> Lim
     if handoff.executable_address_response == 0 {
         return LimineHandoffStatus::ExecutableAddressResponseMissing;
     }
-    if handoff.executable_address_revision != 0 {
-        return LimineHandoffStatus::ExecutableAddressRevisionUnsupported;
-    }
     if handoff.executable_physical_base == 0 || handoff.executable_virtual_base == 0 {
         return LimineHandoffStatus::ExecutableAddressEmpty;
     }
-    if handoff.executable_physical_base != aegishv_type1_boot::layout::KERNEL_PHYSICAL_BASE {
+    if handoff.executable_physical_base % TYPE1_RUNTIME_PAGE_SIZE != 0 {
         return LimineHandoffStatus::ExecutablePhysicalBaseMismatch;
     }
     if handoff.executable_virtual_base != aegishv_type1_boot::layout::KERNEL_VIRTUAL_BASE {
@@ -1209,7 +1203,7 @@ mod tests {
         let mut out = [0u8; 32];
         let len = marker_line(SERIAL_READY_MARKER, &mut out).unwrap();
 
-        assert_eq!(&out[..len], b"aegishv:type1:halt\n");
+        assert_eq!(&out[..len], b"aegishv:type1:handoff-ok\n");
     }
 
     #[test]
@@ -1253,7 +1247,7 @@ mod tests {
     fn handoff_statuses_have_stable_serial_markers() {
         assert_eq!(
             LimineHandoffStatus::Ready.serial_marker(),
-            "aegishv:type1:halt"
+            "aegishv:type1:handoff-ok"
         );
         assert_eq!(
             LimineHandoffStatus::BaseRevisionUnsupported.serial_marker(),
@@ -1411,7 +1405,7 @@ mod tests {
                 hhdm_revision: 1,
                 ..READY_HANDOFF
             }),
-            LimineHandoffStatus::HhdmRevisionUnsupported
+            LimineHandoffStatus::Ready
         );
         assert_eq!(
             limine_minimal_handoff_status(LimineMinimalHandoff {
@@ -1432,7 +1426,7 @@ mod tests {
                 memmap_revision: 1,
                 ..READY_HANDOFF
             }),
-            LimineHandoffStatus::MemmapRevisionUnsupported
+            LimineHandoffStatus::Ready
         );
         assert_eq!(
             limine_minimal_handoff_status(LimineMinimalHandoff {
@@ -1460,7 +1454,7 @@ mod tests {
                 executable_address_revision: 1,
                 ..READY_HANDOFF
             }),
-            LimineHandoffStatus::ExecutableAddressRevisionUnsupported
+            LimineHandoffStatus::Ready
         );
         assert_eq!(
             limine_minimal_handoff_status(LimineMinimalHandoff {
@@ -1471,10 +1465,17 @@ mod tests {
         );
         assert_eq!(
             limine_minimal_handoff_status(LimineMinimalHandoff {
-                executable_physical_base: 0x30_0000,
+                executable_physical_base: 0x30_0001,
                 ..READY_HANDOFF
             }),
             LimineHandoffStatus::ExecutablePhysicalBaseMismatch
+        );
+        assert_eq!(
+            limine_minimal_handoff_status(LimineMinimalHandoff {
+                executable_physical_base: 0x30_0000,
+                ..READY_HANDOFF
+            }),
+            LimineHandoffStatus::Ready
         );
         assert_eq!(
             limine_minimal_handoff_status(LimineMinimalHandoff {

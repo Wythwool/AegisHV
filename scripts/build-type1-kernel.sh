@@ -43,7 +43,7 @@ cargo rustc \
   -p aegishv-type1-kernel \
   --bin aegishv-type1-kernel \
   --target "$target" \
-  --release \
+  --profile type1 \
   -- \
   -C panic=abort \
   -C relocation-model=static \
@@ -52,7 +52,7 @@ cargo rustc \
   -C strip=none \
   -C link-arg=-T"$linker_script"
 
-built="target/$target/release/aegishv-type1-kernel"
+built="target/$target/type1/aegishv-type1-kernel"
 if [ ! -s "$built" ]; then
   echo "type1 kernel build: expected ELF was not written: $built" >&2
   exit 70
@@ -68,13 +68,14 @@ aegishv type-1 kernel build
 kernel_elf=$kernel_elf
 kernel_elf_present=true
 target=$target
+profile=type1
 linker_script=$linker_script
 expected_kernel_physical_base=$expected_kernel_physical_base
 expected_kernel_virtual_base=$expected_kernel_virtual_base
 relocation_model=static
 code_model=kernel
 red_zone=false
-serial_marker=aegishv:type1:halt
+serial_marker=aegishv:type1:handoff-ok
 runtime_backend_marker=aegishv:type1:backend-none
 runtime_backend_probe=cpuid-msr
 runtime_backend_markers=aegishv:type1:backend-none,aegishv:type1:backend-vmx,aegishv:type1:backend-svm
@@ -88,6 +89,9 @@ runtime_vmxon=smoke-cycle
 runtime_vmxon_markers=aegishv:type1:vmxon-cycle-ok,aegishv:type1:vmxon-cycle-error,aegishv:type1:vmxon-cycle-skipped
 runtime_vmcs_load=smoke-cycle
 runtime_vmcs_load_markers=aegishv:type1:vmcs-load-ok,aegishv:type1:vmcs-load-error,aegishv:type1:vmcs-load-skipped
+runtime_host_tables=owned-gdt-tss-idt
+runtime_vmx_guest=isolated-cpuid-hlt
+runtime_vmx_guest_markers=aegishv:type1:guest-config-ok,aegishv:type1:guest-cpuid-exit-ok,aegishv:type1:guest-hlt-exit-ok,aegishv:type1:guest-run-ok
 inspect_manifest=$inspect_manifest
 bootable_image=false
 qemu_evidence=false

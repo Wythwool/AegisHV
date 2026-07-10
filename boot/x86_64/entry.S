@@ -5,6 +5,7 @@
 aegishv_type1_start:
     cli
     cld
+    call aegishv_install_transition_idt
 
     lea __aegishv_bss_start(%rip), %rdi
     lea __aegishv_bss_end(%rip), %rcx

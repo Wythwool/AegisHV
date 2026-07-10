@@ -8,13 +8,13 @@ usage: scripts/type1-qemu-smoke.sh [--print-command] [--expect-markers CSV | --e
 BOOT_IMAGE may also be supplied through AEGISHV_TYPE1_BOOT_IMAGE.
 Expected markers may be supplied through AEGISHV_TYPE1_EXPECTED_MARKERS.
 Markers must appear as complete serial-log lines in the configured order.
-BOOT_IMAGE may be a kernel ELF or a bootable ISO. This script does not build it.
+BOOT_IMAGE must be a bootable Limine ISO. This script does not build it.
 USAGE
 }
 
 print_command=false
 image="${AEGISHV_TYPE1_BOOT_IMAGE:-}"
-default_expected_markers="aegishv:type1:backend-vmx,aegishv:type1:vmxon-cycle-ok,aegishv:type1:vmcs-load-ok"
+default_expected_markers="aegishv:type1:host-tables-ok,aegishv:type1:backend-vmx,aegishv:type1:vmxon-cycle-ok,aegishv:type1:vmcs-load-ok,aegishv:type1:guest-config-ok,aegishv:type1:guest-cpuid-exit-ok,aegishv:type1:guest-hlt-exit-ok,aegishv:type1:guest-run-ok"
 expected_marker_csv="${AEGISHV_TYPE1_EXPECTED_MARKERS:-${AEGISHV_TYPE1_EXPECTED_SERIAL:-$default_expected_markers}}"
 expected_markers=()
 marker_option_mode=""
@@ -93,9 +93,14 @@ for marker in "${expected_markers[@]}"; do
 done
 
 required_vmx_markers=(
+  "aegishv:type1:host-tables-ok"
   "aegishv:type1:backend-vmx"
   "aegishv:type1:vmxon-cycle-ok"
   "aegishv:type1:vmcs-load-ok"
+  "aegishv:type1:guest-config-ok"
+  "aegishv:type1:guest-cpuid-exit-ok"
+  "aegishv:type1:guest-hlt-exit-ok"
+  "aegishv:type1:guest-run-ok"
 )
 required_marker_index=0
 for marker in "${expected_markers[@]}"; do
@@ -107,7 +112,7 @@ for marker in "${expected_markers[@]}"; do
   fi
 done
 if [ "$required_marker_index" -ne "${#required_vmx_markers[@]}" ]; then
-  fail_usage "expected serial marker list must include backend-vmx, vmxon-cycle-ok, and vmcs-load-ok in order"
+  fail_usage "expected serial marker list must include the complete host, VMX entry, CPUID, resume, and HLT proof chain in order"
 fi
 
 if [ -z "$image" ]; then
@@ -119,6 +124,10 @@ if [ ! -f "$image" ]; then
   echo "type1 qemu smoke: boot image does not exist: $image" >&2
   exit 66
 fi
+case "$image" in
+  *.iso) ;;
+  *) fail_usage "boot image must be a Limine ISO; a raw ELF has no Limine handoff" ;;
+esac
 
 qemu="${AEGISHV_QEMU:-qemu-system-x86_64}"
 if ! command -v "$qemu" >/dev/null 2>&1; then
@@ -144,12 +153,7 @@ else
     fi
   done
 fi
-boot_mode="kernel"
-case "$image" in
-  *.iso)
-    boot_mode="iso"
-    ;;
-esac
+boot_mode="iso"
 
 cmd=(
   "$qemu"
@@ -162,11 +166,7 @@ cmd=(
   -no-shutdown
 )
 
-if [ "$boot_mode" = "iso" ]; then
-  cmd+=(-cdrom "$image" -boot d)
-else
-  cmd+=(-kernel "$image")
-fi
+cmd+=(-cdrom "$image" -boot d)
 
 if [ "$print_command" = true ]; then
   printf '%q ' "${cmd[@]}"
@@ -212,6 +212,12 @@ forbidden_markers=(
   "aegishv:type1:vmcs-load-error"
   "aegishv:type1:vmcs-load-skipped"
   "aegishv:type1:limine-missing"
+  "aegishv:type1:host-tables-error"
+  "aegishv:type1:host-exception"
+  "aegishv:type1:host-fatal"
+  "aegishv:type1:guest-entry-error"
+  "aegishv:type1:guest-exit-error"
+  "aegishv:type1:guest-resume-error"
   "aegishv:type1:panic"
 )
 for forbidden_marker in "${forbidden_markers[@]}"; do

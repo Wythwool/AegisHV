@@ -363,4 +363,49 @@ mod tests {
         assert_eq!(writer.writes, BUILD_WRITE_COUNT);
         assert_eq!(writer.code, TYPE1_TOY_CODE);
     }
+
+    struct RejectingScrubWriter;
+
+    impl Type1PhysicalPageWriter for RejectingScrubWriter {
+        fn zero_page(&mut self, _page: HostPhysical) -> Result<(), CoreError> {
+            Err(CoreError::new(
+                CoreErrorKind::ZeroingFailed,
+                "test scrub failure",
+            ))
+        }
+
+        fn write_u64(
+            &mut self,
+            _page: HostPhysical,
+            _index: u16,
+            _value: u64,
+        ) -> Result<(), CoreError> {
+            Err(CoreError::new(
+                CoreErrorKind::InvalidState,
+                "write followed a failed scrub",
+            ))
+        }
+
+        fn write_bytes(
+            &mut self,
+            _page: HostPhysical,
+            _offset: usize,
+            _bytes: &[u8],
+        ) -> Result<(), CoreError> {
+            Err(CoreError::new(
+                CoreErrorKind::InvalidState,
+                "payload followed a failed scrub",
+            ))
+        }
+    }
+
+    #[test]
+    fn materializer_propagates_page_scrub_failure() {
+        let plan = Type1ToyGuestBuildPlan::new(pages(), capabilities()).unwrap();
+
+        assert_eq!(
+            materialize_type1_toy_guest(&plan, &mut RejectingScrubWriter).unwrap_err(),
+            Type1ToyGuestError::ScrubFailed(CoreErrorKind::ZeroingFailed)
+        );
+    }
 }

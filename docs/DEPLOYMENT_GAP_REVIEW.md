@@ -20,11 +20,16 @@ This review is deliberately strict. It lists gaps that block stronger release cl
 
 ## Type-1 Gaps Not Closed
 
-- Bootable type-1 image is not present in this repository.
-- Boot-integrated VMX, SVM, or EL2 runtime backend evidence is not present.
-- Direct EPT/NPT/Stage-2 enforcement is not implemented.
-- Device isolation is modeled but not programmed into hardware.
+- The modern Limine ISO and x86_64 lab-kernel boot path are present, but there is no retained nested-VMX or bare-metal log proving the wired Intel toy guest executed. The observed QEMU TCG run reached owned host tables and preflight without VMX; WHPX was unavailable.
+- The lab kernel still relies on Limine's mappings. It does not install a hypervisor-owned CR3, enforce W^X across all host aliases, or provide guard pages.
+- SMP/AP startup, per-CPU VMX state, vCPU scheduling, APIC/interrupt routing, timers, preemption, and interrupt injection are not implemented.
+- The live Intel path runs one fixed `CPUID; HLT` guest. A general guest loader, reusable lifecycle, multiple guests, and guest crash recovery are not implemented.
+- PAT, XSAVE/FPU state, comprehensive MSR context, I/O and MSR bitmap policy, broad exit coverage, and hostile-guest recovery are incomplete.
+- General direct EPT/NPT/Stage-2 permission changes, invalidation, and single-step/retrap enforcement are not implemented. The Intel toy guest has only its fixed EPT.
+- Device isolation is modeled but not programmed into VT-d, AMD-Vi, or an SMMU; there is no production device model or DMA isolation boundary.
+- Live AMD SVM guest entry and ARM64 EL2 guest execution are not implemented.
+- Hardware soak, broad CPU/firmware coverage, secure/measured boot, attestation, signed rollback-safe updates, crash evidence, and a supported incident-response lifecycle are absent.
 
 ## Release Decision
 
-The host-side sensor can keep moving through host-sensor release gates. VMI alpha and type-1 lab milestones must remain separate until their gates have evidence.
+The default host-side sensor can keep moving through its own release gates. The x86_64 Type-1 boot boundary may be described as a lab milestone, but Intel guest execution remains unproven and production Type-1, VMI alpha, and host-sensor release claims must keep separate evidence and gates.

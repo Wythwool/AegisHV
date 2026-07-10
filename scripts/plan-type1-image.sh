@@ -20,7 +20,7 @@ output_image="${AEGISHV_TYPE1_OUTPUT_IMAGE:-target/type1/aegishv-type1.iso}"
 limine_config="boot/limine/limine.conf"
 linker_script="boot/linker/x86_64-type1.ld"
 entry_stub="boot/x86_64/entry.S"
-expected_serial="${AEGISHV_TYPE1_EXPECTED_SERIAL:-aegishv:type1:halt}"
+expected_serial="${AEGISHV_TYPE1_EXPECTED_SERIAL:-aegishv:type1:handoff-ok}"
 expected_kernel_physical_base="${AEGISHV_TYPE1_EXPECTED_PHYSICAL_BASE:-0x00200000}"
 expected_kernel_virtual_base="${AEGISHV_TYPE1_EXPECTED_VIRTUAL_BASE:-0xFFFFFFFF80200000}"
 

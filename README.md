@@ -1,8 +1,11 @@
 # AegisHV
 
-AegisHV is a host-side KVM telemetry sensor written in Rust.
+AegisHV has two deliberately separate runtime surfaces:
 
-It reads KVM tracefs `kvm_exit` lines from the host, turns them into structured JSONL events, correlates page-aligned W^X patterns, exports Prometheus text metrics, and can react through QEMU QMP actions. Nothing is installed inside the guest.
+- the default `aegishv` binary, a Linux host-side KVM telemetry sensor;
+- a separate opt-in, bootable x86_64 Type-1 lab kernel target used for low-level Intel VMX bring-up.
+
+The default sensor reads KVM tracefs `kvm_exit` lines from the host, turns them into structured JSONL events, correlates page-aligned W^X patterns, exports Prometheus text metrics, and can react through QEMU QMP actions. Nothing is installed inside the guest.
 
 ## Ownership Metadata
 
@@ -14,6 +17,8 @@ These links identify project ownership metadata. They are not a copyright assign
 ## What this repository is today
 
 - Host-side KVM sensor.
+- Separate no-std x86_64 lab kernel with a modern Limine ISO build path, owned GDT/TSS/IDT state, an early physical allocator, and strict serial evidence tooling.
+- Wired Intel VMX toy-guest path with VMXON, a complete VMCS, four-level guest paging and EPT, VMLAUNCH into `CPUID; HLT`, CPUID exit handling, VMRESUME, HLT exit handling, and VMXOFF.
 - Replayable parser/correlation pipeline.
 - W^X correlation scoped by VM, address space, and guest-physical page.
 - Best-effort VM identity enrichment from PID, process start time, QEMU args, cgroups/systemd, UUID/name hints, and QMP socket hints.
@@ -26,13 +31,23 @@ These links identify project ownership metadata. They are not a copyright assign
 
 ## What this repository is not yet
 
-- Not a type-1 hypervisor.
+- The default `aegishv` binary is not a Type-1 hypervisor; it remains the host-side sensor described above.
+- The separate lab kernel is not a production or general-purpose Type-1 hypervisor.
+- Intel guest execution has not been demonstrated on a reviewed nested-VMX or bare-metal host.
 - Not a full VMI stack.
-- Not a direct EPT/NPT/Stage-2 permission enforcement engine.
+- Not a general direct EPT/NPT/Stage-2 permission enforcement engine; the Intel lab path has only its fixed toy-guest EPT.
 - Not a syscall-path integrity product yet.
 - Not true hardware PMU sampling; the current no-dependency fallback reports PMU target heartbeat events with unavailable counters as `null`.
 
-That distinction matters. The code in this tree is a harder, cleaner host-side sensor. The type-1 / VMI / trap-engine path is documented in `docs/TYPE1_ROADMAP.md`, with phase backlog items in `BACKLOG.md`, instead of being hand-waved.
+That distinction matters. The userspace sensor and bare-metal lab kernel have different entry points, evidence, and release gates. The Type-1 / VMI / trap-engine path is documented in `docs/TYPE1_ROADMAP.md`, with phase backlog items in `BACKLOG.md`.
+
+## Type-1 lab boundary
+
+A modern Limine ISO has booted locally under QEMU TCG through the owned host descriptor tables and runtime preflight. That is boot-boundary evidence only: TCG did not expose VMX in the available environment, and WHPX was unavailable, so the run could not execute the Intel toy guest.
+
+The VMX guest path is present in code, but execution is claimed only after the strict eight-marker chain in `docs/TYPE1_BOOT_BOUNDARY.md` is captured on a reviewed nested-VMX or bare-metal host. A successful chain would prove one BSP, one fixed guest, one CPUID exit, one VMRESUME, and one HLT exit—not production readiness.
+
+Production blockers still include a hypervisor-owned CR3 with enforced W^X and guard pages, SMP/per-CPU VMX, APIC/interrupt/timer virtualization, a general guest loader, complete PAT/XSAVE/FPU/MSR context, devices and IOMMU isolation, live AMD/ARM backends, hardware soak, and a secure update/attestation/incident-response lifecycle.
 
 ## Highlights in 0.4.0
 
@@ -226,10 +241,12 @@ Tagging `vX.Y.Z` triggers locked release builds, packaging, SHA-256 generation, 
 - `src/actions.rs` — QMP actions and mocks.
 - `src/metrics.rs` — Prometheus text metrics.
 - `src/tracefs.rs` — tracefs helpers and snapshot output.
-- `src/vmi.rs` / `src/hypervisor.rs` — future VMI/type-1 backend contracts and offline VMI infrastructure.
+- `src/vmi.rs` / `src/hypervisor.rs` — live-backend contracts and offline VMI infrastructure; not wired to the bare-metal toy guest.
 - `crates/aegishv-hypervisor-core` — `no_std` bare-metal boundary models for IDs, memory maps, page allocation, crash records, per-CPU state, ABI rings, VM lifecycle, and vCPU scheduling.
 - `crates/aegishv-event-abi` — `no_std` facade for the event and command ring ABI.
-- `crates/aegishv-arch-x86` — `no_std` x86 helper models for early serial logging, host page-table plans, and AP startup validation.
+- `crates/aegishv-arch-x86` — `no_std` x86 helpers and models for early serial logging, host page-table plans, AP startup validation, VMX instructions, controls, VMCS state, EPT, and exit handling.
+- `crates/aegishv-type1-kernel` — bootable x86_64 lab kernel and the wired Intel VMX toy-guest path.
+- `boot/` — Limine configuration, linker layout, early entry, owned host tables, and VMX entry/exit assembly.
 - `schema/` — JSON schemas.
 - `examples/traces/` — replay fixtures.
 - `tests/` — integration tests.
@@ -252,5 +269,7 @@ Read these before making stronger deployment or backend claims:
 - `docs/VMI.md`
 - `docs/VMI_LINUX.md`
 - `docs/TYPE1_ROADMAP.md`
+- `docs/TYPE1_BOOT_BOUNDARY.md`
+- `docs/TYPE1_READINESS_GATE.md`
 - `BACKLOG.md`
 - `docs/STATUS.md`

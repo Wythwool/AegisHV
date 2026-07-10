@@ -58,8 +58,95 @@ struct HostExceptionFrame {
 
 #[cfg(all(target_os = "none", target_arch = "x86_64"))]
 extern "C" {
-    static __aegishv_host_gdt: u8;
-    static __aegishv_host_idt: u8;
+    static __aegishv_host_gdt: [u8; 72];
+    static __aegishv_host_idt: [u8; 4096];
+    static __aegishv_host_tss: [u8; 104];
+    static __aegishv_vmx_exit_stack_top: u8;
+    fn aegishv_vmx_vmexit_entry();
+    fn aegishv_vmx_launch(frame: *const aegishv_arch_x86::vmx::exits::GeneralRegisters) -> u64;
+}
+
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+struct HhdmPageWriter {
+    offset: u64,
+}
+
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+impl HhdmPageWriter {
+    fn page_pointer(
+        &self,
+        page: aegishv_hypervisor_core::ids::HostPhysical,
+    ) -> Result<*mut u8, aegishv_hypervisor_core::error::CoreError> {
+        let address = hhdm_page_virtual_address(page.get(), self.offset).map_err(|()| {
+            aegishv_hypervisor_core::error::CoreError::new(
+                aegishv_hypervisor_core::error::CoreErrorKind::InvalidAddress,
+                "HHDM page is not an aligned canonical host range",
+            )
+        })?;
+        Ok(address as *mut u8)
+    }
+}
+
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+impl aegishv_type1_kernel::Type1PhysicalPageWriter for HhdmPageWriter {
+    fn zero_page(
+        &mut self,
+        page: aegishv_hypervisor_core::ids::HostPhysical,
+    ) -> Result<(), aegishv_hypervisor_core::error::CoreError> {
+        let pointer = self.page_pointer(page)?;
+        for offset in 0..aegishv_type1_kernel::TYPE1_RUNTIME_PAGE_SIZE as usize {
+            // SAFETY: Limine's HHDM maps the allocator-owned physical page for
+            // the handoff lifetime, and every offset remains inside that page.
+            unsafe { pointer.add(offset).write_volatile(0) };
+        }
+        Ok(())
+    }
+
+    fn write_u64(
+        &mut self,
+        page: aegishv_hypervisor_core::ids::HostPhysical,
+        index: u16,
+        value: u64,
+    ) -> Result<(), aegishv_hypervisor_core::error::CoreError> {
+        if usize::from(index) >= 512 {
+            return Err(aegishv_hypervisor_core::error::CoreError::new(
+                aegishv_hypervisor_core::error::CoreErrorKind::InvalidArgument,
+                "page-table write index is outside a 4K page",
+            ));
+        }
+        let pointer = self.page_pointer(page)?.cast::<u64>();
+        // SAFETY: the checked index names one aligned u64 slot in the live,
+        // zeroed allocator-owned page mapped through Limine's HHDM.
+        unsafe { pointer.add(usize::from(index)).write_volatile(value) };
+        Ok(())
+    }
+
+    fn write_bytes(
+        &mut self,
+        page: aegishv_hypervisor_core::ids::HostPhysical,
+        offset: usize,
+        bytes: &[u8],
+    ) -> Result<(), aegishv_hypervisor_core::error::CoreError> {
+        let end = offset.checked_add(bytes.len()).ok_or(
+            aegishv_hypervisor_core::error::CoreError::new(
+                aegishv_hypervisor_core::error::CoreErrorKind::InvalidArgument,
+                "guest page byte range overflowed",
+            ),
+        )?;
+        if end > aegishv_type1_kernel::TYPE1_RUNTIME_PAGE_SIZE as usize {
+            return Err(aegishv_hypervisor_core::error::CoreError::new(
+                aegishv_hypervisor_core::error::CoreErrorKind::InvalidArgument,
+                "guest page byte range is outside a 4K page",
+            ));
+        }
+        let pointer = self.page_pointer(page)?;
+        for (index, byte) in bytes.iter().copied().enumerate() {
+            // SAFETY: the checked byte range stays within the allocator-owned
+            // HHDM page and volatile writes publish the guest code as planned.
+            unsafe { pointer.add(offset + index).write_volatile(byte) };
+        }
+        Ok(())
+    }
 }
 
 #[cfg(target_os = "none")]
@@ -125,15 +212,21 @@ const COM1: u16 = aegishv_type1_boot::layout::SERIAL_COM1_PORT;
 #[cfg(target_os = "none")]
 #[no_mangle]
 pub extern "C" fn aegishv_type1_rust_entry() -> ! {
+    // SAFETY: entry assembly disabled interrupts, installed a valid stack, and
+    // COM1 is the fixed early console owned by this BSP.
     unsafe {
         serial_init(COM1);
     }
+    // SAFETY: entry assembly has completed the owned table installation; this
+    // read-only snapshot verifies the exact linker-owned objects and selectors.
     if unsafe { host_tables_are_owned() } {
         serial_write_line(aegishv_type1_kernel::SERIAL_HOST_TABLES_OK_MARKER);
     } else {
         serial_write_line(aegishv_type1_kernel::SERIAL_HOST_TABLES_ERROR_MARKER);
         halt_loop();
     }
+    // SAFETY: the Limine request block remains mapped and response pointers are
+    // range-checked before their protocol prefixes are read.
     let handoff = unsafe { read_limine_minimal_handoff() };
     let status = aegishv_type1_kernel::limine_minimal_handoff_status(handoff);
     if status.is_ready() {
@@ -152,6 +245,17 @@ pub extern "C" fn aegishv_type1_rust_entry() -> ! {
         serial_write_line(regions_marker);
         serial_write_line(vmxon_marker);
         serial_write_line(vmcs_marker);
+        if backend_marker == aegishv_type1_kernel::SERIAL_RUNTIME_BACKEND_VMX_MARKER
+            && preflight_marker == aegishv_type1_kernel::SERIAL_RUNTIME_PREFLIGHT_OK_MARKER
+            && enable_marker == aegishv_type1_kernel::SERIAL_RUNTIME_ENABLE_OK_MARKER
+            && regions_marker == aegishv_type1_kernel::SERIAL_RUNTIME_REGIONS_OK_MARKER
+            && vmxon_marker == aegishv_type1_kernel::SERIAL_RUNTIME_VMXON_OK_MARKER
+            && vmcs_marker == aegishv_type1_kernel::SERIAL_RUNTIME_VMCS_LOAD_OK_MARKER
+        {
+            // SAFETY: every preceding marker corresponds to successful host
+            // table, capability, VMXON, and VMCS-load validation on this BSP.
+            unsafe { run_type1_vmx_toy_guest(handoff) };
+        }
     } else {
         serial_write_line(aegishv_type1_kernel::SERIAL_LIMINE_MISSING_MARKER);
         serial_write_line(status.serial_marker());
@@ -170,6 +274,8 @@ fn runtime_markers(
     &'static str,
     &'static str,
 ) {
+    // SAFETY: CPUID is available in x86-64 mode and RDMSR is reached only for
+    // the vendor capability advertised by CPUID.
     let capability_report = aegishv_type1_kernel::type1_capabilities_from_snapshot(unsafe {
         read_type1_cpu_snapshot()
     });
@@ -199,22 +305,32 @@ fn runtime_markers(
     ) {
         Ok(plan) => {
             let backend_marker = plan.backend.serial_marker();
+            // SAFETY: backend selection established which architectural MSRs
+            // are legal to read on this CPU.
             let controls = unsafe { read_type1_control_snapshot(plan.backend) };
             match aegishv_type1_kernel::plan_type1_runtime_preflight(plan, controls) {
                 Ok(preflight) => {
                     let enable_plan = aegishv_type1_kernel::plan_type1_runtime_enable(preflight);
+                    // SAFETY: preflight applied the VMX/SVM fixed-bit rules and
+                    // this BSP owns the control-register transition.
                     match unsafe { apply_type1_enable_plan(enable_plan) } {
                         Ok(()) => {
                             let (regions_marker, vmxon_marker, vmcs_marker) =
                                 match aegishv_type1_kernel::plan_type1_runtime_regions(
                                     plan,
+                                    // SAFETY: the planner reads IA32_VMX_BASIC
+                                    // only for the selected Intel VMX backend.
                                     unsafe { read_type1_vmx_basic(plan.backend) },
                                 ) {
+                                    // SAFETY: region addresses came from the
+                                    // bounded USABLE-memory allocator and HHDM.
                                     Ok(regions) => match unsafe {
                                         materialize_type1_runtime_regions(handoff, regions)
                                     } {
                                         Ok(()) => {
                                             let (vmxon_marker, vmcs_marker) =
+                                                // SAFETY: initialized regions
+                                                // are exclusively owned here.
                                                 unsafe { run_type1_vmcs_load_cycle(regions) };
                                             (
                                                 aegishv_type1_kernel::SERIAL_RUNTIME_REGIONS_OK_MARKER,
@@ -327,10 +443,9 @@ fn copy_limine_memory_entries(
     let mut copied = [aegishv_type1_boot::LimineMemmapEntry::empty();
         aegishv_type1_kernel::TYPE1_MAX_MEMORY_MAP_ENTRIES];
     for (index, slot) in copied.iter_mut().take(count).enumerate() {
-        // The accepted Limine response guarantees that entry_count is the
-        // accessible extent of this live pointer array. The range check above
-        // rules out arithmetic wrap and noncanonical endpoints; Limine owns and
-        // keeps the mapped array alive until bootloader memory is reclaimed.
+        // SAFETY: entry_count is the accessible extent of this live pointer
+        // array. The checked range cannot wrap or become noncanonical, and
+        // Limine keeps the mapped array alive through early boot.
         let entry = unsafe { table.add(index).read_volatile() };
         if entry.is_null() {
             return Err(());
@@ -340,7 +455,7 @@ fn copy_limine_memory_entries(
             core::mem::size_of::<aegishv_type1_boot::LimineMemmapEntry>(),
             core::mem::align_of::<aegishv_type1_boot::LimineMemmapEntry>(),
         )?;
-        // Limine guarantees that each validated pointer addresses one complete
+        // SAFETY: Limine guarantees that each validated pointer addresses one complete
         // 24-byte protocol object which remains mapped and alive until the
         // bootloader-reclaimable ranges are explicitly reclaimed.
         *slot = unsafe { entry.read_volatile() };
@@ -463,6 +578,70 @@ unsafe fn read_type1_control_snapshot(
 }
 
 #[cfg(all(target_os = "none", target_arch = "x86_64"))]
+unsafe fn read_vmx_capability_snapshot() -> Result<
+    aegishv_arch_x86::vmx::capabilities::VmxCapabilitySnapshot,
+    aegishv_arch_x86::vmx::VmxError,
+> {
+    use aegishv_arch_x86::vmx::capabilities::*;
+    use aegishv_arch_x86::vmx::controls::{
+        PRIMARY_ACTIVATE_SECONDARY_CONTROLS, SECONDARY_ENABLE_EPT,
+    };
+
+    // SAFETY: CPUID has already selected the Intel VMX backend, making the
+    // architectural IA32_VMX_BASIC capability MSR available on this CPU.
+    let basic = unsafe { read_msr(IA32_VMX_BASIC_MSR) };
+    if !VmxCapabilitySnapshot::uses_true_controls(basic) {
+        return Err(aegishv_arch_x86::vmx::VmxError::new(
+            aegishv_arch_x86::vmx::VmxErrorKind::UnsupportedCapability,
+            "live VMX entry requires true control MSRs",
+        ));
+    }
+    // SAFETY: IA32_VMX_BASIC reported true-control support, so the true
+    // primary-control capability MSR is architecturally defined.
+    let primary = unsafe { read_msr(IA32_VMX_TRUE_PROCBASED_CTLS_MSR) };
+    if !VmxCapabilitySnapshot::control_allows(primary, PRIMARY_ACTIVATE_SECONDARY_CONTROLS) {
+        return Err(aegishv_arch_x86::vmx::VmxError::new(
+            aegishv_arch_x86::vmx::VmxErrorKind::UnsupportedCapability,
+            "CPU does not expose secondary VM-execution controls",
+        ));
+    }
+    // SAFETY: the true primary controls advertise activation of secondary
+    // controls, so IA32_VMX_PROCBASED_CTLS2 is available to read.
+    let secondary = unsafe { read_msr(IA32_VMX_PROCBASED_CTLS2_MSR) };
+    if !VmxCapabilitySnapshot::control_allows(secondary, SECONDARY_ENABLE_EPT) {
+        return Err(aegishv_arch_x86::vmx::VmxError::new(
+            aegishv_arch_x86::vmx::VmxErrorKind::UnsupportedCapability,
+            "CPU does not allow EPT",
+        ));
+    }
+    // SAFETY: the VMX backend and true/secondary-control checks above make all
+    // remaining Intel VMX capability and fixed-bit MSRs architectural here.
+    let (pin_based, exit, entry, ept_vpid, cr0_fixed0, cr0_fixed1, cr4_fixed0, cr4_fixed1) = unsafe {
+        (
+            read_msr(IA32_VMX_TRUE_PINBASED_CTLS_MSR),
+            read_msr(IA32_VMX_TRUE_EXIT_CTLS_MSR),
+            read_msr(IA32_VMX_TRUE_ENTRY_CTLS_MSR),
+            read_msr(IA32_VMX_EPT_VPID_CAP_MSR),
+            read_msr(IA32_VMX_CR0_FIXED0_MSR),
+            read_msr(IA32_VMX_CR0_FIXED1_MSR),
+            read_msr(IA32_VMX_CR4_FIXED0_MSR),
+            read_msr(IA32_VMX_CR4_FIXED1_MSR),
+        )
+    };
+    Ok(VmxCapabilitySnapshot {
+        basic,
+        pin_based,
+        primary,
+        secondary,
+        exit,
+        entry,
+        ept_vpid,
+        cr0_fixed: aegishv_arch_x86::vmx::features::CrFixedBits::new(cr0_fixed0, cr0_fixed1),
+        cr4_fixed: aegishv_arch_x86::vmx::features::CrFixedBits::new(cr4_fixed0, cr4_fixed1),
+    })
+}
+
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
 unsafe fn read_cr0() -> u64 {
     let value: u64;
     asm!(
@@ -482,6 +661,82 @@ unsafe fn read_cr4() -> u64 {
         options(nomem, nostack, preserves_flags)
     );
     value
+}
+
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+unsafe fn read_cr3() -> u64 {
+    let value: u64;
+    asm!(
+        "mov {}, cr3",
+        out(reg) value,
+        options(nomem, nostack, preserves_flags)
+    );
+    value
+}
+
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+unsafe fn capture_vmx_host_state(
+    cr0_fixed: aegishv_arch_x86::vmx::features::CrFixedBits,
+    cr4_fixed: aegishv_arch_x86::vmx::features::CrFixedBits,
+) -> Result<aegishv_arch_x86::vmx::vmcs_config::VmcsHostState64, aegishv_arch_x86::vmx::VmxError> {
+    use aegishv_arch_x86::vmx::vmcs_config::{VmcsHostSelectors, VmcsHostState64};
+    // SAFETY: VMX preflight runs at CPL0 on the bootstrap CPU; these
+    // read-only snapshots capture the control registers used by HOST state.
+    let (raw_cr3, cr0, cr4) = unsafe { (read_cr3(), read_cr0(), read_cr4()) };
+    let cr3 = aegishv_hypervisor_core::ids::HostPhysical::new(raw_cr3).map_err(|_| {
+        aegishv_arch_x86::vmx::VmxError::new(
+            aegishv_arch_x86::vmx::VmxErrorKind::InvalidGuestState,
+            "host CR3 cannot be represented as a physical address",
+        )
+    })?;
+    aegishv_arch_x86::vmx::features::validate_control_register(
+        cr0,
+        cr0_fixed,
+        "host CR0 violates the CPU's VMX fixed bits",
+    )?;
+    aegishv_arch_x86::vmx::features::validate_control_register(
+        cr4,
+        cr4_fixed,
+        "host CR4 violates the CPU's VMX fixed bits",
+    )?;
+    // SAFETY: long mode defines the FS/GS base, SYSENTER, and EFER MSRs; this
+    // CPL0 BSP only reads them to reproduce the current host return context.
+    let (fs_base, gs_base, sysenter_cs, sysenter_esp, sysenter_eip, efer) = unsafe {
+        (
+            read_msr(0xc000_0100),
+            read_msr(0xc000_0101),
+            read_msr(0x174) as u32,
+            read_msr(0x175),
+            read_msr(0x176),
+            read_msr(aegishv_type1_kernel::IA32_EFER_MSR),
+        )
+    };
+    let state = VmcsHostState64 {
+        cr0,
+        cr3,
+        cr4,
+        selectors: VmcsHostSelectors {
+            es: 0x30,
+            cs: 0x28,
+            ss: 0x30,
+            ds: 0x30,
+            fs: 0x30,
+            gs: 0x30,
+            tr: 0x38,
+        },
+        fs_base,
+        gs_base,
+        tr_base: core::ptr::addr_of!(__aegishv_host_tss) as u64,
+        gdtr_base: core::ptr::addr_of!(__aegishv_host_gdt) as u64,
+        idtr_base: core::ptr::addr_of!(__aegishv_host_idt) as u64,
+        sysenter_cs,
+        sysenter_esp,
+        sysenter_eip,
+        efer,
+        rsp: core::ptr::addr_of!(__aegishv_vmx_exit_stack_top) as u64,
+        rip: aegishv_vmx_vmexit_entry as usize as u64,
+    };
+    state.validate()
 }
 
 #[cfg(all(target_os = "none", target_arch = "x86_64"))]
@@ -569,6 +824,7 @@ unsafe fn host_tables_are_owned() -> bool {
     // lifetime. LTR has changed the installed TSS descriptor to busy type 11.
     let tss_access = unsafe {
         core::ptr::addr_of!(__aegishv_host_gdt)
+            .cast::<u8>()
             .add(61)
             .read_volatile()
     };
@@ -584,7 +840,7 @@ unsafe fn host_tables_are_owned() -> bool {
         && fs as u16 == 0x30
         && gs as u16 == 0x30
         && tr as u16 == 0x38
-        && tss_access & 0x8f == 0x8b
+        && tss_access == 0x8b
 }
 
 #[cfg(target_os = "none")]
@@ -624,6 +880,8 @@ unsafe fn run_type1_vmcs_load_cycle(
     regions: aegishv_type1_kernel::Type1RuntimeRegionMaterialization,
 ) -> (&'static str, &'static str) {
     let mut executor = aegishv_arch_x86::vmx::hardware::HardwareVmxInstructions::new();
+    // SAFETY: the caller completed VMX preflight and materialized exclusive,
+    // revision-initialized VMXON and VMCS pages for this bootstrap CPU.
     match unsafe { aegishv_type1_kernel::run_type1_vmcs_load_cycle_with(regions, &mut executor) } {
         Ok(aegishv_type1_kernel::Type1VmcsLoadCycleStatus::LoadedAndLeft) => (
             aegishv_type1_kernel::SERIAL_RUNTIME_VMXON_OK_MARKER,
@@ -645,13 +903,237 @@ unsafe fn run_type1_vmcs_load_cycle(
     }
 }
 
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+unsafe fn run_type1_vmx_toy_guest(handoff: aegishv_type1_kernel::LimineMinimalHandoff) -> ! {
+    use aegishv_arch_x86::vmx::instructions::VmxInstructionExecutor;
+    use aegishv_arch_x86::vmx::vmcs_config::{
+        MinimalVmcsConfiguration, VmcsExecutionState, VmcsGuestState64,
+    };
+
+    // SAFETY: runtime dispatch selected Intel VMX from CPUID and the bootstrap
+    // CPU remains at CPL0 while its capability MSRs are snapshotted.
+    let capability_snapshot = match unsafe { read_vmx_capability_snapshot() } {
+        Ok(snapshot) => snapshot,
+        Err(_) => vmx_guest_entry_error(),
+    };
+    let capabilities = match capability_snapshot.prepare_toy_guest() {
+        Ok(capabilities) => capabilities,
+        Err(_) => vmx_guest_entry_error(),
+    };
+    let (memory_entries, memory_entry_count) = match copy_limine_memory_entries(handoff) {
+        Ok(entries) => entries,
+        Err(()) => vmx_guest_entry_error(),
+    };
+    let mut allocation = match aegishv_type1_kernel::allocate_type1_runtime_memory::<
+        { aegishv_type1_kernel::TYPE1_MAX_MEMORY_MAP_ENTRIES },
+    >(
+        &memory_entries[..memory_entry_count],
+        aegishv_type1_kernel::Type1RuntimeBackend::IntelVmx,
+    ) {
+        Ok(allocation) => allocation,
+        Err(_) => vmx_guest_entry_error(),
+    };
+    let guest_pages = match allocation.allocate_intel_toy_guest() {
+        Ok(pages) => pages,
+        Err(_) => vmx_guest_entry_error(),
+    };
+    // SAFETY: CPUID is available in 64-bit mode and the selected Intel backend
+    // makes the VMX feature-control MSR used by this snapshot architectural.
+    let cpu_snapshot = unsafe { read_type1_cpu_snapshot() };
+    let capability_report = aegishv_type1_kernel::type1_capabilities_from_snapshot(cpu_snapshot);
+    let runtime_plan = match aegishv_type1_kernel::plan_type1_runtime_with_memory(
+        handoff,
+        aegishv_type1_kernel::Type1BackendRequest::IntelVmx,
+        capability_report.capabilities,
+        allocation.plan(),
+    ) {
+        Ok(plan) if plan.backend == aegishv_type1_kernel::Type1RuntimeBackend::IntelVmx => plan,
+        _ => vmx_guest_entry_error(),
+    };
+    // SAFETY: backend selection established that the VMX fixed-bit MSRs are
+    // available; this read-only snapshot precedes the owned CR transition.
+    let control_snapshot =
+        unsafe { read_type1_control_snapshot(aegishv_type1_kernel::Type1RuntimeBackend::IntelVmx) };
+    let preflight =
+        match aegishv_type1_kernel::plan_type1_runtime_preflight(runtime_plan, control_snapshot) {
+            Ok(preflight) => preflight,
+            Err(_) => vmx_guest_entry_error(),
+        };
+    // SAFETY: preflight constructed fixed-bit-compliant CR0/CR4 values and the
+    // bootstrap CPU exclusively owns this transition before entering VMX.
+    let enable_result = unsafe {
+        apply_type1_enable_plan(aegishv_type1_kernel::plan_type1_runtime_enable(preflight))
+    };
+    // SAFETY: CPL0 readback is side-effect-free and verifies the exact values
+    // written by the immediately preceding enable transition.
+    let (cr0_after, cr4_after) = unsafe { (read_cr0(), read_cr4()) };
+    if enable_result.is_err()
+        || cr0_after != preflight.cr0_after
+        || cr4_after != preflight.cr4_after
+    {
+        vmx_guest_entry_error();
+    }
+
+    let regions = match aegishv_type1_kernel::plan_type1_runtime_regions(
+        runtime_plan,
+        Some(aegishv_type1_kernel::Type1VmxBasic::new(
+            capability_snapshot.basic,
+        )),
+    ) {
+        Ok(regions) => regions,
+        Err(_) => vmx_guest_entry_error(),
+    };
+    // SAFETY: every runtime physical page was allocated from distinct USABLE
+    // memory and maps through the validated Limine HHDM for one full page.
+    if unsafe { materialize_type1_runtime_regions(handoff, regions) }.is_err() {
+        vmx_guest_entry_error();
+    }
+    let guest_plan =
+        match aegishv_type1_kernel::Type1ToyGuestBuildPlan::new(guest_pages, capabilities.ept) {
+            Ok(plan) => plan,
+            Err(_) => vmx_guest_entry_error(),
+        };
+    let mut writer = HhdmPageWriter {
+        offset: handoff.hhdm_offset,
+    };
+    if aegishv_type1_kernel::materialize_type1_toy_guest(&guest_plan, &mut writer).is_err() {
+        vmx_guest_entry_error();
+    }
+    core::sync::atomic::compiler_fence(Ordering::SeqCst);
+
+    let guest = match VmcsGuestState64::toy_long_mode(
+        capabilities.cr0_fixed,
+        guest_plan.guest_cr3,
+        capabilities.cr4_fixed,
+        guest_plan.rsp,
+        guest_plan.rip,
+    ) {
+        Ok(guest) => guest,
+        Err(_) => vmx_guest_entry_error(),
+    };
+    let execution = match VmcsExecutionState::toy_isolated(
+        capabilities.controls,
+        guest_plan.ept_pointer,
+        guest,
+        capabilities.cr0_fixed,
+        capabilities.cr4_fixed,
+    ) {
+        Ok(execution) => execution,
+        Err(_) => vmx_guest_entry_error(),
+    };
+    // SAFETY: owned descriptor tables are active and preflight validated the
+    // current CR fixed bits before this VMCS host-state snapshot.
+    let host =
+        match unsafe { capture_vmx_host_state(capabilities.cr0_fixed, capabilities.cr4_fixed) } {
+            Ok(host) => host,
+            Err(_) => vmx_guest_entry_error(),
+        };
+    let configuration = MinimalVmcsConfiguration {
+        execution,
+        host,
+        guest,
+    };
+    if configuration.validate().is_err() {
+        vmx_guest_entry_error();
+    }
+
+    let vmxon = match aegishv_hypervisor_core::ids::HostPhysical::new(regions.vmxon_physical) {
+        Ok(address) => address,
+        Err(_) => vmx_guest_entry_error(),
+    };
+    let vmcs = match aegishv_hypervisor_core::ids::HostPhysical::new(regions.vmcs_physical) {
+        Ok(address) => address,
+        Err(_) => vmx_guest_entry_error(),
+    };
+    let mut executor = aegishv_arch_x86::vmx::hardware::HardwareVmxInstructions::new();
+    // SAFETY: preflight enabled VMXE and both allocator-owned VMX pages were
+    // zeroed, revision-initialized, and validated against IA32_VMX_BASIC.
+    if unsafe { executor.vmxon(vmxon) }.is_err() {
+        vmx_guest_entry_error();
+    }
+    // SAFETY: this CPU exclusively owns the initialized VMCS page until the
+    // terminal VMXOFF path, and no other CPU is started by this BSP prototype.
+    if unsafe { executor.vmclear(vmcs) }.is_err() {
+        // SAFETY: VMXON succeeded and this terminal path abandons all VMX state.
+        unsafe { vmx_guest_cleanup_after_error(&mut executor) };
+    }
+    // SAFETY: VMCLEAR initialized the exclusively owned VMCS and the processor
+    // remains in VMX operation on the same bootstrap CPU.
+    if unsafe { executor.vmptrld(vmcs) }.is_err() {
+        // SAFETY: VMXON succeeded and this terminal path abandons all VMX state.
+        unsafe { vmx_guest_cleanup_after_error(&mut executor) };
+    }
+    // SAFETY: VMPTRLD made the owned VMCS current; configuration validation
+    // covered every field and all referenced host/guest pages remain live.
+    if unsafe { configuration.write_to(&mut executor) }.is_err() {
+        // SAFETY: VMXON succeeded and this terminal path abandons all VMX state.
+        unsafe { vmx_guest_cleanup_after_error(&mut executor) };
+    }
+
+    serial_write_line(aegishv_type1_kernel::SERIAL_VMX_GUEST_CONFIG_OK_MARKER);
+    VMX_TOY_EXIT_STATE.store(VMX_TOY_AWAITING_CPUID, Ordering::Release);
+    VMX_LAST_INSTRUCTION_ERROR.store(0, Ordering::Release);
+    let registers = aegishv_arch_x86::vmx::exits::GeneralRegisters::default();
+    // SAFETY: the current VMCS contains the complete validated host, guest,
+    // control, and EPT state. Success transfers to non-root mode and never
+    // returns here; only VMfail returns its RFLAGS classification.
+    let flags = unsafe { aegishv_vmx_launch(core::ptr::addr_of!(registers)) };
+    if flags & 1 == 0 && flags & (1 << 6) != 0 {
+        // SAFETY: VMfailValid leaves this VMCS current until cleanup, so the
+        // architectural VM-instruction error field can still be inspected.
+        if let Ok(error) = unsafe {
+            executor.vmread(aegishv_arch_x86::vmx::vmcs::VmcsField::VM_INSTRUCTION_ERROR.raw())
+        } {
+            VMX_LAST_INSTRUCTION_ERROR.store(error as u32, Ordering::Release);
+            serial_write_vmx_instruction_error(error as u32);
+        }
+    }
+    // SAFETY: reaching this point means VMLAUNCH failed while the CPU remains
+    // in VMX operation with the same current VMCS; cleanup is terminal.
+    unsafe { vmx_guest_cleanup_after_error(&mut executor) }
+}
+
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+fn vmx_guest_entry_error() -> ! {
+    serial_write_line(aegishv_type1_kernel::SERIAL_VMX_GUEST_ENTRY_ERROR_MARKER);
+    halt_loop()
+}
+
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+unsafe fn vmx_guest_cleanup_after_error(
+    executor: &mut aegishv_arch_x86::vmx::hardware::HardwareVmxInstructions,
+) -> ! {
+    serial_write_line(aegishv_type1_kernel::SERIAL_VMX_GUEST_ENTRY_ERROR_MARKER);
+    // SAFETY: this helper is called only after VMXON succeeded on this CPU;
+    // VMXOFF is the final best-effort cleanup and no VMX state is reused.
+    let _ =
+        unsafe { aegishv_arch_x86::vmx::instructions::VmxInstructionExecutor::vmxoff(executor) };
+    halt_loop()
+}
+
 #[cfg(target_os = "none")]
 fn physical_to_hhdm(physical: u64, hhdm_offset: u64) -> Result<usize, ()> {
+    hhdm_page_virtual_address(physical, hhdm_offset)
+}
+
+#[cfg(any(target_os = "none", test))]
+fn hhdm_page_virtual_address(physical: u64, hhdm_offset: u64) -> Result<usize, ()> {
+    if physical % aegishv_type1_kernel::TYPE1_RUNTIME_PAGE_SIZE != 0 {
+        return Err(());
+    }
     let virtual_address = match physical.checked_add(hhdm_offset) {
         Some(value) => value,
         None => return Err(()),
     };
-    if virtual_address > usize::MAX as u64 {
+    let last = match virtual_address.checked_add(aegishv_type1_kernel::TYPE1_RUNTIME_PAGE_SIZE - 1)
+    {
+        Some(value) => value,
+        None => return Err(()),
+    };
+    if last > usize::MAX as u64
+        || !aegishv_arch_x86::vmx::features::is_canonical_u64(virtual_address)
+        || !aegishv_arch_x86::vmx::features::is_canonical_u64(last)
+    {
         return Err(());
     }
     Ok(virtual_address as usize)
@@ -841,6 +1323,7 @@ extern "C" fn aegishv_vmx_resume_failed(
             )
         } {
             VMX_LAST_INSTRUCTION_ERROR.store(error as u32, Ordering::Release);
+            serial_write_vmx_instruction_error(error as u32);
         }
     }
     // SAFETY: a failed VMRESUME leaves the current VMCS owned by this CPU and
@@ -854,6 +1337,8 @@ extern "C" fn aegishv_vmx_resume_failed(
 #[cfg(target_os = "none")]
 #[panic_handler]
 fn panic(_info: &PanicInfo<'_>) -> ! {
+    // SAFETY: the panic path is terminal, runs at CPL0, and reinitializes only
+    // the fixed legacy COM1 device before emitting a bounded marker.
     unsafe {
         serial_init(COM1);
     }
@@ -866,6 +1351,8 @@ fn serial_write_line(text: &str) {
     let mut line = [0u8; 64];
     if let Some(len) = aegishv_type1_kernel::marker_line(text, &mut line) {
         for byte in &line[..len] {
+            // SAFETY: early boot owns COM1 and the byte writer polls the UART
+            // transmit-ready bit before performing the single port write.
             unsafe {
                 serial_write_byte(COM1, *byte);
             }
@@ -873,81 +1360,134 @@ fn serial_write_line(text: &str) {
     }
 }
 
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+fn serial_write_vmx_instruction_error(error: u32) {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    // SAFETY: early boot owns COM1. Every emitted byte is from a fixed prefix,
+    // an in-bounds hexadecimal lookup, or the final newline.
+    unsafe {
+        for byte in aegishv_type1_kernel::SERIAL_VMX_INSTRUCTION_ERROR_PREFIX.as_bytes() {
+            serial_write_byte(COM1, *byte);
+        }
+        for shift in (0..8).rev() {
+            let nibble = ((error >> (shift * 4)) & 0xf) as usize;
+            serial_write_byte(COM1, HEX[nibble]);
+        }
+        serial_write_byte(COM1, b'\n');
+    }
+}
+
 #[cfg(target_os = "none")]
 unsafe fn read_limine_minimal_handoff() -> aegishv_type1_kernel::LimineMinimalHandoff {
-    let base_revision = core::ptr::addr_of!(LIMINE_BASE_REVISION_TAG)
-        .cast::<u64>()
-        .add(2)
-        .read_volatile();
-    let hhdm_response = core::ptr::addr_of!(LIMINE_HHDM_REQUEST.response).read_volatile();
-    let memmap_response = core::ptr::addr_of!(LIMINE_MEMMAP_REQUEST.response).read_volatile();
-    let executable_address_response =
-        core::ptr::addr_of!(LIMINE_EXECUTABLE_ADDRESS_REQUEST.response).read_volatile();
+    // SAFETY: this linker-owned three-word tag is mapped for the kernel
+    // lifetime, and Limine is permitted to update only its final word.
+    let base_revision = unsafe {
+        core::ptr::addr_of!(LIMINE_BASE_REVISION_TAG)
+            .cast::<u64>()
+            .add(2)
+            .read_volatile()
+    };
+    if base_revision != 0 {
+        return aegishv_type1_kernel::LimineMinimalHandoff {
+            base_revision_value: base_revision,
+            hhdm_response: 0,
+            hhdm_revision: 0,
+            hhdm_offset: 0,
+            memmap_response: 0,
+            memmap_revision: 0,
+            memmap_entry_count: 0,
+            memmap_entries: 0,
+            executable_address_response: 0,
+            executable_address_revision: 0,
+            executable_physical_base: 0,
+            executable_virtual_base: 0,
+        };
+    }
+    // SAFETY: the request records are linker-owned writable protocol objects;
+    // reading their response words does not dereference bootloader pointers.
+    let (hhdm_response, memmap_response, executable_address_response) = unsafe {
+        (
+            core::ptr::addr_of!(LIMINE_HHDM_REQUEST.response).read_volatile(),
+            core::ptr::addr_of!(LIMINE_MEMMAP_REQUEST.response).read_volatile(),
+            core::ptr::addr_of!(LIMINE_EXECUTABLE_ADDRESS_REQUEST.response).read_volatile(),
+        )
+    };
+    let hhdm_response = validated_limine_response(
+        hhdm_response,
+        core::mem::size_of::<aegishv_type1_kernel::LimineHhdmResponse>(),
+    );
+    let memmap_response = validated_limine_response(
+        memmap_response,
+        core::mem::size_of::<aegishv_type1_kernel::LimineMemmapResponse>(),
+    );
+    let executable_address_response = validated_limine_response(
+        executable_address_response,
+        core::mem::size_of::<aegishv_type1_kernel::LimineExecutableAddressResponse>(),
+    );
 
-    let hhdm_revision = if hhdm_response == 0 {
-        0
+    let (hhdm_revision, hhdm_offset) = if hhdm_response == 0 {
+        (0, 0)
     } else {
-        read_limine_response_u64(
-            hhdm_response,
-            aegishv_type1_kernel::LIMINE_RESPONSE_REVISION_OFFSET,
-        )
+        // SAFETY: the complete aligned response prefix was range-validated
+        // above and remains owned by Limine throughout early boot.
+        unsafe {
+            (
+                read_limine_response_u64(
+                    hhdm_response,
+                    aegishv_type1_kernel::LIMINE_RESPONSE_REVISION_OFFSET,
+                ),
+                read_limine_response_u64(
+                    hhdm_response,
+                    aegishv_type1_kernel::LIMINE_HHDM_OFFSET_OFFSET,
+                ),
+            )
+        }
     };
-    let hhdm_offset = if hhdm_response == 0 {
-        0
+    let (memmap_revision, memmap_entry_count, memmap_entries) = if memmap_response == 0 {
+        (0, 0, 0)
     } else {
-        read_limine_response_u64(
-            hhdm_response,
-            aegishv_type1_kernel::LIMINE_HHDM_OFFSET_OFFSET,
-        )
+        // SAFETY: the complete aligned response prefix was range-validated
+        // above and remains owned by Limine throughout early boot.
+        unsafe {
+            (
+                read_limine_response_u64(
+                    memmap_response,
+                    aegishv_type1_kernel::LIMINE_RESPONSE_REVISION_OFFSET,
+                ),
+                read_limine_response_u64(
+                    memmap_response,
+                    aegishv_type1_kernel::LIMINE_MEMMAP_ENTRY_COUNT_OFFSET,
+                ),
+                read_limine_response_u64(
+                    memmap_response,
+                    aegishv_type1_kernel::LIMINE_MEMMAP_ENTRIES_OFFSET,
+                ),
+            )
+        }
     };
-    let memmap_revision = if memmap_response == 0 {
-        0
-    } else {
-        read_limine_response_u64(
-            memmap_response,
-            aegishv_type1_kernel::LIMINE_RESPONSE_REVISION_OFFSET,
-        )
-    };
-    let memmap_entry_count = if memmap_response == 0 {
-        0
-    } else {
-        read_limine_response_u64(
-            memmap_response,
-            aegishv_type1_kernel::LIMINE_MEMMAP_ENTRY_COUNT_OFFSET,
-        )
-    };
-    let memmap_entries = if memmap_response == 0 {
-        0
-    } else {
-        read_limine_response_u64(
-            memmap_response,
-            aegishv_type1_kernel::LIMINE_MEMMAP_ENTRIES_OFFSET,
-        )
-    };
-    let executable_address_revision = if executable_address_response == 0 {
-        0
-    } else {
-        read_limine_response_u64(
-            executable_address_response,
-            aegishv_type1_kernel::LIMINE_RESPONSE_REVISION_OFFSET,
-        )
-    };
-    let executable_physical_base = if executable_address_response == 0 {
-        0
-    } else {
-        read_limine_response_u64(
-            executable_address_response,
-            aegishv_type1_kernel::LIMINE_EXECUTABLE_PHYSICAL_BASE_OFFSET,
-        )
-    };
-    let executable_virtual_base = if executable_address_response == 0 {
-        0
-    } else {
-        read_limine_response_u64(
-            executable_address_response,
-            aegishv_type1_kernel::LIMINE_EXECUTABLE_VIRTUAL_BASE_OFFSET,
-        )
-    };
+    let (executable_address_revision, executable_physical_base, executable_virtual_base) =
+        if executable_address_response == 0 {
+            (0, 0, 0)
+        } else {
+            // SAFETY: the complete aligned response prefix was range-validated
+            // above and remains owned by Limine throughout early boot.
+            unsafe {
+                (
+                    read_limine_response_u64(
+                        executable_address_response,
+                        aegishv_type1_kernel::LIMINE_RESPONSE_REVISION_OFFSET,
+                    ),
+                    read_limine_response_u64(
+                        executable_address_response,
+                        aegishv_type1_kernel::LIMINE_EXECUTABLE_PHYSICAL_BASE_OFFSET,
+                    ),
+                    read_limine_response_u64(
+                        executable_address_response,
+                        aegishv_type1_kernel::LIMINE_EXECUTABLE_VIRTUAL_BASE_OFFSET,
+                    ),
+                )
+            }
+        };
 
     aegishv_type1_kernel::LimineMinimalHandoff {
         base_revision_value: base_revision,
@@ -966,11 +1506,24 @@ unsafe fn read_limine_minimal_handoff() -> aegishv_type1_kernel::LimineMinimalHa
 }
 
 #[cfg(target_os = "none")]
+fn validated_limine_response(response: u64, size: usize) -> u64 {
+    if response != 0 && validate_limine_object_range(response, size, 8).is_ok() {
+        response
+    } else {
+        0
+    }
+}
+
+#[cfg(target_os = "none")]
 unsafe fn read_limine_response_u64(response: u64, offset: usize) -> u64 {
-    (response as usize as *const u8)
-        .add(offset)
-        .cast::<u64>()
-        .read_volatile()
+    // SAFETY: callers validate the full response prefix and use only aligned
+    // u64 offsets within that prefix before invoking this helper.
+    unsafe {
+        (response as usize as *const u8)
+            .add(offset)
+            .cast::<u64>()
+            .read_volatile()
+    }
 }
 
 #[cfg(target_os = "none")]
@@ -1015,6 +1568,8 @@ unsafe fn inb(port: u16) -> u8 {
 #[cfg(target_os = "none")]
 fn halt_loop() -> ! {
     loop {
+        // SAFETY: all callers are terminal CPL0 paths with interrupts disabled;
+        // HLT intentionally leaves the CPU quiescent until an external event.
         unsafe {
             asm!("hlt", options(nomem, nostack, preserves_flags));
         }
@@ -1028,7 +1583,7 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::validate_limine_object_range;
+    use super::{hhdm_page_virtual_address, validate_limine_object_range};
 
     #[test]
     fn limine_object_range_rejects_wrap_and_noncanonical_endpoints() {
@@ -1036,5 +1591,16 @@ mod tests {
         assert!(validate_limine_object_range(u64::MAX - 7, 16, 8).is_err());
         assert!(validate_limine_object_range(0x0000_7fff_ffff_fff8, 16, 8).is_err());
         assert!(validate_limine_object_range(0x1001, 24, 8).is_err());
+    }
+
+    #[test]
+    fn hhdm_page_range_requires_alignment_and_canonical_endpoints() {
+        assert_eq!(
+            hhdm_page_virtual_address(0x2000, 0xffff_8000_0000_0000),
+            Ok(0xffff_8000_0000_2000usize)
+        );
+        assert!(hhdm_page_virtual_address(0x2001, 0xffff_8000_0000_0000).is_err());
+        assert!(hhdm_page_virtual_address(0x1000, 0x0000_8000_0000_0000).is_err());
+        assert!(hhdm_page_virtual_address(0x2000, u64::MAX - 0x1000).is_err());
     }
 }

@@ -26,7 +26,8 @@ Use this checklist before release branches, backend changes, and policy/action c
 
 ## Backend Claims
 
-- Type-1, full VMI, direct EPT/NPT/Stage-2 enforcement, syscall-path integrity, libvirt lifecycle integration, and hardware PMU sampling must remain documented as not implemented until real backend code and evidence exist.
+- Production/general Type-1 support and demonstrated Intel guest execution must remain distinct from the bootable lab kernel and code-only toy path until reviewed hardware evidence and the production gates exist.
+- Full VMI, general direct EPT/NPT/Stage-2 enforcement, syscall-path integrity, libvirt lifecycle integration, and hardware PMU sampling must remain documented as not implemented until real backend code and evidence exist.
 
 ## Release Checks
 

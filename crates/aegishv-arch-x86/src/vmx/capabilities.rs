@@ -76,7 +76,7 @@ impl VmxCapabilitySnapshot {
             exit: VmxControlMsr::from_raw(VmxControlGroup::Exit, self.exit),
             entry: VmxControlMsr::from_raw(VmxControlGroup::Entry, self.entry),
         }
-        .build(VmxControlRequest::toy_hlt_guest())?;
+        .build_true_controls(VmxControlRequest::toy_hlt_guest())?;
         let ept = EptCapabilities::new(self.ept_vpid);
         ept.validate_4_level_write_back()?;
         Ok(VmxToyCapabilities {
@@ -131,11 +131,11 @@ mod tests {
                 | (VMX_MEMORY_TYPE_WRITE_BACK << VMX_BASIC_MEMORY_TYPE_SHIFT)
                 | VMX_BASIC_TRUE_CONTROLS
                 | 1,
-            pin_based: u64::from(u32::MAX) << 32,
-            primary: u64::from(u32::MAX) << 32,
+            pin_based: (u64::from(u32::MAX) << 32) | 0x16,
+            primary: (u64::from(u32::MAX) << 32) | 0x0400_6172,
             secondary: u64::from(u32::MAX) << 32,
-            exit: u64::from(u32::MAX) << 32,
-            entry: u64::from(u32::MAX) << 32,
+            exit: (u64::from(u32::MAX) << 32) | 0x0003_6dfb,
+            entry: (u64::from(u32::MAX) << 32) | 0x0000_11fb,
             ept_vpid: EPT_VPID_CAP_PAGE_WALK_LENGTH_4 | EPT_VPID_CAP_MEMORY_TYPE_WB,
             cr0_fixed: CrFixedBits::new(0x21, u64::MAX),
             cr4_fixed: CrFixedBits::new(0x2020, u64::MAX),
