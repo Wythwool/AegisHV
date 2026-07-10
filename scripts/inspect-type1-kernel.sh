@@ -46,13 +46,22 @@ host_state_markers=(
 )
 vmx_guest_markers=(
   "aegishv:type1:guest-config-ok"
+  "aegishv:type1:guest-preempt-exit-ok"
+  "aegishv:type1:guest-io-exit-ok"
   "aegishv:type1:guest-cpuid-exit-ok"
   "aegishv:type1:guest-hlt-exit-ok"
   "aegishv:type1:guest-run-ok"
+  "aegishv:type1:guest-timeout"
   "aegishv:type1:guest-entry-error"
   "aegishv:type1:guest-exit-error"
   "aegishv:type1:guest-resume-error"
   "aegishv:type1:vm-instruction-error=0x"
+)
+vmx_diagnostic_prefixes=(
+  "aegishv:type1:vmx-cpu-signature=0x"
+  "aegishv:type1:vmx-timer-rate=0x"
+  "aegishv:type1:vmx-timer-reload=0x"
+  "aegishv:type1:vmx-timer-effective=0x"
 )
 limine_failure_markers=(
   "aegishv:type1:limine-base-revision"
@@ -274,6 +283,13 @@ for marker in "${host_state_markers[@]}" "${vmx_guest_markers[@]}"; do
   fi
 done
 
+for prefix in "${vmx_diagnostic_prefixes[@]}"; do
+  if ! grep -Fqa "$prefix" "$kernel_elf"; then
+    echo "type1 kernel inspect: VMX diagnostic prefix was not found: $prefix" >&2
+    exit 70
+  fi
+done
+
 if ! grep -Fqa "$expected_limine_missing" "$kernel_elf"; then
   echo "type1 kernel inspect: Limine fallback marker was not found: $expected_limine_missing" >&2
   exit 70
@@ -327,6 +343,8 @@ host_state_marker_count=${#host_state_markers[@]}
 host_state_markers_present=true
 vmx_guest_marker_count=${#vmx_guest_markers[@]}
 vmx_guest_markers_present=true
+vmx_diagnostic_prefix_count=${#vmx_diagnostic_prefixes[@]}
+vmx_diagnostic_prefixes_present=true
 limine_missing_marker=$expected_limine_missing
 limine_missing_marker_present=true
 limine_failure_marker_count=${#limine_failure_markers[@]}

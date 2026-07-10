@@ -153,7 +153,13 @@ fn default_vmx_markers() -> &'static str {
 aegishv:type1:backend-vmx\n\
 aegishv:type1:vmxon-cycle-ok\n\
 aegishv:type1:vmcs-load-ok\n\
+aegishv:type1:vmx-cpu-signature=0x000906ed\n\
+aegishv:type1:vmx-timer-rate=0x00000005\n\
+aegishv:type1:vmx-timer-reload=0x00080000\n\
+aegishv:type1:vmx-timer-effective=0x0000000001000000\n\
 aegishv:type1:guest-config-ok\n\
+aegishv:type1:guest-preempt-exit-ok\n\
+aegishv:type1:guest-io-exit-ok\n\
 aegishv:type1:guest-cpuid-exit-ok\n\
 aegishv:type1:guest-hlt-exit-ok\n\
 aegishv:type1:guest-run-ok\n"
@@ -172,9 +178,11 @@ fn qemu_smoke_requires_the_default_vmx_markers_in_order() {
     let wrong_order = lab.smoke(
         "aegishv:type1:host-tables-ok\n\
 aegishv:type1:backend-vmx\n\
-aegishv:type1:vmcs-load-ok\n\
 aegishv:type1:vmxon-cycle-ok\n\
+aegishv:type1:vmcs-load-ok\n\
 aegishv:type1:guest-config-ok\n\
+aegishv:type1:guest-io-exit-ok\n\
+aegishv:type1:guest-preempt-exit-ok\n\
 aegishv:type1:guest-cpuid-exit-ok\n\
 aegishv:type1:guest-hlt-exit-ok\n\
 aegishv:type1:guest-run-ok\n",
@@ -186,6 +194,18 @@ aegishv:type1:guest-run-ok\n",
             .contains("expected serial marker was not observed in required order"),
         "unexpected stderr: {}",
         String::from_utf8_lossy(&wrong_order.stderr)
+    );
+
+    let missing_io = lab.smoke(
+        &default_vmx_markers().replace("aegishv:type1:guest-io-exit-ok\n", ""),
+        &[],
+    );
+    assert_eq!(missing_io.status.code(), Some(70));
+    assert!(
+        String::from_utf8_lossy(&missing_io.stderr)
+            .contains("required order: aegishv:type1:guest-io-exit-ok"),
+        "unexpected stderr: {}",
+        String::from_utf8_lossy(&missing_io.stderr)
     );
 }
 
@@ -205,6 +225,10 @@ fn qemu_smoke_accepts_repeated_marker_arguments() {
             "aegishv:type1:vmcs-load-ok",
             "--expect-marker",
             "aegishv:type1:guest-config-ok",
+            "--expect-marker",
+            "aegishv:type1:guest-preempt-exit-ok",
+            "--expect-marker",
+            "aegishv:type1:guest-io-exit-ok",
             "--expect-marker",
             "aegishv:type1:guest-cpuid-exit-ok",
             "--expect-marker",
@@ -231,7 +255,21 @@ fn qemu_smoke_rejects_a_weak_custom_marker_contract() {
 
     assert_eq!(output.status.code(), Some(64));
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains("complete host, VMX entry, CPUID"),
+        String::from_utf8_lossy(&output.stderr).contains("preemption, port-I/O"),
+        "unexpected stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn qemu_smoke_rejects_a_contract_without_containment_markers() {
+    let lab = FakeQemuLab::new();
+    let old_contract = "aegishv:type1:host-tables-ok,aegishv:type1:backend-vmx,aegishv:type1:vmxon-cycle-ok,aegishv:type1:vmcs-load-ok,aegishv:type1:guest-config-ok,aegishv:type1:guest-cpuid-exit-ok,aegishv:type1:guest-hlt-exit-ok,aegishv:type1:guest-run-ok";
+    let output = lab.smoke(default_vmx_markers(), &["--expect-markers", old_contract]);
+
+    assert_eq!(output.status.code(), Some(64));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("preemption, port-I/O"),
         "unexpected stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
@@ -266,6 +304,23 @@ fn qemu_smoke_rejects_failure_marker_after_success_chain() {
     assert!(
         String::from_utf8_lossy(&output.stderr)
             .contains("forbidden serial marker was observed: aegishv:type1:guest-entry-error"),
+        "unexpected stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn qemu_smoke_rejects_guest_timeout_after_success_chain() {
+    let lab = FakeQemuLab::new();
+    let output = lab.smoke(
+        &format!("{}aegishv:type1:guest-timeout\n", default_vmx_markers()),
+        &[],
+    );
+
+    assert_eq!(output.status.code(), Some(70));
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("forbidden serial marker was observed: aegishv:type1:guest-timeout"),
         "unexpected stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
@@ -307,12 +362,179 @@ fn evidence_manifest_accepts_the_ordered_vmx_chain() {
         "qemu_cpu=host,+vmx",
         "qemu_boot_mode=iso",
         "qemu_command=",
+        "expected_serial_marker_count=10",
+        "expected_serial_markers=aegishv:type1:host-tables-ok,aegishv:type1:backend-vmx,aegishv:type1:vmxon-cycle-ok,aegishv:type1:vmcs-load-ok,aegishv:type1:guest-config-ok,aegishv:type1:guest-preempt-exit-ok,aegishv:type1:guest-io-exit-ok,aegishv:type1:guest-cpuid-exit-ok,aegishv:type1:guest-hlt-exit-ok,aegishv:type1:guest-run-ok",
         "serial_markers_present=true",
         "serial_markers_in_order=true",
+        "vmx_cpu_signature_valid=true",
+        "vmx_cpu_signature=0x000906ed",
+        "vmx_timer_rate_valid=true",
+        "vmx_timer_rate=0x00000005",
+        "vmx_timer_reload_valid=true",
+        "vmx_timer_reload=0x00080000",
+        "vmx_timer_effective_valid=true",
+        "vmx_timer_effective=0x0000000001000000",
+        "vmx_timer_semantics_valid=true",
+        "vmx_timer_budget_limit=0x0000000001000000",
+        "vmx_diagnostics_valid=true",
         "forbidden_backend_none_observed=false",
         "forbidden_marker_observed=false",
         "qemu_smoke_exit_status=0",
+        "qemu_evidence_exit_status=0",
         "qemu_evidence=true",
+    ] {
+        assert!(
+            manifest_text.contains(expected),
+            "manifest is missing: {expected}"
+        );
+    }
+}
+
+#[test]
+fn evidence_manifest_rejects_a_missing_vmx_diagnostic() {
+    let lab = FakeQemuLab::new();
+    let manifest = lab.directory.join("evidence.txt");
+    let serial = default_vmx_markers().replace("aegishv:type1:vmx-timer-reload=0x00080000\n", "");
+    let output = lab.evidence(&serial, &manifest);
+
+    assert_eq!(output.status.code(), Some(70));
+    let manifest_text =
+        fs::read_to_string(repo_root().join(manifest)).expect("read QEMU evidence manifest");
+    for expected in [
+        "serial_markers_in_order=true",
+        "vmx_timer_reload_valid=false",
+        "vmx_timer_reload=\n",
+        "vmx_timer_semantics_valid=false",
+        "vmx_diagnostics_valid=false",
+        "qemu_smoke_exit_status=0",
+        "qemu_evidence_exit_status=70",
+        "qemu_evidence=false",
+    ] {
+        assert!(
+            manifest_text.contains(expected),
+            "manifest is missing: {expected}"
+        );
+    }
+}
+
+#[test]
+fn evidence_manifest_rejects_a_malformed_vmx_diagnostic() {
+    let lab = FakeQemuLab::new();
+    let manifest = lab.directory.join("evidence.txt");
+    let serial = default_vmx_markers().replace(
+        "aegishv:type1:vmx-timer-effective=0x0000000001000000",
+        "aegishv:type1:vmx-timer-effective=0x000000000100000z",
+    );
+    let output = lab.evidence(&serial, &manifest);
+
+    assert_eq!(output.status.code(), Some(70));
+    let manifest_text =
+        fs::read_to_string(repo_root().join(manifest)).expect("read QEMU evidence manifest");
+    for expected in [
+        "vmx_timer_effective_valid=false",
+        "vmx_timer_effective=\n",
+        "vmx_timer_semantics_valid=false",
+        "vmx_diagnostics_valid=false",
+        "qemu_smoke_exit_status=0",
+        "qemu_evidence_exit_status=70",
+        "qemu_evidence=false",
+    ] {
+        assert!(
+            manifest_text.contains(expected),
+            "manifest is missing: {expected}"
+        );
+    }
+}
+
+#[test]
+fn evidence_manifest_rejects_semantically_invalid_vmx_timer_diagnostics() {
+    let cases = [
+        (
+            "rate above architectural range",
+            default_vmx_markers().replace(
+                "aegishv:type1:vmx-timer-rate=0x00000005",
+                "aegishv:type1:vmx-timer-rate=0x00000020",
+            ),
+        ),
+        (
+            "reserved reload sentinel",
+            default_vmx_markers()
+                .replace(
+                    "aegishv:type1:vmx-timer-reload=0x00080000",
+                    "aegishv:type1:vmx-timer-reload=0x00000001",
+                )
+                .replace(
+                    "aegishv:type1:vmx-timer-effective=0x0000000001000000",
+                    "aegishv:type1:vmx-timer-effective=0x0000000000000020",
+                ),
+        ),
+        (
+            "effective value mismatch",
+            default_vmx_markers().replace(
+                "aegishv:type1:vmx-timer-effective=0x0000000001000000",
+                "aegishv:type1:vmx-timer-effective=0x0000000000800000",
+            ),
+        ),
+        (
+            "effective value above hard budget",
+            default_vmx_markers()
+                .replace(
+                    "aegishv:type1:vmx-timer-reload=0x00080000",
+                    "aegishv:type1:vmx-timer-reload=0x00100000",
+                )
+                .replace(
+                    "aegishv:type1:vmx-timer-effective=0x0000000001000000",
+                    "aegishv:type1:vmx-timer-effective=0x0000000002000000",
+                ),
+        ),
+    ];
+
+    for (case, serial) in cases {
+        let lab = FakeQemuLab::new();
+        let manifest = lab.directory.join("evidence.txt");
+        let output = lab.evidence(&serial, &manifest);
+
+        assert_eq!(output.status.code(), Some(70), "case: {case}");
+        let manifest_text =
+            fs::read_to_string(repo_root().join(manifest)).expect("read QEMU evidence manifest");
+        for expected in [
+            "vmx_timer_rate_valid=true",
+            "vmx_timer_reload_valid=true",
+            "vmx_timer_effective_valid=true",
+            "vmx_timer_semantics_valid=false",
+            "vmx_diagnostics_valid=false",
+            "qemu_smoke_exit_status=0",
+            "qemu_evidence_exit_status=70",
+            "qemu_evidence=false",
+        ] {
+            assert!(
+                manifest_text.contains(expected),
+                "case {case} manifest is missing: {expected}"
+            );
+        }
+    }
+}
+
+#[test]
+fn evidence_manifest_rejects_duplicate_vmx_diagnostics() {
+    let lab = FakeQemuLab::new();
+    let manifest = lab.directory.join("evidence.txt");
+    let serial = format!(
+        "{}aegishv:type1:vmx-cpu-signature=0x000906ed\n",
+        default_vmx_markers()
+    );
+    let output = lab.evidence(&serial, &manifest);
+
+    assert_eq!(output.status.code(), Some(70));
+    let manifest_text =
+        fs::read_to_string(repo_root().join(manifest)).expect("read QEMU evidence manifest");
+    for expected in [
+        "vmx_cpu_signature_valid=false",
+        "vmx_cpu_signature=\n",
+        "vmx_diagnostics_valid=false",
+        "qemu_smoke_exit_status=0",
+        "qemu_evidence_exit_status=70",
+        "qemu_evidence=false",
     ] {
         assert!(
             manifest_text.contains(expected),
@@ -334,13 +556,40 @@ fn evidence_manifest_records_order_and_backend_none_refusal() {
     let manifest_text =
         fs::read_to_string(repo_root().join(manifest)).expect("read QEMU evidence manifest");
     for expected in [
-        "expected_serial_marker_count=8",
-        "expected_serial_markers=aegishv:type1:host-tables-ok,aegishv:type1:backend-vmx,aegishv:type1:vmxon-cycle-ok,aegishv:type1:vmcs-load-ok,aegishv:type1:guest-config-ok,aegishv:type1:guest-cpuid-exit-ok,aegishv:type1:guest-hlt-exit-ok,aegishv:type1:guest-run-ok",
+        "expected_serial_marker_count=10",
+        "expected_serial_markers=aegishv:type1:host-tables-ok,aegishv:type1:backend-vmx,aegishv:type1:vmxon-cycle-ok,aegishv:type1:vmcs-load-ok,aegishv:type1:guest-config-ok,aegishv:type1:guest-preempt-exit-ok,aegishv:type1:guest-io-exit-ok,aegishv:type1:guest-cpuid-exit-ok,aegishv:type1:guest-hlt-exit-ok,aegishv:type1:guest-run-ok",
         "serial_markers_present=true",
         "serial_markers_in_order=true",
         "forbidden_backend_none_observed=true",
         "forbidden_marker_observed=true",
         "forbidden_marker=aegishv:type1:backend-none",
+        "qemu_smoke_exit_status=70",
+        "qemu_evidence=false",
+    ] {
+        assert!(
+            manifest_text.contains(expected),
+            "manifest is missing: {expected}"
+        );
+    }
+}
+
+#[test]
+fn evidence_manifest_records_guest_timeout_refusal() {
+    let lab = FakeQemuLab::new();
+    let manifest = lab.directory.join("evidence.txt");
+    let output = lab.evidence(
+        &format!("{}aegishv:type1:guest-timeout\n", default_vmx_markers()),
+        &manifest,
+    );
+
+    assert_eq!(output.status.code(), Some(70));
+    let manifest_text =
+        fs::read_to_string(repo_root().join(manifest)).expect("read QEMU evidence manifest");
+    for expected in [
+        "serial_markers_present=true",
+        "serial_markers_in_order=true",
+        "forbidden_marker_observed=true",
+        "forbidden_marker=aegishv:type1:guest-timeout",
         "qemu_smoke_exit_status=70",
         "qemu_evidence=false",
     ] {

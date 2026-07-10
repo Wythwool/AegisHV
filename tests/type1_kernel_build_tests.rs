@@ -244,6 +244,11 @@ fn kernel_build_script_and_ci_keep_boot_evidence_boundary() {
             "runtime_vmxon_markers=aegishv:type1:vmxon-cycle-ok,aegishv:type1:vmxon-cycle-error,aegishv:type1:vmxon-cycle-skipped",
             "runtime_vmcs_load=smoke-cycle",
             "runtime_vmcs_load_markers=aegishv:type1:vmcs-load-ok,aegishv:type1:vmcs-load-error,aegishv:type1:vmcs-load-skipped",
+            "runtime_vmx_guest=bounded-io-cpuid-hlt",
+            "aegishv:type1:guest-preempt-exit-ok",
+            "aegishv:type1:guest-io-exit-ok",
+            "runtime_vmx_diagnostics=cpu-signature,timer-rate,timer-reload,timer-effective",
+            "runtime_vmx_diagnostic_prefixes=aegishv:type1:vmx-cpu-signature=0x,aegishv:type1:vmx-timer-rate=0x,aegishv:type1:vmx-timer-reload=0x,aegishv:type1:vmx-timer-effective=0x",
             "bootable_image=false",
             "qemu_evidence=false",
             "not a bootable ISO",
@@ -277,6 +282,15 @@ fn kernel_build_script_and_ci_keep_boot_evidence_boundary() {
             "aegishv:type1:vmcs-load-ok",
             "aegishv:type1:vmcs-load-error",
             "aegishv:type1:vmcs-load-skipped",
+            "aegishv:type1:guest-preempt-exit-ok",
+            "aegishv:type1:guest-io-exit-ok",
+            "aegishv:type1:guest-timeout",
+            "aegishv:type1:vmx-cpu-signature=0x",
+            "aegishv:type1:vmx-timer-rate=0x",
+            "aegishv:type1:vmx-timer-reload=0x",
+            "aegishv:type1:vmx-timer-effective=0x",
+            "VMX diagnostic prefix was not found",
+            "vmx_diagnostic_prefixes_present=true",
             "runtime backend marker was not found",
             "runtime preflight marker was not found",
             "runtime enable marker was not found",
@@ -314,4 +328,13 @@ fn kernel_build_script_and_ci_keep_boot_evidence_boundary() {
     );
     assert!(testing.contains("scripts/build-type1-kernel.sh"));
     assert!(testing.contains("not a bootable ISO"));
+}
+
+#[test]
+fn qemu_evidence_budget_matches_the_vmx_runtime_budget() {
+    let capabilities = read_repo_file("crates/aegishv-arch-x86/src/vmx/capabilities.rs");
+    let evidence = read_repo_file("scripts/type1-qemu-evidence.sh");
+
+    assert!(capabilities.contains("VMX_TOY_GUEST_BUDGET_TSC_TICKS: u64 = 1 << 24"));
+    assert!(evidence.contains("vmx_timer_budget_limit=\"0x0000000001000000\""));
 }

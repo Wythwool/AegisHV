@@ -7,11 +7,12 @@ out_dir="${AEGISHV_TYPE1_OUT:-target/type1}"
 boot_image="${AEGISHV_TYPE1_BOOT_IMAGE:-}"
 manifest="${AEGISHV_TYPE1_QEMU_MANIFEST:-$out_dir/aegishv-type1-qemu-evidence.txt}"
 serial_log="${AEGISHV_QEMU_SERIAL_LOG:-$out_dir/aegishv-type1-serial.log}"
-default_expected_markers="aegishv:type1:host-tables-ok,aegishv:type1:backend-vmx,aegishv:type1:vmxon-cycle-ok,aegishv:type1:vmcs-load-ok,aegishv:type1:guest-config-ok,aegishv:type1:guest-cpuid-exit-ok,aegishv:type1:guest-hlt-exit-ok,aegishv:type1:guest-run-ok"
+default_expected_markers="aegishv:type1:host-tables-ok,aegishv:type1:backend-vmx,aegishv:type1:vmxon-cycle-ok,aegishv:type1:vmcs-load-ok,aegishv:type1:guest-config-ok,aegishv:type1:guest-preempt-exit-ok,aegishv:type1:guest-io-exit-ok,aegishv:type1:guest-cpuid-exit-ok,aegishv:type1:guest-hlt-exit-ok,aegishv:type1:guest-run-ok"
 expected_marker_csv="${AEGISHV_TYPE1_EXPECTED_MARKERS:-${AEGISHV_TYPE1_EXPECTED_SERIAL:-$default_expected_markers}}"
 expected_markers=()
 marker_option_mode=""
 timeout_seconds="${AEGISHV_QEMU_TIMEOUT_SECONDS:-15}"
+vmx_timer_budget_limit="0x0000000001000000"
 
 usage() {
   cat >&2 <<'USAGE'
@@ -118,6 +119,8 @@ required_vmx_markers=(
   "aegishv:type1:vmxon-cycle-ok"
   "aegishv:type1:vmcs-load-ok"
   "aegishv:type1:guest-config-ok"
+  "aegishv:type1:guest-preempt-exit-ok"
+  "aegishv:type1:guest-io-exit-ok"
   "aegishv:type1:guest-cpuid-exit-ok"
   "aegishv:type1:guest-hlt-exit-ok"
   "aegishv:type1:guest-run-ok"
@@ -132,7 +135,7 @@ for marker in "${expected_markers[@]}"; do
   fi
 done
 if [ "$required_marker_index" -ne "${#required_vmx_markers[@]}" ]; then
-  fail_usage "expected serial marker list must include the complete host, VMX entry, CPUID, resume, and HLT proof chain in order"
+  fail_usage "expected serial marker list must include the complete host, VMX entry, preemption, port-I/O, CPUID, resume, and HLT proof chain in order"
 fi
 
 expected_marker_csv="$(IFS=','; printf '%s' "${expected_markers[*]}")"
@@ -248,6 +251,16 @@ forbidden_backend_none_observed=false
 forbidden_marker_observed=false
 forbidden_marker=""
 marker_observed=()
+vmx_cpu_signature_valid=false
+vmx_cpu_signature=""
+vmx_timer_rate_valid=false
+vmx_timer_rate=""
+vmx_timer_reload_valid=false
+vmx_timer_reload=""
+vmx_timer_effective_valid=false
+vmx_timer_effective=""
+vmx_timer_semantics_valid=false
+vmx_diagnostics_valid=false
 
 serial_has_marker() {
   local log_path="$1"
@@ -262,8 +275,108 @@ serial_has_marker() {
   return 1
 }
 
+capture_serial_hex_value() {
+  local log_path="$1"
+  local prefix="$2"
+  local width="$3"
+  local regex="^0x[0-9a-f]{${width}}$"
+  local line
+  local candidate
+  local prefix_count=0
+  local valid_count=0
+
+  captured_hex_valid=false
+  captured_hex_value=""
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line%$'\r'}"
+    case "$line" in
+      "$prefix"*)
+        prefix_count=$((prefix_count + 1))
+        candidate="${line#"$prefix"}"
+        if [[ "$candidate" =~ $regex ]]; then
+          valid_count=$((valid_count + 1))
+          captured_hex_value="$candidate"
+        fi
+        ;;
+    esac
+  done < "$log_path"
+
+  if [ "$prefix_count" -eq 1 ] && [ "$valid_count" -eq 1 ]; then
+    captured_hex_valid=true
+  else
+    captured_hex_value=""
+  fi
+}
+
+validate_vmx_timer_semantics() {
+  local LC_ALL=C
+  local rate_digits
+  local reload_digits
+  local effective_digits
+  local rate_value
+  local reload_value
+  local effective_value
+  local expected_effective
+  local max_reload
+  local budget_digits="${vmx_timer_budget_limit#0x}"
+  local hard_budget
+
+  vmx_timer_semantics_valid=false
+  if [ "$vmx_timer_rate_valid" != true ] \
+    || [ "$vmx_timer_reload_valid" != true ] \
+    || [ "$vmx_timer_effective_valid" != true ]; then
+    return
+  fi
+
+  rate_digits="${vmx_timer_rate#0x}"
+  reload_digits="${vmx_timer_reload#0x}"
+  effective_digits="${vmx_timer_effective#0x}"
+  rate_value=$((16#$rate_digits))
+  reload_value=$((16#$reload_digits))
+  if [ "$rate_value" -gt 31 ] || [ "$reload_value" -lt 2 ]; then
+    return
+  fi
+  if [[ "$effective_digits" > "$budget_digits" ]]; then
+    return
+  fi
+
+  hard_budget=$((16#$budget_digits))
+  max_reload=$((hard_budget >> rate_value))
+  if [ "$reload_value" -gt "$max_reload" ]; then
+    return
+  fi
+  expected_effective=$((reload_value << rate_value))
+  effective_value=$((16#$effective_digits))
+  if [ "$expected_effective" -ne "$effective_value" ]; then
+    return
+  fi
+
+  vmx_timer_semantics_valid=true
+}
+
 if [ -f "$serial_log" ]; then
   serial_log_present=true
+
+  capture_serial_hex_value "$serial_log" "aegishv:type1:vmx-cpu-signature=" 8
+  vmx_cpu_signature_valid="$captured_hex_valid"
+  vmx_cpu_signature="$captured_hex_value"
+  capture_serial_hex_value "$serial_log" "aegishv:type1:vmx-timer-rate=" 8
+  vmx_timer_rate_valid="$captured_hex_valid"
+  vmx_timer_rate="$captured_hex_value"
+  capture_serial_hex_value "$serial_log" "aegishv:type1:vmx-timer-reload=" 8
+  vmx_timer_reload_valid="$captured_hex_valid"
+  vmx_timer_reload="$captured_hex_value"
+  capture_serial_hex_value "$serial_log" "aegishv:type1:vmx-timer-effective=" 16
+  vmx_timer_effective_valid="$captured_hex_valid"
+  vmx_timer_effective="$captured_hex_value"
+  validate_vmx_timer_semantics
+  if [ "$vmx_cpu_signature_valid" = true ] \
+    && [ "$vmx_timer_rate_valid" = true ] \
+    && [ "$vmx_timer_reload_valid" = true ] \
+    && [ "$vmx_timer_effective_valid" = true ] \
+    && [ "$vmx_timer_semantics_valid" = true ]; then
+    vmx_diagnostics_valid=true
+  fi
 
   all_markers_present=true
   for marker in "${expected_markers[@]}"; do
@@ -303,6 +416,7 @@ if [ -f "$serial_log" ]; then
     "aegishv:type1:host-tables-error"
     "aegishv:type1:host-exception"
     "aegishv:type1:host-fatal"
+    "aegishv:type1:guest-timeout"
     "aegishv:type1:guest-entry-error"
     "aegishv:type1:guest-exit-error"
     "aegishv:type1:guest-resume-error"
@@ -329,8 +443,14 @@ qemu_evidence=false
 if [ "$smoke_status" -eq 0 ] \
   && [ "$serial_markers_present" = true ] \
   && [ "$serial_markers_in_order" = true ] \
+  && [ "$vmx_diagnostics_valid" = true ] \
   && [ "$forbidden_marker_observed" = false ]; then
   qemu_evidence=true
+fi
+
+evidence_status="$smoke_status"
+if [ "$evidence_status" -eq 0 ] && [ "$vmx_diagnostics_valid" != true ]; then
+  evidence_status=70
 fi
 
 {
@@ -354,6 +474,17 @@ expected_serial_markers=$expected_marker_csv
 serial_marker_observed=$serial_markers_in_order
 serial_markers_present=$serial_markers_present
 serial_markers_in_order=$serial_markers_in_order
+vmx_cpu_signature_valid=$vmx_cpu_signature_valid
+vmx_cpu_signature=$vmx_cpu_signature
+vmx_timer_rate_valid=$vmx_timer_rate_valid
+vmx_timer_rate=$vmx_timer_rate
+vmx_timer_reload_valid=$vmx_timer_reload_valid
+vmx_timer_reload=$vmx_timer_reload
+vmx_timer_effective_valid=$vmx_timer_effective_valid
+vmx_timer_effective=$vmx_timer_effective
+vmx_timer_semantics_valid=$vmx_timer_semantics_valid
+vmx_timer_budget_limit=$vmx_timer_budget_limit
+vmx_diagnostics_valid=$vmx_diagnostics_valid
 forbidden_backend_none_observed=$forbidden_backend_none_observed
 forbidden_marker_observed=$forbidden_marker_observed
 forbidden_marker=$forbidden_marker
@@ -366,11 +497,12 @@ PLAN
   cat <<PLAN
 timeout_seconds=$timeout_seconds
 qemu_smoke_exit_status=$smoke_status
+qemu_evidence_exit_status=$evidence_status
 qemu_evidence=$qemu_evidence
 
-This manifest records a local QEMU smoke attempt. A true qemu_evidence value requires every expected marker in order and rejects contradictory backend, failure, skipped, and panic markers. With the default contract it proves only the fixed toy guest's VMLAUNCH, CPUID exit, VMRESUME, HLT exit, and VMXOFF sequence on the recorded host; it is not general-runtime or production evidence.
+This manifest records a local QEMU smoke attempt. A true qemu_evidence value requires every expected marker in order, exactly one well-formed CPU/timer diagnostic set whose timer values are internally consistent and within the fixed budget, and no contradictory backend, failure, skipped, or panic markers. With the default contract it proves only the fixed toy guest's VMLAUNCH, forced preemption, trapped port-I/O, CPUID exit, VMRESUME, HLT exit, and VMXOFF sequence on the recorded host; it is not general-runtime or production evidence.
 PLAN
 } > "$manifest"
 
 echo "$manifest"
-exit "$smoke_status"
+exit "$evidence_status"

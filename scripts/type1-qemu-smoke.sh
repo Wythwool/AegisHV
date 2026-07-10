@@ -14,7 +14,7 @@ USAGE
 
 print_command=false
 image="${AEGISHV_TYPE1_BOOT_IMAGE:-}"
-default_expected_markers="aegishv:type1:host-tables-ok,aegishv:type1:backend-vmx,aegishv:type1:vmxon-cycle-ok,aegishv:type1:vmcs-load-ok,aegishv:type1:guest-config-ok,aegishv:type1:guest-cpuid-exit-ok,aegishv:type1:guest-hlt-exit-ok,aegishv:type1:guest-run-ok"
+default_expected_markers="aegishv:type1:host-tables-ok,aegishv:type1:backend-vmx,aegishv:type1:vmxon-cycle-ok,aegishv:type1:vmcs-load-ok,aegishv:type1:guest-config-ok,aegishv:type1:guest-preempt-exit-ok,aegishv:type1:guest-io-exit-ok,aegishv:type1:guest-cpuid-exit-ok,aegishv:type1:guest-hlt-exit-ok,aegishv:type1:guest-run-ok"
 expected_marker_csv="${AEGISHV_TYPE1_EXPECTED_MARKERS:-${AEGISHV_TYPE1_EXPECTED_SERIAL:-$default_expected_markers}}"
 expected_markers=()
 marker_option_mode=""
@@ -98,6 +98,8 @@ required_vmx_markers=(
   "aegishv:type1:vmxon-cycle-ok"
   "aegishv:type1:vmcs-load-ok"
   "aegishv:type1:guest-config-ok"
+  "aegishv:type1:guest-preempt-exit-ok"
+  "aegishv:type1:guest-io-exit-ok"
   "aegishv:type1:guest-cpuid-exit-ok"
   "aegishv:type1:guest-hlt-exit-ok"
   "aegishv:type1:guest-run-ok"
@@ -112,7 +114,7 @@ for marker in "${expected_markers[@]}"; do
   fi
 done
 if [ "$required_marker_index" -ne "${#required_vmx_markers[@]}" ]; then
-  fail_usage "expected serial marker list must include the complete host, VMX entry, CPUID, resume, and HLT proof chain in order"
+  fail_usage "expected serial marker list must include the complete host, VMX entry, preemption, port-I/O, CPUID, resume, and HLT proof chain in order"
 fi
 
 if [ -z "$image" ]; then
@@ -215,6 +217,7 @@ forbidden_markers=(
   "aegishv:type1:host-tables-error"
   "aegishv:type1:host-exception"
   "aegishv:type1:host-fatal"
+  "aegishv:type1:guest-timeout"
   "aegishv:type1:guest-entry-error"
   "aegishv:type1:guest-exit-error"
   "aegishv:type1:guest-resume-error"

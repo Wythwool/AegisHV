@@ -90,8 +90,10 @@ runtime_vmxon_markers=aegishv:type1:vmxon-cycle-ok,aegishv:type1:vmxon-cycle-err
 runtime_vmcs_load=smoke-cycle
 runtime_vmcs_load_markers=aegishv:type1:vmcs-load-ok,aegishv:type1:vmcs-load-error,aegishv:type1:vmcs-load-skipped
 runtime_host_tables=owned-gdt-tss-idt
-runtime_vmx_guest=isolated-cpuid-hlt
-runtime_vmx_guest_markers=aegishv:type1:guest-config-ok,aegishv:type1:guest-cpuid-exit-ok,aegishv:type1:guest-hlt-exit-ok,aegishv:type1:guest-run-ok
+runtime_vmx_guest=bounded-io-cpuid-hlt
+runtime_vmx_guest_markers=aegishv:type1:guest-config-ok,aegishv:type1:guest-preempt-exit-ok,aegishv:type1:guest-io-exit-ok,aegishv:type1:guest-cpuid-exit-ok,aegishv:type1:guest-hlt-exit-ok,aegishv:type1:guest-run-ok
+runtime_vmx_diagnostics=cpu-signature,timer-rate,timer-reload,timer-effective
+runtime_vmx_diagnostic_prefixes=aegishv:type1:vmx-cpu-signature=0x,aegishv:type1:vmx-timer-rate=0x,aegishv:type1:vmx-timer-reload=0x,aegishv:type1:vmx-timer-effective=0x
 inspect_manifest=$inspect_manifest
 bootable_image=false
 qemu_evidence=false
