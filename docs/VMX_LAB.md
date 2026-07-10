@@ -16,18 +16,23 @@ This document records the Intel VMX code now present in `aegishv-arch-x86` and t
 - EPT mapping plans, EPT violation decoding, VPID validation, and INVEPT/VPID invalidation plans.
 - Execute and write trap lifecycle models with temporary write-window reporting and Monitor Trap Flag single-step fallback behavior.
 - True-control and EPT capability snapshots, complete minimal host/guest/control VMCS state, four-level guest paging, and four-level EPT materialization.
-- Trap-all I/O A, I/O B, and MSR bitmap materialization, strict physical-address validation, mandatory bitmap controls, and exact live VMCS address readback.
+- Trap-all I/O A/B materialization and a fixed MSR bitmap that permits exactly direct guest `RDMSR IA32_PAT`; every write and other read remains trapped. Physical addresses, bitmap controls, bitmap contents, PAT controls, and guest/host PAT fields have exact readback checks.
 - A bare-metal assembly trampoline that treats successful VMLAUNCH/VMRESUME as non-returning, saves all guest GPRs, and dispatches VM exits on a dedicated host stack.
+- Exact exception/NMI exit decoding for the fixed vector-7 x87 and SIMD guard stages.
 
-Normal tests do not execute privileged VMX instructions. On a VMX-capable boot, the type-1 kernel performs the checked VMXON/VMCS-load cycle, constructs an isolated guest with a finite TSC-or-count deadline probe and HLT fallback, writes the complete VMCS, and calls the assembly VMLAUNCH path. An initial zero-value VMX preemption timer forces a sentinel exit before the first instruction. The handler then derives a reload from the hard `0x01000000`-TSC-tick budget using the `IA32_VMX_MISC` timer rate and resumes the probe. Only after the nonzero VMX deadline expires does it move guest RIP to a payload containing byte writes to ports `0xe9` and `0x8000`, CPUID leaf/subleaf 0, `RDMSR IA32_EFER`, and HLT.
+Normal tests do not execute privileged VMX instructions. On a VMX-capable boot, the type-1 kernel performs the checked VMXON/VMCS-load cycle, constructs an isolated guest with a finite TSC-or-count deadline probe and HLT fallback, writes the complete VMCS, and calls the assembly VMLAUNCH path. An initial zero-value VMX preemption timer forces a sentinel exit before the first instruction. The handler then derives a reload from the hard `0x01000000`-TSC-tick budget using the `IA32_VMX_MISC` timer rate and resumes the probe. Only after the nonzero VMX deadline expires does it move guest RIP to a payload containing byte writes to ports `0xe9` and `0x8000`, CPUID leaf/subleaf 0, trapped `RDMSR IA32_EFER`, direct `RDMSR IA32_PAT`, `FNOP`, `MOVDQA xmm0,xmm0`, and HLT.
 
-Both I/O pages and the MSR page are trap-all. The VMCS requires `use I/O bitmaps` and `use MSR bitmaps` and exact live readback of all three addresses. The exit handler validates the two port operations in order, never performs a host port write, and returns synthetic zero for the high-read MSR exit without executing host RDMSR. CPUID and HLT complete the bounded sequence. Any later timer expiry, unexpected exit, or VM-entry/resume failure is terminal.
+Both I/O pages are trap-all. The MSR page is fixed/read-allowlisted: only the low-range read bit for `IA32_PAT` is clear, while all MSR writes and other reads trap. The exit handler validates the two port operations in order and returns synthetic zero only for the exact trapped `IA32_EFER` stage. It does not emulate or replay the direct PAT read; that instruction executes in the guest.
+
+The VMCS uses a deliberate valid guest PAT and the captured host PAT. VM entry loads the guest value; VM exit saves it and restores the host value. Exact VMCS readback precedes launch, and every exit checks the saved guest field plus live host `IA32_PAT`. The guest directly reads and compares its PAT before reaching the x87 guard. This proves only the fixed PAT transition on a successful recorded run; it is not WRMSR PAT, per-vCPU PAT, or MTRR/PAT/MMIO policy.
+
+The guest runs with `CR0.TS=1`, `CR0.EM=0`, and `CR4.OSFXSR=1`. The side-effect-minimized `FNOP` and `MOVDQA`-self probes must each cause a valid vector-7 hardware-exception exit at its exact fault RIP with no error code. The handler uses exact continuation RIPs rather than VM-exit instruction length. Separately, the ELF inspection path disassembles host `.text` and rejects FPU/SIMD/state-save instructions. Neither mechanism implements XSAVE/FXSAVE, host SIMD preservation, context switching, lazy FPU, or multi-vCPU FPU state.
 
 The boot path copies a bounded Limine memory map and allocates fifteen distinct pages only from `USABLE` memory between 1 MiB and 4 GiB: VMXON, VMCS, ten guest/EPT pages, and the three bitmap pages. Bootloader-reclaimable memory is deliberately excluded because it can still contain Limine responses and active bootloader page tables.
 
 After runtime and guest pages are materialized through the HHDM, the final Intel path requires NX and four-level paging, sets EFER.NXE and CR0.WP, fills a linker-owned four-page hierarchy, flushes inherited global translations, and switches CR3 before capturing VMCS host state. The live root maps only the linked 2 MiB higher-half kernel window with 4K supervisor leaves: text RX, rodata/GOT R/NX, writable state/stacks/tables RW/NX. Null, HHDM, identity, and five lower stack-guard pages are absent. CR3 and live table contents are read back before `host-paging-ok` is emitted.
 
-The live path remains BSP-only; preflight still uses Limine mappings, and the owned root has no LA57, dynamic/per-CPU mappings, general physical/MMIO policy, teardown, or recovery. It also lacks stateful general MSR/WRMSR virtualization, selective or mutable bitmap policy, interrupt injection, APIC and guest-timer virtualization, scheduler-driven preemption, an independent host watchdog, devices/IOMMU isolation, XSAVE state, general guest loading, and hardware qualification. The fixed trap-all pages, timer, and in-guest fallback are containment checks, not those missing runtime facilities. A source build or model test is not VMX execution evidence; use matching valid pre/post-run SHA-256 image digests, the strict thirteen-marker chain, and the CPU/timer diagnostic audit described in `TYPE1_BOOT_BOUNDARY.md` on a reviewed nested-VMX or bare-metal host.
+The live path remains BSP-only; preflight still uses Limine mappings, and the owned root has no LA57, dynamic/per-CPU mappings, general physical/MMIO or MTRR/PAT policy, teardown, or recovery. It also lacks stateful general MSR/WRMSR virtualization, selective or mutable bitmap policy, general exception injection, APIC and guest-timer virtualization, scheduler-driven preemption, an independent host watchdog, devices/IOMMU isolation, XSAVE/FXSAVE and FPU/SIMD context management, general guest loading, and hardware qualification. The fixed bitmap, PAT, timer, and `#NM` checks are containment evidence, not those missing runtime facilities. A source build or model test is not VMX execution evidence; use matching valid pre/post-run SHA-256 image digests, the strict sixteen-marker chain, and the CPU/timer diagnostic audit described in `TYPE1_BOOT_BOUNDARY.md` on a reviewed nested-VMX or bare-metal host.
 
 ## Required Exit Coverage
 
@@ -38,12 +43,13 @@ A minimal Linux VMX lab run must cover these exits before it is treated as meani
 - port I/O;
 - VMX preemption timer;
 - RDMSR;
+- exception/NMI exits, including the fixed `#NM` guards;
 - WRMSR;
 - CR access;
 - EPT violation;
 - Monitor Trap Flag.
 
-The fixed toy guest now exercises CPUID, HLT, two port-I/O bitmap exits, the preemption timer, and one RDMSR exit. It does not exercise WRMSR, CR access, EPT violation, or Monitor Trap Flag; those remain requirements for the broader future Linux lab. The validator does not silently turn model coverage into hardware evidence.
+The fixed toy guest now exercises CPUID, HLT, two port-I/O bitmap exits, the preemption timer, one trapped RDMSR exit, one direct PAT read, and exact `#NM` exits for one x87 and one SIMD probe. It does not exercise WRMSR, CR access, EPT violation, Monitor Trap Flag, general exception injection, or FPU/SIMD context switching; those remain requirements for the broader future Linux lab. The validator does not silently turn model coverage into hardware evidence.
 
 ## Opt-In Lab Script
 

@@ -20,11 +20,16 @@ aegishv:type1:guest-io-exit-ok
 aegishv:type1:guest-io-b-exit-ok
 aegishv:type1:guest-cpuid-exit-ok
 aegishv:type1:guest-rdmsr-exit-ok
+aegishv:type1:guest-pat-state-ok
+aegishv:type1:guest-nm-x87-exit-ok
+aegishv:type1:guest-nm-simd-exit-ok
 aegishv:type1:guest-hlt-exit-ok
 aegishv:type1:guest-run-ok
 ```
 
-The host-paging marker is emitted only after NXE/WP and CR3 readback, live-table validation, and owned descriptor-table reachability succeed. `guest-config-ok` additionally requires both bitmap controls and exact live readback of the three nonzero, aligned, distinct, below-4-GiB bitmap addresses. The preemption marker is emitted only after an initial zero-value sentinel exit is followed by a real nonzero timer expiration from the finite TSC-or-count probe. It therefore proves the deadline fired rather than merely that the timer field was written. If an HLT or timer exit occurs at the exact later fallback RIP reached by either limit, the run emits `aegishv:type1:guest-timeout` and regains control instead of wedging the BSP; other unexpected probe exits remain guest-exit errors. The two I/O markers prove trap-all bitmap A contained `OUT 0xe9, AL` and bitmap B contained `OUT DX, AL` at port `0x8000`. The RDMSR marker proves the high-read MSR quadrant contained `IA32_EFER` and returned synthetic zero. The host performs none of those guest operations. CPUID and HLT prove the other bounded VMRESUME stages. Any contradictory backend, host-table or host-paging failure, runtime failure, skipped VMX operation, `aegishv:type1:guest-timeout`, guest entry/exit/resume error, exception, missing-handoff, or panic marker invalidates the run.
+The host-paging marker is emitted only after NXE/WP and CR3 readback, live-table validation, and owned descriptor-table reachability succeed. `guest-config-ok` additionally requires both bitmap controls, exact bitmap-address readback, PAT control support, exact guest/host PAT-field readback, and the fixed `TS=1`, `EM=0`, `OSFXSR=1` state. The preemption marker requires a real nonzero timer expiration after the zero sentinel. The two I/O markers prove the trap-all pages contained the expected port operations, while the RDMSR marker proves the trapped `IA32_EFER` stage returned synthetic zero. The fixed MSR page permits only direct guest `RDMSR IA32_PAT`; all writes and other reads remain trapped.
+
+`guest-pat-state-ok` requires the direct PAT read to match the deliberate valid guest value, the saved guest VMCS field to match, and the captured host PAT to be restored and read back. `guest-nm-x87-exit-ok` and `guest-nm-simd-exit-ok` require exact vector-7 hardware-exception exits at the fixed `FNOP` and `MOVDQA`-self RIPs. Those instructions minimize side effects if a guard regresses, but success still requires that neither executes. These three markers make the chain sixteen entries long; they do not prove XSAVE/FXSAVE, host SIMD preservation, context switching, or general exception injection. Any contradictory backend, host-table or host-paging failure, runtime failure, skipped VMX operation, `guest-timeout`, guest entry/exit/resume error, unexpected exception, missing handoff, or panic invalidates the run.
 
 The [Type-1 boot boundary](TYPE1_BOOT_BOUNDARY.md) defines what this chain proves and what remains outside it.
 
