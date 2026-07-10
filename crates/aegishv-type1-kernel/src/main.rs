@@ -28,11 +28,15 @@ const VMX_TOY_AWAITING_DEADLINE_PROBE: u8 = 1;
 #[cfg(all(target_os = "none", target_arch = "x86_64"))]
 const VMX_TOY_AWAITING_IO: u8 = 2;
 #[cfg(all(target_os = "none", target_arch = "x86_64"))]
-const VMX_TOY_AWAITING_CPUID: u8 = 3;
+const VMX_TOY_AWAITING_IO_BITMAP_B: u8 = 3;
 #[cfg(all(target_os = "none", target_arch = "x86_64"))]
-const VMX_TOY_AWAITING_HLT: u8 = 4;
+const VMX_TOY_AWAITING_CPUID: u8 = 4;
 #[cfg(all(target_os = "none", target_arch = "x86_64"))]
-const VMX_TOY_COMPLETE: u8 = 5;
+const VMX_TOY_AWAITING_RDMSR: u8 = 5;
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+const VMX_TOY_AWAITING_HLT: u8 = 6;
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+const VMX_TOY_COMPLETE: u8 = 7;
 #[cfg(all(target_os = "none", target_arch = "x86_64"))]
 const VMX_TOY_FAILED: u8 = u8::MAX;
 
@@ -196,6 +200,23 @@ impl aegishv_type1_kernel::Type1PhysicalPageWriter for HhdmPageWriter {
             unsafe { pointer.add(offset + index).write_volatile(byte) };
         }
         Ok(())
+    }
+
+    fn read_u8(
+        &mut self,
+        page: aegishv_hypervisor_core::ids::HostPhysical,
+        offset: usize,
+    ) -> Result<u8, aegishv_hypervisor_core::error::CoreError> {
+        if offset >= aegishv_type1_kernel::TYPE1_RUNTIME_PAGE_SIZE as usize {
+            return Err(aegishv_hypervisor_core::error::CoreError::new(
+                aegishv_hypervisor_core::error::CoreErrorKind::InvalidArgument,
+                "guest page byte offset is outside a 4K page",
+            ));
+        }
+        let pointer = self.page_pointer(page)?;
+        // SAFETY: the checked offset stays within the allocator-owned HHDM
+        // page. A volatile read verifies the live bitmap bytes just written.
+        Ok(unsafe { pointer.add(offset).read_volatile() })
     }
 }
 
@@ -1433,7 +1454,7 @@ unsafe fn run_type1_vmx_toy_guest(
 ) -> ! {
     use aegishv_arch_x86::vmx::instructions::VmxInstructionExecutor;
     use aegishv_arch_x86::vmx::vmcs_config::{
-        MinimalVmcsConfiguration, VmcsExecutionState, VmcsGuestState64,
+        MinimalVmcsConfiguration, VmcsExecutionState, VmcsGuestState64, VmcsInterceptionBitmaps,
     };
 
     // SAFETY: runtime dispatch selected Intel VMX from CPUID and the bootstrap
@@ -1550,9 +1571,18 @@ unsafe fn run_type1_vmx_toy_guest(
         Ok(guest) => guest,
         Err(_) => vmx_guest_entry_error(),
     };
+    let interception_bitmaps = match VmcsInterceptionBitmaps::new(
+        guest_pages.io_bitmap_a,
+        guest_pages.io_bitmap_b,
+        guest_pages.msr_bitmap,
+    ) {
+        Ok(bitmaps) => bitmaps,
+        Err(_) => vmx_guest_entry_error(),
+    };
     let execution = match VmcsExecutionState::toy_isolated(
         capabilities.controls,
         guest_plan.ept_pointer,
+        interception_bitmaps,
         guest,
         capabilities.cr0_fixed,
         capabilities.cr4_fixed,
@@ -1620,6 +1650,12 @@ unsafe fn run_type1_vmx_toy_guest(
     // SAFETY: VMPTRLD made the owned VMCS current; configuration validation
     // covered every field and all referenced host/guest pages remain live.
     if unsafe { configuration.write_to(&mut executor) }.is_err() {
+        // SAFETY: VMXON succeeded and this terminal path abandons all VMX state.
+        unsafe { vmx_guest_cleanup_after_error(&mut executor) };
+    }
+    // SAFETY: the same owned VMCS remains current after configuration writes;
+    // exact control/address readback must pass before configuration evidence.
+    if unsafe { execution.verify_interception_fields(&mut executor) }.is_err() {
         // SAFETY: VMXON succeeded and this terminal path abandons all VMX state.
         unsafe { vmx_guest_cleanup_after_error(&mut executor) };
     }
@@ -1803,8 +1839,14 @@ extern "C" fn aegishv_vmx_exit_dispatch(
             aegishv_arch_x86::vmx::toy_exit::ToyVmxExitSequence::AwaitingDeadlineProbe
         }
         VMX_TOY_AWAITING_IO => aegishv_arch_x86::vmx::toy_exit::ToyVmxExitSequence::AwaitingIo,
+        VMX_TOY_AWAITING_IO_BITMAP_B => {
+            aegishv_arch_x86::vmx::toy_exit::ToyVmxExitSequence::AwaitingIoBitmapB
+        }
         VMX_TOY_AWAITING_CPUID => {
             aegishv_arch_x86::vmx::toy_exit::ToyVmxExitSequence::AwaitingCpuid
+        }
+        VMX_TOY_AWAITING_RDMSR => {
+            aegishv_arch_x86::vmx::toy_exit::ToyVmxExitSequence::AwaitingRdmsr
         }
         VMX_TOY_AWAITING_HLT => aegishv_arch_x86::vmx::toy_exit::ToyVmxExitSequence::AwaitingHlt,
         VMX_TOY_COMPLETE => aegishv_arch_x86::vmx::toy_exit::ToyVmxExitSequence::Complete,
@@ -1819,9 +1861,12 @@ extern "C" fn aegishv_vmx_exit_dispatch(
         deadline_fallback_rip: aegishv_type1_kernel::TYPE1_TOY_DEADLINE_FALLBACK_RIP,
         continuation_rip: aegishv_type1_kernel::TYPE1_TOY_CONTINUATION_RIP,
         io_rip: aegishv_type1_kernel::TYPE1_TOY_IO_RIP,
+        io_bitmap_b_rip: aegishv_type1_kernel::TYPE1_TOY_IO_BITMAP_B_RIP,
         cpuid_rip: aegishv_type1_kernel::TYPE1_TOY_CPUID_RIP,
+        rdmsr_rip: aegishv_type1_kernel::TYPE1_TOY_RDMSR_RIP,
         hlt_rip: aegishv_type1_kernel::TYPE1_TOY_HLT_RIP,
         io_port: 0xe9,
+        io_bitmap_b_port: 0x8000,
         io_value: b'A',
         preemption_timer_reload: VMX_TOY_PREEMPTION_RELOAD.load(Ordering::Acquire),
     };
@@ -1855,17 +1900,32 @@ extern "C" fn aegishv_vmx_exit_dispatch(
             0
         }
         Ok(aegishv_arch_x86::vmx::toy_exit::ToyVmxExitAction::Resume)
+            if sequence
+                == aegishv_arch_x86::vmx::toy_exit::ToyVmxExitSequence::AwaitingIoBitmapB =>
+        {
+            VMX_TOY_EXIT_STATE.store(VMX_TOY_AWAITING_IO_BITMAP_B, Ordering::Release);
+            serial_write_line(aegishv_type1_kernel::SERIAL_VMX_GUEST_IO_EXIT_OK_MARKER);
+            0
+        }
+        Ok(aegishv_arch_x86::vmx::toy_exit::ToyVmxExitAction::Resume)
             if sequence == aegishv_arch_x86::vmx::toy_exit::ToyVmxExitSequence::AwaitingCpuid =>
         {
             VMX_TOY_EXIT_STATE.store(VMX_TOY_AWAITING_CPUID, Ordering::Release);
-            serial_write_line(aegishv_type1_kernel::SERIAL_VMX_GUEST_IO_EXIT_OK_MARKER);
+            serial_write_line(aegishv_type1_kernel::SERIAL_VMX_GUEST_IO_B_EXIT_OK_MARKER);
+            0
+        }
+        Ok(aegishv_arch_x86::vmx::toy_exit::ToyVmxExitAction::Resume)
+            if sequence == aegishv_arch_x86::vmx::toy_exit::ToyVmxExitSequence::AwaitingRdmsr =>
+        {
+            VMX_TOY_EXIT_STATE.store(VMX_TOY_AWAITING_RDMSR, Ordering::Release);
+            serial_write_line(aegishv_type1_kernel::SERIAL_VMX_GUEST_CPUID_EXIT_OK_MARKER);
             0
         }
         Ok(aegishv_arch_x86::vmx::toy_exit::ToyVmxExitAction::Resume)
             if sequence == aegishv_arch_x86::vmx::toy_exit::ToyVmxExitSequence::AwaitingHlt =>
         {
             VMX_TOY_EXIT_STATE.store(VMX_TOY_AWAITING_HLT, Ordering::Release);
-            serial_write_line(aegishv_type1_kernel::SERIAL_VMX_GUEST_CPUID_EXIT_OK_MARKER);
+            serial_write_line(aegishv_type1_kernel::SERIAL_VMX_GUEST_RDMSR_EXIT_OK_MARKER);
             0
         }
         Ok(aegishv_arch_x86::vmx::toy_exit::ToyVmxExitAction::Stop)

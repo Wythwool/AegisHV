@@ -1,17 +1,22 @@
 use super::exits::{
-    handle_cpuid_exit, CpuidLeaf, CpuidResult, ExitAction, GeneralRegisters, IoAccessSize,
-    IoDirection, IoInstructionQualification, StaticCpuidPolicy, VmxExitReason,
+    handle_cpuid_exit, handle_rdmsr_exit, CpuidLeaf, CpuidResult, ExitAction, GeneralRegisters,
+    IoAccessSize, IoDirection, IoInstructionQualification, MsrEntry, StaticCpuidPolicy,
+    StaticMsrPolicy, VmxExitReason,
 };
 use super::features::{VmxError, VmxErrorKind};
 use super::instructions::VmxInstructionExecutor;
 use super::vmcs::VmcsField;
+
+pub const TOY_RDMSR_IA32_EFER: u32 = 0xc000_0080;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ToyVmxExitSequence {
     AwaitingPreemption,
     AwaitingDeadlineProbe,
     AwaitingIo,
+    AwaitingIoBitmapB,
     AwaitingCpuid,
+    AwaitingRdmsr,
     AwaitingHlt,
     Complete,
 }
@@ -23,9 +28,12 @@ pub struct ToyVmxExitContract {
     pub deadline_fallback_rip: u64,
     pub continuation_rip: u64,
     pub io_rip: u64,
+    pub io_bitmap_b_rip: u64,
     pub cpuid_rip: u64,
+    pub rdmsr_rip: u64,
     pub hlt_rip: u64,
     pub io_port: u16,
+    pub io_bitmap_b_port: u16,
     pub io_value: u8,
     pub preemption_timer_reload: u32,
 }
@@ -57,6 +65,7 @@ pub enum ToyVmxExitError {
     ExecutionDeadlineExpired,
     RipAdvance(VmxErrorKind),
     Cpuid(VmxErrorKind),
+    Rdmsr(VmxErrorKind),
 }
 
 pub trait ToyVmcsAccess {
@@ -146,13 +155,28 @@ pub fn dispatch_toy_vmx_exit(
 
     match reason {
         VmxExitReason::IoInstruction => {
-            if *sequence != ToyVmxExitSequence::AwaitingIo {
-                return Err(ToyVmxExitError::InvalidSequence);
-            }
-            if rip != contract.io_rip {
+            let (expected_rip, expected_port, immediate, expected_length, next_sequence) =
+                match *sequence {
+                    ToyVmxExitSequence::AwaitingIo => (
+                        contract.io_rip,
+                        contract.io_port,
+                        true,
+                        2,
+                        ToyVmxExitSequence::AwaitingIoBitmapB,
+                    ),
+                    ToyVmxExitSequence::AwaitingIoBitmapB => (
+                        contract.io_bitmap_b_rip,
+                        contract.io_bitmap_b_port,
+                        false,
+                        1,
+                        ToyVmxExitSequence::AwaitingCpuid,
+                    ),
+                    _ => return Err(ToyVmxExitError::InvalidSequence),
+                };
+            if rip != expected_rip {
                 return Err(ToyVmxExitError::InvalidGuestRip);
             }
-            if instruction_length != 2 {
+            if instruction_length != expected_length {
                 return Err(ToyVmxExitError::InvalidInstructionLength);
             }
             let qualification = IoInstructionQualification::decode(read_vmcs(
@@ -164,8 +188,8 @@ pub fn dispatch_toy_vmx_exit(
                 || qualification.direction != IoDirection::Out
                 || qualification.string
                 || qualification.rep
-                || !qualification.immediate
-                || qualification.port != contract.io_port
+                || qualification.immediate != immediate
+                || qualification.port != expected_port
             {
                 return Err(ToyVmxExitError::InvalidIoQualification);
             }
@@ -177,7 +201,7 @@ pub fn dispatch_toy_vmx_exit(
                 .map_err(|error| ToyVmxExitError::RipAdvance(error.kind))?;
             write_vmcs(access, VmcsField::GUEST_RIP, registers.rip)?;
             rearm_preemption_timer(access, contract.preemption_timer_reload)?;
-            *sequence = ToyVmxExitSequence::AwaitingCpuid;
+            *sequence = next_sequence;
             Ok(ToyVmxExitAction::Resume)
         }
         VmxExitReason::Cpuid => {
@@ -202,6 +226,32 @@ pub fn dispatch_toy_vmx_exit(
             }]);
             match handle_cpuid_exit(registers, &policy, instruction_length)
                 .map_err(|error| ToyVmxExitError::Cpuid(error.kind))?
+            {
+                ExitAction::Resume => {}
+                _ => return Err(ToyVmxExitError::InvalidSequence),
+            }
+            write_vmcs(access, VmcsField::GUEST_RIP, registers.rip)?;
+            rearm_preemption_timer(access, contract.preemption_timer_reload)?;
+            *sequence = ToyVmxExitSequence::AwaitingRdmsr;
+            Ok(ToyVmxExitAction::Resume)
+        }
+        VmxExitReason::Rdmsr => {
+            if *sequence != ToyVmxExitSequence::AwaitingRdmsr {
+                return Err(ToyVmxExitError::InvalidSequence);
+            }
+            if rip != contract.rdmsr_rip {
+                return Err(ToyVmxExitError::InvalidGuestRip);
+            }
+            if instruction_length != 2 {
+                return Err(ToyVmxExitError::InvalidInstructionLength);
+            }
+            let policy = StaticMsrPolicy::new([MsrEntry {
+                index: TOY_RDMSR_IA32_EFER,
+                value: 0,
+                writable: false,
+            }]);
+            match handle_rdmsr_exit(registers, &policy, instruction_length)
+                .map_err(|error| ToyVmxExitError::Rdmsr(error.kind))?
             {
                 ExitAction::Resume => {}
                 _ => return Err(ToyVmxExitError::InvalidSequence),
@@ -354,16 +404,19 @@ mod tests {
             deadline_fallback_rip: 0x1019,
             continuation_rip: 0x101a,
             io_rip: 0x101c,
-            cpuid_rip: 0x1022,
-            hlt_rip: 0x1024,
+            io_bitmap_b_rip: 0x1022,
+            cpuid_rip: 0x1027,
+            rdmsr_rip: 0x102e,
+            hlt_rip: 0x1030,
             io_port: 0xe9,
+            io_bitmap_b_port: 0x8000,
             io_value: b'A',
             preemption_timer_reload: 0x4000,
         }
     }
 
     #[test]
-    fn preemption_io_cpuid_then_hlt_proves_the_bounded_sequence() {
+    fn preemption_two_io_bitmaps_cpuid_rdmsr_then_hlt_proves_the_bounded_sequence() {
         let mut access = MockAccess::preemption();
         let mut registers = GeneralRegisters::default();
         let mut sequence = ToyVmxExitSequence::AwaitingPreemption;
@@ -393,11 +446,22 @@ mod tests {
             dispatch_toy_vmx_exit(&mut access, &mut registers, &mut sequence, contract()).unwrap(),
             ToyVmxExitAction::Resume
         );
-        assert_eq!(sequence, ToyVmxExitSequence::AwaitingCpuid);
+        assert_eq!(sequence, ToyVmxExitSequence::AwaitingIoBitmapB);
         assert_eq!(access.rip_write, Some(0x101e));
 
-        access.reason = 10;
+        access.reason = 30;
         access.rip = 0x1022;
+        access.length = 1;
+        access.qualification = 0x8000_u64 << 16;
+        assert_eq!(
+            dispatch_toy_vmx_exit(&mut access, &mut registers, &mut sequence, contract()).unwrap(),
+            ToyVmxExitAction::Resume
+        );
+        assert_eq!(sequence, ToyVmxExitSequence::AwaitingCpuid);
+        assert_eq!(access.rip_write, Some(0x1023));
+
+        access.reason = 10;
+        access.rip = 0x1027;
         access.length = 2;
         registers.rax = 0;
         registers.rcx = 0;
@@ -406,12 +470,27 @@ mod tests {
             dispatch_toy_vmx_exit(&mut access, &mut registers, &mut sequence, contract()).unwrap(),
             ToyVmxExitAction::Resume
         );
-        assert_eq!(sequence, ToyVmxExitSequence::AwaitingHlt);
-        assert_eq!(access.rip_write, Some(0x1024));
+        assert_eq!(sequence, ToyVmxExitSequence::AwaitingRdmsr);
+        assert_eq!(access.rip_write, Some(0x1029));
         assert_eq!(registers.rbx as u32, u32::from_le_bytes(*b"Aegi"));
 
+        access.reason = 31;
+        access.rip = 0x102e;
+        access.length = 2;
+        registers.rcx = u64::from(TOY_RDMSR_IA32_EFER);
+        registers.rax = u64::MAX;
+        registers.rdx = u64::MAX;
+        assert_eq!(
+            dispatch_toy_vmx_exit(&mut access, &mut registers, &mut sequence, contract()).unwrap(),
+            ToyVmxExitAction::Resume
+        );
+        assert_eq!(sequence, ToyVmxExitSequence::AwaitingHlt);
+        assert_eq!(access.rip_write, Some(0x1030));
+        assert_eq!(registers.rax, 0);
+        assert_eq!(registers.rdx, 0);
+
         access.reason = 12;
-        access.rip = 0x1024;
+        access.rip = 0x1030;
         access.length = 1;
         assert_eq!(
             dispatch_toy_vmx_exit(&mut access, &mut registers, &mut sequence, contract()).unwrap(),
@@ -424,7 +503,7 @@ mod tests {
     fn hlt_before_cpuid_is_rejected() {
         let mut access = MockAccess::preemption();
         access.reason = 12;
-        access.rip = 0x1024;
+        access.rip = 0x1030;
         access.length = 1;
         let mut registers = GeneralRegisters::default();
         let mut sequence = ToyVmxExitSequence::AwaitingPreemption;
@@ -440,7 +519,7 @@ mod tests {
     fn bad_instruction_length_and_vm_entry_failure_are_typed() {
         let mut access = MockAccess::preemption();
         access.reason = 10;
-        access.rip = 0x1022;
+        access.rip = 0x1027;
         access.length = 3;
         let mut registers = GeneralRegisters::default();
         let mut sequence = ToyVmxExitSequence::AwaitingCpuid;
@@ -596,6 +675,68 @@ mod tests {
             dispatch_toy_vmx_exit(&mut access, &mut registers, &mut sequence, contract())
                 .unwrap_err(),
             ToyVmxExitError::InvalidIoValue
+        );
+    }
+
+    #[test]
+    fn bitmap_b_io_contract_requires_dx_form_and_high_port() {
+        let mut access = MockAccess::preemption();
+        access.reason = 30;
+        access.rip = 0x1022;
+        access.length = 1;
+        let mut registers = GeneralRegisters {
+            rax: u64::from(b'A'),
+            ..GeneralRegisters::default()
+        };
+        let mut sequence = ToyVmxExitSequence::AwaitingIoBitmapB;
+
+        for qualification in [
+            (0x8000_u64 << 16) | (1 << 6),
+            0xe9_u64 << 16,
+            (0x8000_u64 << 16) | (1 << 3),
+            (0x8000_u64 << 16) | 1,
+        ] {
+            access.qualification = qualification;
+            assert_eq!(
+                dispatch_toy_vmx_exit(&mut access, &mut registers, &mut sequence, contract())
+                    .unwrap_err(),
+                ToyVmxExitError::InvalidIoQualification
+            );
+        }
+
+        access.qualification = 0x8000_u64 << 16;
+        access.length = 2;
+        assert_eq!(
+            dispatch_toy_vmx_exit(&mut access, &mut registers, &mut sequence, contract())
+                .unwrap_err(),
+            ToyVmxExitError::InvalidInstructionLength
+        );
+    }
+
+    #[test]
+    fn rdmsr_contract_accepts_only_synthetic_ia32_efer_read() {
+        let mut access = MockAccess::preemption();
+        access.reason = 31;
+        access.rip = 0x102e;
+        access.length = 2;
+        let mut registers = GeneralRegisters {
+            rcx: 0x10,
+            ..GeneralRegisters::default()
+        };
+        let mut sequence = ToyVmxExitSequence::AwaitingRdmsr;
+
+        assert_eq!(
+            dispatch_toy_vmx_exit(&mut access, &mut registers, &mut sequence, contract())
+                .unwrap_err(),
+            ToyVmxExitError::Rdmsr(VmxErrorKind::UnsupportedMsr)
+        );
+
+        registers.rcx = u64::from(TOY_RDMSR_IA32_EFER);
+        access.reason = 32;
+        assert_eq!(
+            dispatch_toy_vmx_exit(&mut access, &mut registers, &mut sequence, contract())
+                .unwrap_err(),
+            ToyVmxExitError::UnexpectedReason(VmxExitReason::Wrmsr)
         );
     }
 }

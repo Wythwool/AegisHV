@@ -203,7 +203,10 @@ impl VmxCapabilitySnapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::vmx::controls::{ENTRY_IA32E_MODE_GUEST, PRIMARY_HLT_EXITING, SECONDARY_ENABLE_EPT};
+    use crate::vmx::controls::{
+        ENTRY_IA32E_MODE_GUEST, PRIMARY_HLT_EXITING, PRIMARY_UNCONDITIONAL_IO_EXITING,
+        PRIMARY_USE_IO_BITMAPS, PRIMARY_USE_MSR_BITMAPS, SECONDARY_ENABLE_EPT,
+    };
     use crate::vmx::ept::{EPT_VPID_CAP_MEMORY_TYPE_WB, EPT_VPID_CAP_PAGE_WALK_LENGTH_4};
 
     fn permissive_snapshot() -> VmxCapabilitySnapshot {
@@ -242,6 +245,12 @@ mod tests {
         let prepared = permissive_snapshot().prepare_toy_guest().unwrap();
 
         assert_ne!(prepared.controls.primary & PRIMARY_HLT_EXITING, 0);
+        assert_ne!(prepared.controls.primary & PRIMARY_USE_IO_BITMAPS, 0);
+        assert_ne!(prepared.controls.primary & PRIMARY_USE_MSR_BITMAPS, 0);
+        assert_eq!(
+            prepared.controls.primary & PRIMARY_UNCONDITIONAL_IO_EXITING,
+            0
+        );
         assert_ne!(prepared.controls.secondary & SECONDARY_ENABLE_EPT, 0);
         assert_ne!(prepared.controls.entry & ENTRY_IA32E_MODE_GUEST, 0);
         assert!(prepared.ept.supports_4_level_walk());
@@ -281,11 +290,32 @@ mod tests {
         );
 
         let mut snapshot = permissive_snapshot();
-        snapshot.primary &= !(u64::from(1_u32 << 24) << 32);
+        snapshot.primary &= !(u64::from(PRIMARY_USE_IO_BITMAPS) << 32);
         assert_eq!(
             snapshot.prepare_toy_guest().unwrap_err().kind,
             VmxErrorKind::InvalidControlBits
         );
+
+        let mut snapshot = permissive_snapshot();
+        snapshot.primary &= !(u64::from(PRIMARY_USE_MSR_BITMAPS) << 32);
+        assert_eq!(
+            snapshot.prepare_toy_guest().unwrap_err().kind,
+            VmxErrorKind::InvalidControlBits
+        );
+    }
+
+    #[test]
+    fn snapshot_accepts_forced_unconditional_io_with_io_bitmaps() {
+        let mut snapshot = permissive_snapshot();
+        snapshot.primary |= u64::from(PRIMARY_UNCONDITIONAL_IO_EXITING);
+
+        let prepared = snapshot.prepare_toy_guest().unwrap();
+
+        assert_ne!(
+            prepared.controls.primary & PRIMARY_UNCONDITIONAL_IO_EXITING,
+            0
+        );
+        assert_ne!(prepared.controls.primary & PRIMARY_USE_IO_BITMAPS, 0);
     }
 
     #[test]

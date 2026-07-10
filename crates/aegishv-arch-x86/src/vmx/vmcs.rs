@@ -29,6 +29,9 @@ impl VmcsField {
     pub const HOST_GS_SELECTOR: Self = Self(0x0c0a);
     pub const HOST_TR_SELECTOR: Self = Self(0x0c0c);
 
+    pub const IO_BITMAP_A: Self = Self(0x2000);
+    pub const IO_BITMAP_B: Self = Self(0x2002);
+    pub const MSR_BITMAP: Self = Self(0x2004);
     pub const TSC_OFFSET: Self = Self(0x2010);
     pub const EPT_POINTER: Self = Self(0x201a);
     pub const VMCS_LINK_POINTER: Self = Self(0x2800);

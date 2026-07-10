@@ -17,7 +17,8 @@ pub use toy_guest::{
     TYPE1_TOY_CONTINUATION_RIP, TYPE1_TOY_CPUID_RIP, TYPE1_TOY_DEADLINE_FALLBACK_ITERATIONS,
     TYPE1_TOY_DEADLINE_FALLBACK_RIP, TYPE1_TOY_DEADLINE_FALLBACK_TSC_TICKS,
     TYPE1_TOY_DEADLINE_PROBE_RIPS, TYPE1_TOY_GUEST_PML4_GPA, TYPE1_TOY_GUEST_RIP,
-    TYPE1_TOY_GUEST_RSP, TYPE1_TOY_HLT_RIP, TYPE1_TOY_IO_RIP, TYPE1_TOY_STACK_GPA,
+    TYPE1_TOY_GUEST_RSP, TYPE1_TOY_HLT_RIP, TYPE1_TOY_IO_BITMAP_B_RIP, TYPE1_TOY_IO_RIP,
+    TYPE1_TOY_RDMSR_INDEX, TYPE1_TOY_RDMSR_RIP, TYPE1_TOY_STACK_GPA,
 };
 
 use aegishv_arch_x86::svm::features::EferValue;
@@ -57,7 +58,9 @@ pub const SERIAL_HOST_EXCEPTION_MARKER: &str = "aegishv:type1:host-exception";
 pub const SERIAL_HOST_FATAL_MARKER: &str = "aegishv:type1:host-fatal";
 pub const SERIAL_VMX_GUEST_PREEMPT_EXIT_OK_MARKER: &str = "aegishv:type1:guest-preempt-exit-ok";
 pub const SERIAL_VMX_GUEST_IO_EXIT_OK_MARKER: &str = "aegishv:type1:guest-io-exit-ok";
+pub const SERIAL_VMX_GUEST_IO_B_EXIT_OK_MARKER: &str = "aegishv:type1:guest-io-b-exit-ok";
 pub const SERIAL_VMX_GUEST_CPUID_EXIT_OK_MARKER: &str = "aegishv:type1:guest-cpuid-exit-ok";
+pub const SERIAL_VMX_GUEST_RDMSR_EXIT_OK_MARKER: &str = "aegishv:type1:guest-rdmsr-exit-ok";
 pub const SERIAL_VMX_GUEST_HLT_EXIT_OK_MARKER: &str = "aegishv:type1:guest-hlt-exit-ok";
 pub const SERIAL_VMX_GUEST_CONFIG_OK_MARKER: &str = "aegishv:type1:guest-config-ok";
 pub const SERIAL_VMX_GUEST_ENTRY_ERROR_MARKER: &str = "aegishv:type1:guest-entry-error";

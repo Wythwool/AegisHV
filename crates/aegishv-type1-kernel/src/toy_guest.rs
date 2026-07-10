@@ -28,15 +28,19 @@ pub const TYPE1_TOY_DEADLINE_PROBE_RIPS: [u64; 9] = [
 pub const TYPE1_TOY_DEADLINE_FALLBACK_RIP: u64 = TYPE1_TOY_CODE_GPA + 25;
 pub const TYPE1_TOY_CONTINUATION_RIP: u64 = TYPE1_TOY_CODE_GPA + 26;
 pub const TYPE1_TOY_IO_RIP: u64 = TYPE1_TOY_CODE_GPA + 28;
-pub const TYPE1_TOY_CPUID_RIP: u64 = TYPE1_TOY_CODE_GPA + 34;
-pub const TYPE1_TOY_HLT_RIP: u64 = TYPE1_TOY_CODE_GPA + 36;
+pub const TYPE1_TOY_IO_BITMAP_B_RIP: u64 = TYPE1_TOY_CODE_GPA + 34;
+pub const TYPE1_TOY_CPUID_RIP: u64 = TYPE1_TOY_CODE_GPA + 39;
+pub const TYPE1_TOY_RDMSR_RIP: u64 = TYPE1_TOY_CODE_GPA + 46;
+pub const TYPE1_TOY_HLT_RIP: u64 = TYPE1_TOY_CODE_GPA + 48;
+pub const TYPE1_TOY_RDMSR_INDEX: u32 = aegishv_arch_x86::vmx::toy_exit::TOY_RDMSR_IA32_EFER;
 pub const TYPE1_TOY_GUEST_RSP: u64 = TYPE1_TOY_STACK_GPA + 0xff0;
 pub const TYPE1_TOY_DEADLINE_FALLBACK_TSC_TICKS: u32 = 1 << 27;
 pub const TYPE1_TOY_DEADLINE_FALLBACK_ITERATIONS: u32 = 1 << 24;
-pub const TYPE1_TOY_CODE: [u8; 37] = [
+pub const TYPE1_TOY_CODE: [u8; 49] = [
     0x0f, 0x31, 0x89, 0xc1, 0x81, 0xc1, 0x00, 0x00, 0x00, 0x08, 0xbb, 0x00, 0x00, 0x00, 0x01, 0x0f,
-    0x31, 0x29, 0xc8, 0x79, 0x04, 0xff, 0xcb, 0x75, 0xf6, 0xf4, 0xb0, b'A', 0xe6, 0xe9, 0x31, 0xc0,
-    0x31, 0xc9, 0x0f, 0xa2, 0xf4,
+    0x31, 0x29, 0xc8, 0x79, 0x04, 0xff, 0xcb, 0x75, 0xf6, 0xf4, 0xb0, b'A', 0xe6, 0xe9, 0x66, 0xba,
+    0x00, 0x80, 0xee, 0x31, 0xc0, 0x31, 0xc9, 0x0f, 0xa2, 0xb9, 0x80, 0x00, 0x00, 0xc0, 0x0f, 0x32,
+    0xf4,
 ];
 
 const PAGE_SIZE: u64 = 4096;
@@ -44,12 +48,14 @@ const PAGE_ADDRESS_MASK: u64 = 0x000f_ffff_ffff_f000;
 const PAGE_PRESENT: u64 = 1 << 0;
 const PAGE_WRITABLE: u64 = 1 << 1;
 const BUILD_WRITE_COUNT: usize = 14;
+const VMX_INTERCEPTION_BITMAP: [u8; PAGE_SIZE as usize] = [0xff; PAGE_SIZE as usize];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Type1ToyGuestError {
     Vmx(VmxErrorKind),
     Core(CoreErrorKind),
     ScrubFailed(CoreErrorKind),
+    BitmapVerificationFailed,
     InvalidHostPageLayout,
 }
 
@@ -152,6 +158,7 @@ pub trait Type1PhysicalPageWriter {
         offset: usize,
         bytes: &[u8],
     ) -> Result<(), CoreError>;
+    fn read_u8(&mut self, page: HostPhysical, offset: usize) -> Result<u8, CoreError>;
 }
 
 pub fn materialize_type1_toy_guest(
@@ -174,6 +181,27 @@ pub fn materialize_type1_toy_guest(
     if let Err(error) = writer.write_bytes(plan.pages.code, 0, &TYPE1_TOY_CODE) {
         scrub_pages(&pages, writer)?;
         return Err(Type1ToyGuestError::Core(error.kind));
+    }
+    for page in plan.pages.interception_bitmaps() {
+        if let Err(error) = writer.write_bytes(page, 0, &VMX_INTERCEPTION_BITMAP) {
+            scrub_pages(&pages, writer)?;
+            return Err(Type1ToyGuestError::Core(error.kind));
+        }
+    }
+    for page in plan.pages.interception_bitmaps() {
+        for offset in 0..VMX_INTERCEPTION_BITMAP.len() {
+            let byte = match writer.read_u8(page, offset) {
+                Ok(byte) => byte,
+                Err(error) => {
+                    scrub_pages(&pages, writer)?;
+                    return Err(Type1ToyGuestError::Core(error.kind));
+                }
+            };
+            if byte != 0xff {
+                scrub_pages(&pages, writer)?;
+                return Err(Type1ToyGuestError::BitmapVerificationFailed);
+            }
+        }
     }
     Ok(())
 }
@@ -214,13 +242,19 @@ fn validate_host_pages(pages: Type1ToyGuestHostPages) -> Result<(), Type1ToyGues
 }
 
 fn scrub_pages(
-    pages: &[HostPhysical; 10],
+    pages: &[HostPhysical; 13],
     writer: &mut impl Type1PhysicalPageWriter,
 ) -> Result<(), Type1ToyGuestError> {
+    let mut first_error = None;
     for page in pages.iter().copied() {
-        writer
-            .zero_page(page)
-            .map_err(|error| Type1ToyGuestError::ScrubFailed(error.kind))?;
+        if let Err(error) = writer.zero_page(page) {
+            if first_error.is_none() {
+                first_error = Some(error.kind);
+            }
+        }
+    }
+    if let Some(kind) = first_error {
+        return Err(Type1ToyGuestError::ScrubFailed(kind));
     }
     Ok(())
 }
@@ -252,6 +286,9 @@ mod tests {
             ept_pdpt: host(0x10_7000),
             ept_pd: host(0x10_8000),
             ept_pt: host(0x10_9000),
+            io_bitmap_a: host(0x10_a000),
+            io_bitmap_b: host(0x10_b000),
+            msr_bitmap: host(0x10_c000),
         }
     }
 
@@ -292,7 +329,8 @@ mod tests {
             [
                 0x0f, 0x31, 0x89, 0xc1, 0x81, 0xc1, 0x00, 0x00, 0x00, 0x08, 0xbb, 0x00, 0x00, 0x00,
                 0x01, 0x0f, 0x31, 0x29, 0xc8, 0x79, 0x04, 0xff, 0xcb, 0x75, 0xf6, 0xf4, 0xb0, b'A',
-                0xe6, 0xe9, 0x31, 0xc0, 0x31, 0xc9, 0x0f, 0xa2, 0xf4
+                0xe6, 0xe9, 0x66, 0xba, 0x00, 0x80, 0xee, 0x31, 0xc0, 0x31, 0xc9, 0x0f, 0xa2, 0xb9,
+                0x80, 0x00, 0x00, 0xc0, 0x0f, 0x32, 0xf4
             ]
         );
         assert_eq!(TYPE1_TOY_DEADLINE_FALLBACK_TSC_TICKS, 1 << 27);
@@ -314,8 +352,11 @@ mod tests {
         assert_eq!(TYPE1_TOY_DEADLINE_FALLBACK_RIP, TYPE1_TOY_GUEST_RIP + 25);
         assert_eq!(TYPE1_TOY_CONTINUATION_RIP, TYPE1_TOY_GUEST_RIP + 26);
         assert_eq!(TYPE1_TOY_IO_RIP, TYPE1_TOY_GUEST_RIP + 28);
-        assert_eq!(TYPE1_TOY_CPUID_RIP, TYPE1_TOY_GUEST_RIP + 34);
-        assert_eq!(TYPE1_TOY_HLT_RIP, TYPE1_TOY_GUEST_RIP + 36);
+        assert_eq!(TYPE1_TOY_IO_BITMAP_B_RIP, TYPE1_TOY_GUEST_RIP + 34);
+        assert_eq!(TYPE1_TOY_CPUID_RIP, TYPE1_TOY_GUEST_RIP + 39);
+        assert_eq!(TYPE1_TOY_RDMSR_RIP, TYPE1_TOY_GUEST_RIP + 46);
+        assert_eq!(TYPE1_TOY_HLT_RIP, TYPE1_TOY_GUEST_RIP + 48);
+        assert_eq!(TYPE1_TOY_RDMSR_INDEX, 0xc000_0080);
     }
 
     #[test]
@@ -331,24 +372,35 @@ mod tests {
 
     struct RecordingWriter {
         pages: Type1ToyGuestHostPages,
-        zeroed: [bool; 10],
+        zeroed: [bool; 13],
         writes: usize,
         code: [u8; TYPE1_TOY_CODE.len()],
+        bitmaps: [[u8; PAGE_SIZE as usize]; 3],
+        corrupt_read: Option<(HostPhysical, usize)>,
     }
 
     impl RecordingWriter {
         fn new(pages: Type1ToyGuestHostPages) -> Self {
             Self {
                 pages,
-                zeroed: [false; 10],
+                zeroed: [false; 13],
                 writes: 0,
                 code: [0; TYPE1_TOY_CODE.len()],
+                bitmaps: [[0; PAGE_SIZE as usize]; 3],
+                corrupt_read: None,
             }
         }
 
         fn page_index(&self, page: HostPhysical) -> Option<usize> {
             self.pages
                 .all()
+                .iter()
+                .position(|candidate| *candidate == page)
+        }
+
+        fn bitmap_index(&self, page: HostPhysical) -> Option<usize> {
+            self.pages
+                .interception_bitmaps()
                 .iter()
                 .position(|candidate| *candidate == page)
         }
@@ -361,6 +413,12 @@ mod tests {
                 "test writer received an unknown page",
             ))?;
             self.zeroed[index] = true;
+            if page == self.pages.code {
+                self.code.fill(0);
+            }
+            if let Some(index) = self.bitmap_index(page) {
+                self.bitmaps[index].fill(0);
+            }
             Ok(())
         }
 
@@ -394,14 +452,46 @@ mod tests {
                 CoreErrorKind::InvalidAddress,
                 "test writer received an unknown page",
             ))?;
-            if !self.zeroed[page_index] || offset != 0 || bytes.len() != self.code.len() {
+            if !self.zeroed[page_index] || offset != 0 {
                 return Err(CoreError::new(
                     CoreErrorKind::InvalidState,
                     "test writer rejected payload placement",
                 ));
             }
-            self.code.copy_from_slice(bytes);
+            if page == self.pages.code && bytes.len() == self.code.len() {
+                self.code.copy_from_slice(bytes);
+            } else if let Some(index) = self.bitmap_index(page) {
+                if bytes.len() != PAGE_SIZE as usize {
+                    return Err(CoreError::new(
+                        CoreErrorKind::InvalidArgument,
+                        "test writer rejected bitmap size",
+                    ));
+                }
+                self.bitmaps[index].copy_from_slice(bytes);
+            } else {
+                return Err(CoreError::new(
+                    CoreErrorKind::InvalidAddress,
+                    "test writer rejected byte destination",
+                ));
+            }
             Ok(())
+        }
+
+        fn read_u8(&mut self, page: HostPhysical, offset: usize) -> Result<u8, CoreError> {
+            if self.corrupt_read == Some((page, offset)) {
+                return Ok(0);
+            }
+            let index = self.bitmap_index(page).ok_or(CoreError::new(
+                CoreErrorKind::InvalidAddress,
+                "test writer rejected byte source",
+            ))?;
+            self.bitmaps[index]
+                .get(offset)
+                .copied()
+                .ok_or(CoreError::new(
+                    CoreErrorKind::InvalidArgument,
+                    "test writer rejected byte offset",
+                ))
         }
     }
 
@@ -415,6 +505,27 @@ mod tests {
         assert!(writer.zeroed.iter().all(|value| *value));
         assert_eq!(writer.writes, BUILD_WRITE_COUNT);
         assert_eq!(writer.code, TYPE1_TOY_CODE);
+        assert!(writer
+            .bitmaps
+            .iter()
+            .all(|bitmap| bitmap.iter().all(|byte| *byte == 0xff)));
+    }
+
+    #[test]
+    fn materializer_scrubs_all_pages_after_bitmap_readback_mismatch() {
+        let plan = Type1ToyGuestBuildPlan::new(pages(), capabilities()).unwrap();
+        let mut writer = RecordingWriter::new(plan.pages);
+        writer.corrupt_read = Some((plan.pages.msr_bitmap, PAGE_SIZE as usize - 1));
+
+        assert_eq!(
+            materialize_type1_toy_guest(&plan, &mut writer).unwrap_err(),
+            Type1ToyGuestError::BitmapVerificationFailed
+        );
+        assert_eq!(writer.code, [0; TYPE1_TOY_CODE.len()]);
+        assert!(writer
+            .bitmaps
+            .iter()
+            .all(|bitmap| bitmap.iter().all(|byte| *byte == 0)));
     }
 
     struct RejectingScrubWriter;
@@ -448,6 +559,13 @@ mod tests {
             Err(CoreError::new(
                 CoreErrorKind::InvalidState,
                 "payload followed a failed scrub",
+            ))
+        }
+
+        fn read_u8(&mut self, _page: HostPhysical, _offset: usize) -> Result<u8, CoreError> {
+            Err(CoreError::new(
+                CoreErrorKind::InvalidState,
+                "read followed a failed scrub",
             ))
         }
     }

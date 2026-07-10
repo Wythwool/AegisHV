@@ -4,7 +4,7 @@ use super::controls::{
     VmxControlFields, ENTRY_IA32E_MODE_GUEST, ENTRY_LOAD_IA32_EFER, EXIT_HOST_ADDRESS_SPACE_SIZE,
     EXIT_LOAD_IA32_EFER, EXIT_SAVE_IA32_EFER, PIN_BASED_NMI_EXITING,
     PIN_BASED_VMX_PREEMPTION_TIMER, PRIMARY_ACTIVATE_SECONDARY_CONTROLS, PRIMARY_HLT_EXITING,
-    PRIMARY_UNCONDITIONAL_IO_EXITING, SECONDARY_ENABLE_EPT, SECONDARY_ENABLE_VPID,
+    PRIMARY_USE_IO_BITMAPS, PRIMARY_USE_MSR_BITMAPS, SECONDARY_ENABLE_EPT, SECONDARY_ENABLE_VPID,
 };
 use super::ept::EptPointer;
 use super::features::{
@@ -20,6 +20,8 @@ pub const VMX_CR4_PAE: u64 = 1 << 5;
 pub const VMX_CR4_VMXE: u64 = 1 << 13;
 pub const VMX_EFER_LME: u64 = 1 << 8;
 pub const VMX_EFER_LMA: u64 = 1 << 10;
+pub const VMX_INTERCEPTION_BITMAP_PAGE_SIZE: u64 = 4096;
+pub const VMX_INTERCEPTION_BITMAP_MAX_PHYSICAL_EXCLUSIVE: u64 = 1_u64 << 32;
 
 const SEGMENT_ACCESS_RIGHTS_RESERVED: u32 = 0xfffe_0f00;
 const SEGMENT_ACCESS_RIGHTS_PRESENT: u32 = 1 << 7;
@@ -519,9 +521,64 @@ impl VmcsGuestState64 {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct VmcsInterceptionBitmaps {
+    io_bitmap_a: HostPhysical,
+    io_bitmap_b: HostPhysical,
+    msr_bitmap: HostPhysical,
+}
+
+impl VmcsInterceptionBitmaps {
+    pub fn new(
+        io_bitmap_a: HostPhysical,
+        io_bitmap_b: HostPhysical,
+        msr_bitmap: HostPhysical,
+    ) -> Result<Self, VmxError> {
+        let addresses = [io_bitmap_a, io_bitmap_b, msr_bitmap];
+        for (index, address) in addresses.iter().enumerate() {
+            let raw = address.get();
+            if raw == 0
+                || raw % VMX_INTERCEPTION_BITMAP_PAGE_SIZE != 0
+                || raw
+                    .checked_add(VMX_INTERCEPTION_BITMAP_PAGE_SIZE)
+                    .filter(|end| *end <= VMX_INTERCEPTION_BITMAP_MAX_PHYSICAL_EXCLUSIVE)
+                    .is_none()
+                || addresses[..index].contains(address)
+            {
+                return Err(VmxError::new(
+                    VmxErrorKind::InvalidVmcsField,
+                    "VMX interception bitmap pages must be nonzero, distinct, 4K-aligned, and below 4 GiB",
+                ));
+            }
+        }
+        Ok(Self {
+            io_bitmap_a,
+            io_bitmap_b,
+            msr_bitmap,
+        })
+    }
+
+    pub const fn io_bitmap_a(self) -> HostPhysical {
+        self.io_bitmap_a
+    }
+
+    pub const fn io_bitmap_b(self) -> HostPhysical {
+        self.io_bitmap_b
+    }
+
+    pub const fn msr_bitmap(self) -> HostPhysical {
+        self.msr_bitmap
+    }
+
+    fn validate(self) -> Result<Self, VmxError> {
+        Self::new(self.io_bitmap_a, self.io_bitmap_b, self.msr_bitmap)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct VmcsExecutionState {
     pub controls: VmxControlFields,
     pub ept_pointer: EptPointer,
+    pub interception_bitmaps: VmcsInterceptionBitmaps,
     pub preemption_timer_value: u32,
     pub cr0_guest_host_mask: u64,
     pub cr4_guest_host_mask: u64,
@@ -533,6 +590,7 @@ impl VmcsExecutionState {
     pub fn toy_isolated(
         controls: VmxControlFields,
         ept_pointer: EptPointer,
+        interception_bitmaps: VmcsInterceptionBitmaps,
         guest: VmcsGuestState64,
         cr0_fixed: CrFixedBits,
         cr4_fixed: CrFixedBits,
@@ -540,6 +598,7 @@ impl VmcsExecutionState {
         let state = Self {
             controls,
             ept_pointer,
+            interception_bitmaps,
             preemption_timer_value: 0,
             cr0_guest_host_mask: cr0_fixed.fixed0
                 | !cr0_fixed.fixed1
@@ -554,10 +613,11 @@ impl VmcsExecutionState {
     }
 
     pub fn validate(self, guest: VmcsGuestState64) -> Result<Self, VmxError> {
+        self.interception_bitmaps.validate()?;
+        self.validate_interception_controls()?;
         if self.controls.pin_based & PIN_BASED_NMI_EXITING == 0
             || self.controls.pin_based & PIN_BASED_VMX_PREEMPTION_TIMER == 0
             || self.controls.primary & PRIMARY_HLT_EXITING == 0
-            || self.controls.primary & PRIMARY_UNCONDITIONAL_IO_EXITING == 0
             || self.controls.primary & PRIMARY_ACTIVATE_SECONDARY_CONTROLS == 0
             || self.controls.secondary & SECONDARY_ENABLE_EPT == 0
             || self.controls.secondary & SECONDARY_ENABLE_VPID != 0
@@ -590,18 +650,32 @@ impl VmcsExecutionState {
         Ok(self)
     }
 
+    fn validate_interception_controls(self) -> Result<(), VmxError> {
+        if self.controls.primary & PRIMARY_USE_IO_BITMAPS == 0
+            || self.controls.primary & PRIMARY_USE_MSR_BITMAPS == 0
+        {
+            return Err(VmxError::new(
+                VmxErrorKind::InvalidControlBits,
+                "toy VMX entry requires active I/O and MSR bitmaps",
+            ));
+        }
+        Ok(())
+    }
+
     /// # Safety
     ///
-    /// The caller must own a loaded current VMCS and keep the EPT hierarchy
-    /// rooted at `ept_pointer` allocated and unchanged while the guest runs.
+    /// The caller must own a loaded current VMCS. The EPT hierarchy rooted at
+    /// `ept_pointer` and all three interception bitmap pages must remain
+    /// allocated, unchanged, and usable by VMX hardware through every guest
+    /// entry and resume that uses this execution state.
     pub unsafe fn write_to<E: VmxInstructionExecutor>(
         self,
         guest: VmcsGuestState64,
         executor: &mut E,
     ) -> Result<(), VmxError> {
         self.validate(guest)?;
-        // SAFETY: the caller guarantees a current VMCS and the validated EPT
-        // root and control dependencies remain live through VMX operation.
+        // SAFETY: the caller guarantees a current VMCS and that the validated
+        // EPT hierarchy and interception bitmap pages remain live and stable.
         unsafe {
             executor.vmwrite(
                 VmcsField::PIN_BASED_CONTROLS.raw(),
@@ -618,6 +692,18 @@ impl VmcsExecutionState {
             executor.vmwrite(VmcsField::EXIT_CONTROLS.raw(), self.controls.exit.into())?;
             executor.vmwrite(VmcsField::ENTRY_CONTROLS.raw(), self.controls.entry.into())?;
             executor.vmwrite(VmcsField::VIRTUAL_PROCESSOR_ID.raw(), 0)?;
+            executor.vmwrite(
+                VmcsField::IO_BITMAP_A.raw(),
+                self.interception_bitmaps.io_bitmap_a().get(),
+            )?;
+            executor.vmwrite(
+                VmcsField::IO_BITMAP_B.raw(),
+                self.interception_bitmaps.io_bitmap_b().get(),
+            )?;
+            executor.vmwrite(
+                VmcsField::MSR_BITMAP.raw(),
+                self.interception_bitmaps.msr_bitmap().get(),
+            )?;
             executor.vmwrite(VmcsField::TSC_OFFSET.raw(), 0)?;
             executor.vmwrite(VmcsField::EPT_POINTER.raw(), self.ept_pointer.raw())?;
             executor.vmwrite(
@@ -647,6 +733,50 @@ impl VmcsExecutionState {
         }
         Ok(())
     }
+
+    /// Reads back the control and bitmap-address VMCS fields that make the
+    /// interception policy active.
+    ///
+    /// # Safety
+    ///
+    /// The caller must own the loaded current VMCS on this CPU and must call
+    /// this only after this execution state was written to that VMCS.
+    pub unsafe fn verify_interception_fields<E: VmxInstructionExecutor>(
+        self,
+        executor: &mut E,
+    ) -> Result<(), VmxError> {
+        self.interception_bitmaps.validate()?;
+        self.validate_interception_controls()?;
+        let expected = [
+            (
+                VmcsField::PRIMARY_PROCESSOR_CONTROLS,
+                u64::from(self.controls.primary),
+            ),
+            (
+                VmcsField::IO_BITMAP_A,
+                self.interception_bitmaps.io_bitmap_a().get(),
+            ),
+            (
+                VmcsField::IO_BITMAP_B,
+                self.interception_bitmaps.io_bitmap_b().get(),
+            ),
+            (
+                VmcsField::MSR_BITMAP,
+                self.interception_bitmaps.msr_bitmap().get(),
+            ),
+        ];
+        for (field, value) in expected {
+            // SAFETY: the caller established that this CPU owns a current VMCS
+            // containing these readable control fields.
+            if unsafe { executor.vmread(field.raw())? } != value {
+                return Err(VmxError::new(
+                    VmxErrorKind::InvalidVmcsField,
+                    "VMCS interception control readback differs from the validated state",
+                ));
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -667,8 +797,9 @@ impl MinimalVmcsConfiguration {
     /// # Safety
     ///
     /// The caller must own the loaded VMCS on the current CPU and guarantee
-    /// that every referenced host, guest, and EPT page remains live. No VM entry
-    /// may occur until this method succeeds completely.
+    /// that every referenced host, guest, EPT, and interception-bitmap page
+    /// remains live and stable. No VM entry may occur until this method
+    /// succeeds completely.
     pub unsafe fn write_to<E: VmxInstructionExecutor>(
         self,
         executor: &mut E,
@@ -779,6 +910,15 @@ mod tests {
         .unwrap()
     }
 
+    fn interception_bitmaps() -> VmcsInterceptionBitmaps {
+        VmcsInterceptionBitmaps::new(
+            HostPhysical::new(0xa000).unwrap(),
+            HostPhysical::new(0xb000).unwrap(),
+            HostPhysical::new(0xc000).unwrap(),
+        )
+        .unwrap()
+    }
+
     fn configuration() -> MinimalVmcsConfiguration {
         let capabilities =
             EptCapabilities::new(EPT_VPID_CAP_PAGE_WALK_LENGTH_4 | EPT_VPID_CAP_MEMORY_TYPE_WB);
@@ -787,6 +927,7 @@ mod tests {
             execution: VmcsExecutionState::toy_isolated(
                 controls(),
                 EptPointer::new(HostPhysical::new(0x8000).unwrap(), capabilities).unwrap(),
+                interception_bitmaps(),
                 guest,
                 CrFixedBits::new(
                     VMX_CR0_PROTECTED_MODE_ENABLE | VMX_CR0_NUMERIC_ERROR | VMX_CR0_PAGING,
@@ -836,6 +977,9 @@ mod tests {
         unsafe { configuration().write_to(&mut executor) }.unwrap();
 
         assert_eq!(recorded(&executor, VmcsField::EPT_POINTER), Some(0x801e));
+        assert_eq!(recorded(&executor, VmcsField::IO_BITMAP_A), Some(0xa000));
+        assert_eq!(recorded(&executor, VmcsField::IO_BITMAP_B), Some(0xb000));
+        assert_eq!(recorded(&executor, VmcsField::MSR_BITMAP), Some(0xc000));
         assert_eq!(
             recorded(&executor, VmcsField::VMX_PREEMPTION_TIMER_VALUE),
             Some(0)
@@ -880,7 +1024,7 @@ mod tests {
     }
 
     #[test]
-    fn configuration_rejects_missing_preemption_or_io_containment() {
+    fn configuration_rejects_missing_preemption_or_bitmap_containment() {
         let mut config = configuration();
         config.execution.controls.pin_based &= !PIN_BASED_VMX_PREEMPTION_TIMER;
         assert_eq!(
@@ -889,7 +1033,14 @@ mod tests {
         );
 
         let mut config = configuration();
-        config.execution.controls.primary &= !PRIMARY_UNCONDITIONAL_IO_EXITING;
+        config.execution.controls.primary &= !PRIMARY_USE_IO_BITMAPS;
+        assert_eq!(
+            config.validate().unwrap_err().kind,
+            VmxErrorKind::InvalidControlBits
+        );
+
+        let mut config = configuration();
+        config.execution.controls.primary &= !PRIMARY_USE_MSR_BITMAPS;
         assert_eq!(
             config.validate().unwrap_err().kind,
             VmxErrorKind::InvalidControlBits
@@ -901,5 +1052,112 @@ mod tests {
             config.validate().unwrap_err().kind,
             VmxErrorKind::InvalidControlBits
         );
+    }
+
+    #[test]
+    fn bitmap_addresses_are_nonzero_distinct_aligned_and_below_4g() {
+        let valid = |raw| HostPhysical::new(raw).unwrap();
+        assert!(
+            VmcsInterceptionBitmaps::new(valid(0xffff_f000), valid(0x2000), valid(0x3000)).is_ok()
+        );
+
+        for result in [
+            VmcsInterceptionBitmaps::new(HostPhysical::ZERO, valid(0x2000), valid(0x3000)),
+            VmcsInterceptionBitmaps::new(valid(0x1001), valid(0x2000), valid(0x3000)),
+            VmcsInterceptionBitmaps::new(valid(0x1000), valid(0x1000), valid(0x3000)),
+            VmcsInterceptionBitmaps::new(valid(0x1000), valid(0x2000), valid(0x1_0000_0000)),
+        ] {
+            assert_eq!(result.unwrap_err().kind, VmxErrorKind::InvalidVmcsField);
+        }
+    }
+
+    struct InterceptionReadback {
+        state: VmcsExecutionState,
+        corrupt_field: Option<u64>,
+    }
+
+    impl InterceptionReadback {
+        fn new(state: VmcsExecutionState) -> Self {
+            Self {
+                state,
+                corrupt_field: None,
+            }
+        }
+    }
+
+    impl VmxInstructionExecutor for InterceptionReadback {
+        unsafe fn vmxon(&mut self, _region: HostPhysical) -> Result<(), VmxError> {
+            unreachable!("readback test does not execute VMXON")
+        }
+
+        unsafe fn vmxoff(&mut self) -> Result<(), VmxError> {
+            unreachable!("readback test does not execute VMXOFF")
+        }
+
+        unsafe fn vmptrld(&mut self, _vmcs: HostPhysical) -> Result<(), VmxError> {
+            unreachable!("readback test does not execute VMPTRLD")
+        }
+
+        unsafe fn vmclear(&mut self, _vmcs: HostPhysical) -> Result<(), VmxError> {
+            unreachable!("readback test does not execute VMCLEAR")
+        }
+
+        unsafe fn vmlaunch(&mut self) -> Result<(), VmxError> {
+            unreachable!("readback test does not execute VMLAUNCH")
+        }
+
+        unsafe fn vmresume(&mut self) -> Result<(), VmxError> {
+            unreachable!("readback test does not execute VMRESUME")
+        }
+
+        unsafe fn vmread(&mut self, field: u64) -> Result<u64, VmxError> {
+            let expected = if field == VmcsField::PRIMARY_PROCESSOR_CONTROLS.raw() {
+                u64::from(self.state.controls.primary)
+            } else if field == VmcsField::IO_BITMAP_A.raw() {
+                self.state.interception_bitmaps.io_bitmap_a().get()
+            } else if field == VmcsField::IO_BITMAP_B.raw() {
+                self.state.interception_bitmaps.io_bitmap_b().get()
+            } else if field == VmcsField::MSR_BITMAP.raw() {
+                self.state.interception_bitmaps.msr_bitmap().get()
+            } else {
+                return Err(VmxError::new(
+                    VmxErrorKind::InvalidVmcsField,
+                    "readback test received an unexpected field",
+                ));
+            };
+            Ok(if self.corrupt_field == Some(field) {
+                expected ^ 1
+            } else {
+                expected
+            })
+        }
+
+        unsafe fn vmwrite(&mut self, _field: u64, _value: u64) -> Result<(), VmxError> {
+            unreachable!("readback test does not execute VMWRITE")
+        }
+    }
+
+    #[test]
+    fn interception_field_readback_is_exact_and_fails_closed() {
+        let state = configuration().execution;
+        let mut executor = InterceptionReadback::new(state);
+        unsafe { state.verify_interception_fields(&mut executor) }.unwrap();
+
+        executor.corrupt_field = Some(VmcsField::IO_BITMAP_B.raw());
+        assert_eq!(
+            unsafe { state.verify_interception_fields(&mut executor) }
+                .unwrap_err()
+                .kind,
+            VmxErrorKind::InvalidVmcsField
+        );
+    }
+
+    #[test]
+    fn forced_unconditional_io_is_ignored_when_io_bitmaps_are_active() {
+        let mut config = configuration();
+        config.execution.controls.primary |=
+            super::super::controls::PRIMARY_UNCONDITIONAL_IO_EXITING;
+
+        assert!(config.validate().is_ok());
     }
 }

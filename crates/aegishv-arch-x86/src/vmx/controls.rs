@@ -66,6 +66,7 @@ pub const PRIMARY_HLT_EXITING: u32 = 1 << 7;
 pub const PRIMARY_CR3_LOAD_EXITING: u32 = 1 << 15;
 pub const PRIMARY_CR3_STORE_EXITING: u32 = 1 << 16;
 pub const PRIMARY_UNCONDITIONAL_IO_EXITING: u32 = 1 << 24;
+pub const PRIMARY_USE_IO_BITMAPS: u32 = 1 << 25;
 pub const PRIMARY_USE_MSR_BITMAPS: u32 = 1 << 28;
 pub const PRIMARY_MONITOR_TRAP_FLAG: u32 = 1 << 27;
 pub const PRIMARY_ACTIVATE_SECONDARY_CONTROLS: u32 = 1 << 31;
@@ -100,7 +101,8 @@ impl VmxControlRequest {
         Self {
             pin_based: PIN_BASED_NMI_EXITING | PIN_BASED_VMX_PREEMPTION_TIMER,
             primary: PRIMARY_HLT_EXITING
-                | PRIMARY_UNCONDITIONAL_IO_EXITING
+                | PRIMARY_USE_IO_BITMAPS
+                | PRIMARY_USE_MSR_BITMAPS
                 | PRIMARY_ACTIVATE_SECONDARY_CONTROLS,
             secondary: SECONDARY_ENABLE_EPT,
             exit: EXIT_HOST_ADDRESS_SPACE_SIZE | EXIT_SAVE_IA32_EFER | EXIT_LOAD_IA32_EFER,
@@ -154,6 +156,8 @@ impl VmxControlMsrs {
         let supported_pin = PIN_BASED_NMI_EXITING | PIN_BASED_VMX_PREEMPTION_TIMER;
         let supported_primary = PRIMARY_HLT_EXITING
             | PRIMARY_UNCONDITIONAL_IO_EXITING
+            | PRIMARY_USE_IO_BITMAPS
+            | PRIMARY_USE_MSR_BITMAPS
             | PRIMARY_ACTIVATE_SECONDARY_CONTROLS;
         let supported_secondary = SECONDARY_ENABLE_EPT;
         let supported_exit =
@@ -237,7 +241,9 @@ mod tests {
         assert_ne!(fields.primary & PRIMARY_HLT_EXITING, 0);
         assert_ne!(fields.pin_based & PIN_BASED_NMI_EXITING, 0);
         assert_ne!(fields.pin_based & PIN_BASED_VMX_PREEMPTION_TIMER, 0);
-        assert_ne!(fields.primary & PRIMARY_UNCONDITIONAL_IO_EXITING, 0);
+        assert_ne!(fields.primary & PRIMARY_USE_IO_BITMAPS, 0);
+        assert_ne!(fields.primary & PRIMARY_USE_MSR_BITMAPS, 0);
+        assert_eq!(fields.primary & PRIMARY_UNCONDITIONAL_IO_EXITING, 0);
         assert_ne!(fields.secondary & SECONDARY_ENABLE_EPT, 0);
         assert_eq!(fields.secondary & SECONDARY_ENABLE_VPID, 0);
         assert_ne!(fields.exit & EXIT_HOST_ADDRESS_SPACE_SIZE, 0);
@@ -247,13 +253,14 @@ mod tests {
     }
 
     #[test]
-    fn toy_hlt_guest_rejects_forced_controls_without_runtime_support() {
+    fn toy_hlt_guest_accepts_ignored_forced_unconditional_io() {
         let mut msrs = permissive_msrs();
-        msrs.primary.must_be_one = PRIMARY_USE_MSR_BITMAPS;
+        msrs.primary.must_be_one = PRIMARY_UNCONDITIONAL_IO_EXITING;
 
-        let error = msrs.build(VmxControlRequest::toy_hlt_guest()).unwrap_err();
+        let fields = msrs.build(VmxControlRequest::toy_hlt_guest()).unwrap();
 
-        assert_eq!(error.kind, VmxErrorKind::InvalidControlBits);
+        assert_ne!(fields.primary & PRIMARY_UNCONDITIONAL_IO_EXITING, 0);
+        assert_ne!(fields.primary & PRIMARY_USE_IO_BITMAPS, 0);
     }
 
     #[test]
@@ -285,14 +292,15 @@ mod tests {
     }
 
     #[test]
-    fn true_controls_reject_forced_functional_controls_without_backing_state() {
+    fn true_controls_accept_ignored_forced_unconditional_io() {
         let mut msrs = permissive_msrs();
-        msrs.primary.must_be_one = PRIMARY_USE_MSR_BITMAPS;
+        msrs.primary.must_be_one = PRIMARY_UNCONDITIONAL_IO_EXITING;
 
-        let error = msrs
+        let fields = msrs
             .build_true_controls(VmxControlRequest::toy_hlt_guest())
-            .unwrap_err();
+            .unwrap();
 
-        assert_eq!(error.kind, VmxErrorKind::InvalidControlBits);
+        assert_ne!(fields.primary & PRIMARY_UNCONDITIONAL_IO_EXITING, 0);
+        assert_ne!(fields.primary & PRIMARY_USE_IO_BITMAPS, 0);
     }
 }

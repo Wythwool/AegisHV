@@ -12,7 +12,7 @@ pub const TYPE1_MAX_MEMORY_MAP_ENTRIES: usize = 256;
 pub const TYPE1_MAX_PHYSICAL_RESERVATIONS: usize = 8;
 const TYPE1_EARLY_ALLOCATOR_RUNS: usize = TYPE1_MAX_MEMORY_MAP_ENTRIES * 2;
 const TYPE1_EARLY_ALLOCATOR_ALLOCATIONS: usize = 64;
-const TYPE1_TOY_GUEST_PAGE_COUNT: usize = 10;
+const TYPE1_TOY_GUEST_PAGE_COUNT: usize = 13;
 const PAGE_SIZE_4K: u64 = 4096;
 const X86_64_MAX_PHYSICAL_ADDRESS_EXCLUSIVE: u64 = 1_u64 << 52;
 
@@ -101,6 +101,9 @@ pub struct Type1ToyGuestHostPages {
     pub ept_pdpt: HostPhysical,
     pub ept_pd: HostPhysical,
     pub ept_pt: HostPhysical,
+    pub io_bitmap_a: HostPhysical,
+    pub io_bitmap_b: HostPhysical,
+    pub msr_bitmap: HostPhysical,
 }
 
 impl Type1ToyGuestHostPages {
@@ -116,7 +119,14 @@ impl Type1ToyGuestHostPages {
             self.ept_pdpt,
             self.ept_pd,
             self.ept_pt,
+            self.io_bitmap_a,
+            self.io_bitmap_b,
+            self.msr_bitmap,
         ]
+    }
+
+    pub const fn interception_bitmaps(self) -> [HostPhysical; 3] {
+        [self.io_bitmap_a, self.io_bitmap_b, self.msr_bitmap]
     }
 }
 
@@ -169,11 +179,17 @@ impl Type1RuntimeMemoryAllocation {
                     allocated += 1;
                 }
                 Err(error) => {
+                    let mut rollback_error = None;
                     while allocated > 0 {
                         allocated -= 1;
                         if let Err(rollback) = self.allocator.free(pages[allocated]) {
-                            return Err(Type1EarlyMemoryError::RollbackFailed(rollback.kind));
+                            if rollback_error.is_none() {
+                                rollback_error = Some(rollback.kind);
+                            }
                         }
+                    }
+                    if let Some(kind) = rollback_error {
+                        return Err(Type1EarlyMemoryError::RollbackFailed(kind));
                     }
                     return Err(Type1EarlyMemoryError::Core(error.kind));
                 }
@@ -191,6 +207,9 @@ impl Type1RuntimeMemoryAllocation {
             ept_pdpt: pages[7],
             ept_pd: pages[8],
             ept_pt: pages[9],
+            io_bitmap_a: pages[10],
+            io_bitmap_b: pages[11],
+            msr_bitmap: pages[12],
         };
         self.toy_guest = Some(toy_guest);
         Ok(toy_guest)
@@ -354,7 +373,7 @@ mod tests {
     }
 
     #[test]
-    fn intel_toy_guest_reserves_twelve_distinct_usable_pages() {
+    fn intel_toy_guest_reserves_fifteen_distinct_usable_pages() {
         let entries = [entry(0x20_0000, 0x20_0000, 0)];
         let mut allocation =
             allocate_type1_runtime_memory::<4>(&entries, Type1RuntimeBackend::IntelVmx).unwrap();
@@ -362,7 +381,7 @@ mod tests {
         let guest = allocation.allocate_intel_toy_guest().unwrap();
         let pages = guest.all();
 
-        assert_eq!(allocation.allocated_pages(), 12);
+        assert_eq!(allocation.allocated_pages(), 15);
         for (index, page) in pages.iter().enumerate() {
             assert!(page.get() >= 0x20_0000);
             assert!(page.get() < 0x40_0000);
@@ -379,7 +398,7 @@ mod tests {
 
     #[test]
     fn failed_toy_guest_allocation_rolls_back_only_guest_pages() {
-        let entries = [entry(0x20_0000, 11 * 4096, 0)];
+        let entries = [entry(0x20_0000, 14 * 4096, 0)];
         let mut allocation =
             allocate_type1_runtime_memory::<4>(&entries, Type1RuntimeBackend::IntelVmx).unwrap();
 
