@@ -135,3 +135,29 @@ fn release_workflow_has_no_fake_container_publish_or_signing_path() {
         );
     }
 }
+
+#[test]
+fn ci_bounds_docker_registry_retries_and_uses_node24_actions() {
+    let ci_workflow = read_repo_file(".github/workflows/ci.yml");
+
+    for required in [
+        "actions/checkout@v7",
+        "actions/upload-artifact@v7",
+        "timeout-minutes: 10",
+        "for attempt in 1 2 3",
+        "docker build -t aegishv:ci .",
+        "Docker build failed after ${attempt} attempts",
+        "retrying in ${delay}s",
+    ] {
+        assert!(
+            ci_workflow.contains(required),
+            "CI is missing Docker retry or Node 24 action wiring: {required}"
+        );
+    }
+
+    assert!(
+        !ci_workflow.contains("actions/checkout@v4")
+            && !ci_workflow.contains("actions/upload-artifact@v4"),
+        "normal CI should not use the deprecated Node 20 action majors"
+    );
+}

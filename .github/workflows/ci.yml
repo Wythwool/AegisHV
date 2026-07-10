@@ -10,7 +10,7 @@ jobs:
     name: rust msrv 1.81 locked
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.81.0
         with:
           components: rustfmt, clippy
@@ -51,7 +51,7 @@ jobs:
           cargo run --locked -- snapshot --tracefs /sys/kernel/tracing >/tmp/aegishv-snapshot.json
           python3 scripts/validate-jsonl-schema.py --schema schema/snapshot.schema.json --json /tmp/aegishv-snapshot.json
       - name: Upload binary artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: aegishv-linux-amd64
           path: |
@@ -64,7 +64,7 @@ jobs:
     name: stable nextest locked
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -87,7 +87,7 @@ jobs:
           - aarch64-unknown-linux-gnu
           - aarch64-unknown-linux-musl
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@cross
       - uses: Swatinem/rust-cache@v2
@@ -97,10 +97,27 @@ jobs:
   docker:
     name: docker build locked
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Docker build smoke
-        run: docker build -t aegishv:ci .
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if docker build -t aegishv:ci .; then
+              exit 0
+            fi
+
+            if [[ "$attempt" -eq 3 ]]; then
+              echo "::error::Docker build failed after ${attempt} attempts"
+              exit 1
+            fi
+
+            delay=$((attempt * 10))
+            echo "::warning::Docker build attempt ${attempt} failed; retrying in ${delay}s"
+            sleep "$delay"
+          done
 
   audit:
     name: audit locked graph
@@ -108,7 +125,7 @@ jobs:
     env:
       RUSTUP_TOOLCHAIN: stable
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Metadata locked
@@ -124,7 +141,7 @@ jobs:
     env:
       RUSTUP_TOOLCHAIN: stable
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Metadata locked
@@ -140,7 +157,7 @@ jobs:
     env:
       RUSTUP_TOOLCHAIN: stable
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Fuzz package metadata
