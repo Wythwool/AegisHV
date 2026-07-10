@@ -93,6 +93,9 @@ impl VmcsField {
     pub const VM_INSTRUCTION_ERROR: Self = Self(0x4400);
     pub const VM_EXIT_REASON: Self = Self(0x4402);
     pub const VM_EXIT_INTERRUPTION_INFO: Self = Self(0x4404);
+    pub const VM_EXIT_INTERRUPTION_ERROR_CODE: Self = Self(0x4406);
+    pub const IDT_VECTORING_INFO: Self = Self(0x4408);
+    pub const IDT_VECTORING_ERROR_CODE: Self = Self(0x440a);
     pub const VM_EXIT_INSTRUCTION_LENGTH: Self = Self(0x440c);
 
     pub const GUEST_ES_LIMIT: Self = Self(0x4800);
@@ -486,5 +489,12 @@ mod tests {
             executor.last_write,
             Some((VmcsField::GUEST_RFLAGS.raw(), 0x2))
         );
+    }
+
+    #[test]
+    fn event_delivery_exit_fields_use_the_intel_encodings() {
+        assert_eq!(VmcsField::VM_EXIT_INTERRUPTION_ERROR_CODE.raw(), 0x4406);
+        assert_eq!(VmcsField::IDT_VECTORING_INFO.raw(), 0x4408);
+        assert_eq!(VmcsField::IDT_VECTORING_ERROR_CODE.raw(), 0x440a);
     }
 }

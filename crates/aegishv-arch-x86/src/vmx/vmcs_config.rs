@@ -167,6 +167,12 @@ impl VmcsDescriptorTableState {
                 "VMCS descriptor-table base must be canonical",
             ));
         }
+        if self.limit > u32::from(u16::MAX) {
+            return Err(VmxError::new(
+                VmxErrorKind::InvalidGuestState,
+                "VMCS descriptor-table limit must fit the architectural 16-bit limit",
+            ));
+        }
         Ok(self)
     }
 }
@@ -421,6 +427,19 @@ impl VmcsGuestState64 {
             efer: VMX_EFER_LME | VMX_EFER_LMA,
         };
         state.validate()
+    }
+
+    /// Installs validated guest descriptor-table registers before VM entry.
+    pub fn with_descriptor_tables(
+        mut self,
+        gdtr: VmcsDescriptorTableState,
+        idtr: VmcsDescriptorTableState,
+    ) -> Result<Self, VmxError> {
+        gdtr.validate()?;
+        idtr.validate()?;
+        self.gdtr = gdtr;
+        self.idtr = idtr;
+        self.validate()
     }
 
     pub fn validate(self) -> Result<Self, VmxError> {
@@ -948,7 +967,8 @@ impl MinimalVmcsConfiguration {
         Ok(())
     }
 
-    /// Reads back every VMCS field required for the live PAT and FPU guards.
+    /// Reads back every VMCS field required for the interception, descriptor-
+    /// table, PAT, and FPU isolation guards.
     ///
     /// # Safety
     ///
@@ -965,12 +985,22 @@ impl MinimalVmcsConfiguration {
         for (field, value) in [
             (VmcsField::GUEST_IA32_PAT, self.guest.pat.raw()),
             (VmcsField::HOST_IA32_PAT, self.host.pat.raw()),
+            (VmcsField::GUEST_GDTR_BASE, self.guest.gdtr.base),
+            (
+                VmcsField::GUEST_GDTR_LIMIT,
+                u64::from(self.guest.gdtr.limit),
+            ),
+            (VmcsField::GUEST_IDTR_BASE, self.guest.idtr.base),
+            (
+                VmcsField::GUEST_IDTR_LIMIT,
+                u64::from(self.guest.idtr.limit),
+            ),
         ] {
             // SAFETY: the caller established exclusive current-VMCS ownership.
             if unsafe { executor.vmread(field.raw())? } != value {
                 return Err(VmxError::new(
                     VmxErrorKind::InvalidVmcsField,
-                    "VMCS PAT readback differs from the validated configuration",
+                    "VMCS isolation readback differs from the validated configuration",
                 ));
             }
         }
@@ -1124,6 +1154,37 @@ mod tests {
         assert_eq!(guest.cr0 & VMX_CR0_EMULATION, 0);
         assert_ne!(guest.cr4 & VMX_CR4_OSFXSR, 0);
         assert!(guest.validate().is_ok());
+    }
+
+    #[test]
+    fn guest_descriptor_table_builder_checks_and_installs_both_tables() {
+        let gdtr = VmcsDescriptorTableState::new(0x1200, 0x17);
+        let idtr = VmcsDescriptorTableState::new(0x1300, 0x6f);
+        let guest = guest().with_descriptor_tables(gdtr, idtr).unwrap();
+
+        assert_eq!(guest.gdtr, gdtr);
+        assert_eq!(guest.idtr, idtr);
+
+        assert_eq!(
+            guest
+                .with_descriptor_tables(
+                    VmcsDescriptorTableState::new(0x0001_0000_0000_0000, 0x17),
+                    idtr,
+                )
+                .unwrap_err()
+                .kind,
+            VmxErrorKind::InvalidGuestState
+        );
+        assert_eq!(
+            guest
+                .with_descriptor_tables(
+                    gdtr,
+                    VmcsDescriptorTableState::new(0x1300, u32::from(u16::MAX) + 1),
+                )
+                .unwrap_err()
+                .kind,
+            VmxErrorKind::InvalidGuestState
+        );
     }
 
     #[test]
@@ -1348,6 +1409,7 @@ mod tests {
     struct InterceptionReadback {
         configuration: MinimalVmcsConfiguration,
         corrupt_field: Option<u64>,
+        fail_field: Option<u64>,
     }
 
     impl InterceptionReadback {
@@ -1355,6 +1417,7 @@ mod tests {
             Self {
                 configuration,
                 corrupt_field: None,
+                fail_field: None,
             }
         }
     }
@@ -1385,6 +1448,12 @@ mod tests {
         }
 
         unsafe fn vmread(&mut self, field: u64) -> Result<u64, VmxError> {
+            if self.fail_field == Some(field) {
+                return Err(VmxError::new(
+                    VmxErrorKind::InstructionFailed,
+                    "readback test VMREAD failed",
+                ));
+            }
             let state = self.configuration.execution;
             let expected = if field == VmcsField::PIN_BASED_CONTROLS.raw() {
                 u64::from(state.controls.pin_based)
@@ -1420,6 +1489,14 @@ mod tests {
                 self.configuration.guest.pat.raw()
             } else if field == VmcsField::HOST_IA32_PAT.raw() {
                 self.configuration.host.pat.raw()
+            } else if field == VmcsField::GUEST_GDTR_BASE.raw() {
+                self.configuration.guest.gdtr.base
+            } else if field == VmcsField::GUEST_GDTR_LIMIT.raw() {
+                u64::from(self.configuration.guest.gdtr.limit)
+            } else if field == VmcsField::GUEST_IDTR_BASE.raw() {
+                self.configuration.guest.idtr.base
+            } else if field == VmcsField::GUEST_IDTR_LIMIT.raw() {
+                u64::from(self.configuration.guest.idtr.limit)
             } else {
                 return Err(VmxError::new(
                     VmxErrorKind::InvalidVmcsField,
@@ -1439,8 +1516,15 @@ mod tests {
     }
 
     #[test]
-    fn interception_field_readback_is_exact_and_fails_closed() {
-        let configuration = configuration();
+    fn isolation_field_readback_is_exact_and_fails_closed() {
+        let mut configuration = configuration();
+        configuration.guest = configuration
+            .guest
+            .with_descriptor_tables(
+                VmcsDescriptorTableState::new(0x1200, 0x17),
+                VmcsDescriptorTableState::new(0x1300, 0x6f),
+            )
+            .unwrap();
         let mut executor = InterceptionReadback::new(configuration);
         unsafe { configuration.verify_isolation_fields(&mut executor) }.unwrap();
 
@@ -1451,6 +1535,31 @@ mod tests {
                 .kind,
             VmxErrorKind::InvalidVmcsField
         );
+
+        for field in [
+            VmcsField::GUEST_GDTR_BASE,
+            VmcsField::GUEST_GDTR_LIMIT,
+            VmcsField::GUEST_IDTR_BASE,
+            VmcsField::GUEST_IDTR_LIMIT,
+        ] {
+            executor.corrupt_field = Some(field.raw());
+            executor.fail_field = None;
+            assert_eq!(
+                unsafe { configuration.verify_isolation_fields(&mut executor) }
+                    .unwrap_err()
+                    .kind,
+                VmxErrorKind::InvalidVmcsField
+            );
+
+            executor.corrupt_field = None;
+            executor.fail_field = Some(field.raw());
+            assert_eq!(
+                unsafe { configuration.verify_isolation_fields(&mut executor) }
+                    .unwrap_err()
+                    .kind,
+                VmxErrorKind::InstructionFailed
+            );
+        }
     }
 
     #[test]

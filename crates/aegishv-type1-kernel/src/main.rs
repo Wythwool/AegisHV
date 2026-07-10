@@ -38,7 +38,7 @@ const VMX_TOY_AWAITING_X87_GUARD: u8 = 6;
 #[cfg(all(target_os = "none", target_arch = "x86_64"))]
 const VMX_TOY_AWAITING_SIMD_GUARD: u8 = 7;
 #[cfg(all(target_os = "none", target_arch = "x86_64"))]
-const VMX_TOY_AWAITING_HLT: u8 = 8;
+const VMX_TOY_AWAITING_UD_DELIVERY: u8 = 8;
 #[cfg(all(target_os = "none", target_arch = "x86_64"))]
 const VMX_TOY_COMPLETE: u8 = 9;
 #[cfg(all(target_os = "none", target_arch = "x86_64"))]
@@ -206,7 +206,7 @@ impl aegishv_type1_kernel::Type1PhysicalPageWriter for HhdmPageWriter {
         let pointer = self.page_pointer(page)?;
         for (index, byte) in bytes.iter().copied().enumerate() {
             // SAFETY: the checked byte range stays within the allocator-owned
-            // HHDM page and volatile writes publish the guest code as planned.
+            // HHDM page and volatile writes publish the planned guest bytes.
             unsafe { pointer.add(offset + index).write_volatile(byte) };
         }
         Ok(())
@@ -225,7 +225,7 @@ impl aegishv_type1_kernel::Type1PhysicalPageWriter for HhdmPageWriter {
         }
         let pointer = self.page_pointer(page)?;
         // SAFETY: the checked offset stays within the allocator-owned HHDM
-        // page. A volatile read verifies the live bitmap bytes just written.
+        // page. A volatile read verifies the guest image or bitmap byte.
         Ok(unsafe { pointer.add(offset).read_volatile() })
     }
 }
@@ -1590,10 +1590,20 @@ unsafe fn run_type1_vmx_toy_guest(
         capabilities.cr4_fixed,
         guest_plan.rsp,
         guest_plan.rip,
-    ) {
+    )
+    .and_then(|guest| guest.with_descriptor_tables(guest_plan.gdtr, guest_plan.idtr))
+    {
         Ok(guest) => guest,
         Err(_) => vmx_guest_entry_error(),
     };
+    if guest.segments.cs.selector != aegishv_type1_kernel::TYPE1_TOY_GUEST_CS
+        || guest.segments.ss.selector != aegishv_type1_kernel::TYPE1_TOY_GUEST_SS
+        || guest.rflags != aegishv_type1_kernel::TYPE1_TOY_GUEST_RFLAGS
+        || guest.gdtr != guest_plan.gdtr
+        || guest.idtr != guest_plan.idtr
+    {
+        vmx_guest_entry_error();
+    }
     let interception_bitmaps = match VmcsInterceptionBitmaps::new(
         guest_pages.io_bitmap_a,
         guest_pages.io_bitmap_b,
@@ -1865,12 +1875,35 @@ fn vmx_toy_exit_error_marker(
         | aegishv_arch_x86::vmx::toy_exit::ToyVmxExitError::InvalidGuestPat => {
             aegishv_type1_kernel::SERIAL_VMX_GUEST_PAT_STATE_ERROR_MARKER
         }
+        aegishv_arch_x86::vmx::toy_exit::ToyVmxExitError::VmcsRead { field, .. }
+        | aegishv_arch_x86::vmx::toy_exit::ToyVmxExitError::VmcsWrite { field, .. }
+            if matches!(
+                field,
+                aegishv_arch_x86::vmx::vmcs::VmcsField::VM_ENTRY_INTERRUPTION_INFO
+                    | aegishv_arch_x86::vmx::vmcs::VmcsField::VM_ENTRY_EXCEPTION_ERROR_CODE
+                    | aegishv_arch_x86::vmx::vmcs::VmcsField::VM_ENTRY_INSTRUCTION_LENGTH
+            ) =>
+        {
+            aegishv_type1_kernel::SERIAL_VMX_GUEST_UD_INJECT_ERROR_MARKER
+        }
+        aegishv_arch_x86::vmx::toy_exit::ToyVmxExitError::InvalidExceptionInjection
+        | aegishv_arch_x86::vmx::toy_exit::ToyVmxExitError::ExceptionDeliveryFailed(_)
+        | aegishv_arch_x86::vmx::toy_exit::ToyVmxExitError::InvalidIdtVectoringState
+        | aegishv_arch_x86::vmx::toy_exit::ToyVmxExitError::InvalidGuestStack
+        | aegishv_arch_x86::vmx::toy_exit::ToyVmxExitError::InvalidGuestCookie
+        | aegishv_arch_x86::vmx::toy_exit::ToyVmxExitError::InvalidGuestReturnState
+        | aegishv_arch_x86::vmx::toy_exit::ToyVmxExitError::InvalidDescriptorTableState => {
+            aegishv_type1_kernel::SERIAL_VMX_GUEST_UD_INJECT_ERROR_MARKER
+        }
         _ => match sequence {
             aegishv_arch_x86::vmx::toy_exit::ToyVmxExitSequence::AwaitingX87Guard => {
                 aegishv_type1_kernel::SERIAL_VMX_GUEST_NM_X87_EXIT_ERROR_MARKER
             }
             aegishv_arch_x86::vmx::toy_exit::ToyVmxExitSequence::AwaitingSimdGuard => {
                 aegishv_type1_kernel::SERIAL_VMX_GUEST_NM_SIMD_EXIT_ERROR_MARKER
+            }
+            aegishv_arch_x86::vmx::toy_exit::ToyVmxExitSequence::AwaitingUdDelivery => {
+                aegishv_type1_kernel::SERIAL_VMX_GUEST_UD_INJECT_ERROR_MARKER
             }
             _ => aegishv_type1_kernel::SERIAL_VMX_GUEST_EXIT_ERROR_MARKER,
         },
@@ -1922,7 +1955,9 @@ extern "C" fn aegishv_vmx_exit_dispatch(
         VMX_TOY_AWAITING_SIMD_GUARD => {
             aegishv_arch_x86::vmx::toy_exit::ToyVmxExitSequence::AwaitingSimdGuard
         }
-        VMX_TOY_AWAITING_HLT => aegishv_arch_x86::vmx::toy_exit::ToyVmxExitSequence::AwaitingHlt,
+        VMX_TOY_AWAITING_UD_DELIVERY => {
+            aegishv_arch_x86::vmx::toy_exit::ToyVmxExitSequence::AwaitingUdDelivery
+        }
         VMX_TOY_COMPLETE => aegishv_arch_x86::vmx::toy_exit::ToyVmxExitSequence::Complete,
         _ => {
             serial_write_line(aegishv_type1_kernel::SERIAL_VMX_GUEST_EXIT_ERROR_MARKER);
@@ -1941,8 +1976,22 @@ extern "C" fn aegishv_vmx_exit_dispatch(
         pat_rdmsr_rip: aegishv_type1_kernel::TYPE1_TOY_PAT_RDMSR_RIP,
         x87_guard_rip: aegishv_type1_kernel::TYPE1_TOY_X87_GUARD_RIP,
         simd_guard_rip: aegishv_type1_kernel::TYPE1_TOY_SIMD_GUARD_RIP,
+        ud2_rip: aegishv_type1_kernel::TYPE1_TOY_UD2_RIP,
         hlt_rip: aegishv_type1_kernel::TYPE1_TOY_HLT_RIP,
         pat_mismatch_hlt_rip: aegishv_type1_kernel::TYPE1_TOY_PAT_MISMATCH_HLT_RIP,
+        hlt_rsp: aegishv_type1_kernel::TYPE1_TOY_GUEST_RSP,
+        hlt_cs: aegishv_type1_kernel::TYPE1_TOY_GUEST_CS,
+        hlt_ss: aegishv_type1_kernel::TYPE1_TOY_GUEST_SS,
+        hlt_rflags: aegishv_type1_kernel::TYPE1_TOY_HLT_EXIT_RFLAGS,
+        guest_gdtr: aegishv_arch_x86::vmx::vmcs_config::VmcsDescriptorTableState::new(
+            aegishv_type1_kernel::TYPE1_TOY_GDT_BASE,
+            aegishv_type1_kernel::TYPE1_TOY_GDT_LIMIT,
+        ),
+        guest_idtr: aegishv_arch_x86::vmx::vmcs_config::VmcsDescriptorTableState::new(
+            aegishv_type1_kernel::TYPE1_TOY_IDT_BASE,
+            aegishv_type1_kernel::TYPE1_TOY_IDT_LIMIT,
+        ),
+        ud_handler_cookie: aegishv_type1_kernel::TYPE1_TOY_UD_HANDLER_COOKIE,
         io_port: 0xe9,
         io_bitmap_b_port: 0x8000,
         io_value: b'A',
@@ -2020,9 +2069,10 @@ extern "C" fn aegishv_vmx_exit_dispatch(
             0
         }
         Ok(aegishv_arch_x86::vmx::toy_exit::ToyVmxExitAction::Resume)
-            if sequence == aegishv_arch_x86::vmx::toy_exit::ToyVmxExitSequence::AwaitingHlt =>
+            if sequence
+                == aegishv_arch_x86::vmx::toy_exit::ToyVmxExitSequence::AwaitingUdDelivery =>
         {
-            VMX_TOY_EXIT_STATE.store(VMX_TOY_AWAITING_HLT, Ordering::Release);
+            VMX_TOY_EXIT_STATE.store(VMX_TOY_AWAITING_UD_DELIVERY, Ordering::Release);
             serial_write_line(aegishv_type1_kernel::SERIAL_VMX_GUEST_NM_SIMD_EXIT_OK_MARKER);
             0
         }
@@ -2030,6 +2080,7 @@ extern "C" fn aegishv_vmx_exit_dispatch(
             if sequence == aegishv_arch_x86::vmx::toy_exit::ToyVmxExitSequence::Complete =>
         {
             VMX_TOY_EXIT_STATE.store(VMX_TOY_COMPLETE, Ordering::Release);
+            serial_write_line(aegishv_type1_kernel::SERIAL_VMX_GUEST_UD_INJECT_OK_MARKER);
             serial_write_line(aegishv_type1_kernel::SERIAL_VMX_GUEST_HLT_EXIT_OK_MARKER);
             1
         }
@@ -2073,7 +2124,11 @@ extern "C" fn aegishv_vmx_resume_failed(
     _frame: *mut aegishv_arch_x86::vmx::exits::GeneralRegisters,
     flags: u64,
 ) -> ! {
+    let failed_state = VMX_TOY_EXIT_STATE.load(Ordering::Acquire);
     VMX_TOY_EXIT_STATE.store(VMX_TOY_FAILED, Ordering::Release);
+    if failed_state == VMX_TOY_AWAITING_UD_DELIVERY {
+        serial_write_line(aegishv_type1_kernel::SERIAL_VMX_GUEST_UD_INJECT_ERROR_MARKER);
+    }
     serial_write_line(aegishv_type1_kernel::SERIAL_VMX_GUEST_RESUME_ERROR_MARKER);
     let mut executor = aegishv_arch_x86::vmx::hardware::HardwareVmxInstructions::new();
     if flags & 1 == 0 && flags & (1 << 6) != 0 {
@@ -2417,9 +2472,63 @@ mod tests {
         assert_eq!(
             vmx_toy_exit_error_marker(
                 ToyVmxExitError::InvalidFpuGuardState,
-                ToyVmxExitSequence::AwaitingHlt,
+                ToyVmxExitSequence::AwaitingUdDelivery,
             ),
-            aegishv_type1_kernel::SERIAL_VMX_GUEST_EXIT_ERROR_MARKER
+            aegishv_type1_kernel::SERIAL_VMX_GUEST_UD_INJECT_ERROR_MARKER
+        );
+        assert_eq!(
+            vmx_toy_exit_error_marker(
+                ToyVmxExitError::InvalidExceptionInjection,
+                ToyVmxExitSequence::AwaitingSimdGuard,
+            ),
+            aegishv_type1_kernel::SERIAL_VMX_GUEST_UD_INJECT_ERROR_MARKER
+        );
+        assert_eq!(
+            vmx_toy_exit_error_marker(
+                ToyVmxExitError::InvalidGuestCookie,
+                ToyVmxExitSequence::AwaitingUdDelivery,
+            ),
+            aegishv_type1_kernel::SERIAL_VMX_GUEST_UD_INJECT_ERROR_MARKER
+        );
+    }
+
+    #[test]
+    fn vm_entry_injection_vmcs_failures_have_the_ud_marker() {
+        use aegishv_arch_x86::vmx::features::VmxErrorKind;
+        use aegishv_arch_x86::vmx::toy_exit::{ToyVmxExitError, ToyVmxExitSequence};
+        use aegishv_arch_x86::vmx::vmcs::VmcsField;
+
+        for field in [
+            VmcsField::VM_ENTRY_INTERRUPTION_INFO,
+            VmcsField::VM_ENTRY_EXCEPTION_ERROR_CODE,
+            VmcsField::VM_ENTRY_INSTRUCTION_LENGTH,
+        ] {
+            for error in [
+                ToyVmxExitError::VmcsRead {
+                    field,
+                    kind: VmxErrorKind::InstructionFailed,
+                },
+                ToyVmxExitError::VmcsWrite {
+                    field,
+                    kind: VmxErrorKind::InstructionFailed,
+                },
+            ] {
+                assert_eq!(
+                    vmx_toy_exit_error_marker(error, ToyVmxExitSequence::AwaitingSimdGuard),
+                    aegishv_type1_kernel::SERIAL_VMX_GUEST_UD_INJECT_ERROR_MARKER
+                );
+            }
+        }
+
+        assert_eq!(
+            vmx_toy_exit_error_marker(
+                ToyVmxExitError::VmcsWrite {
+                    field: VmcsField::GUEST_RIP,
+                    kind: VmxErrorKind::InstructionFailed,
+                },
+                ToyVmxExitSequence::AwaitingSimdGuard,
+            ),
+            aegishv_type1_kernel::SERIAL_VMX_GUEST_NM_SIMD_EXIT_ERROR_MARKER
         );
     }
 

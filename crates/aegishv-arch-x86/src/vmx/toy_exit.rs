@@ -7,12 +7,16 @@ use super::features::{VmxError, VmxErrorKind};
 use super::instructions::VmxInstructionExecutor;
 use super::vmcs::VmcsField;
 use super::vmcs_config::{
-    VmxPat, VMX_CR0_EMULATION, VMX_CR0_MONITOR_COPROCESSOR, VMX_CR0_TASK_SWITCHED, VMX_CR4_OSFXSR,
+    VmcsDescriptorTableState, VmxPat, VMX_CR0_EMULATION, VMX_CR0_MONITOR_COPROCESSOR,
+    VMX_CR0_TASK_SWITCHED, VMX_CR4_OSFXSR,
 };
 
 pub const TOY_RDMSR_IA32_EFER: u32 = 0xc000_0080;
 pub const TOY_RDMSR_IA32_PAT: u32 = 0x277;
 pub const TOY_NM_INTERRUPTION_INFO: u64 = 0x8000_0307;
+pub const TOY_UD_ENTRY_INTERRUPTION_INFO: u64 = 0x8000_0306;
+
+const INTERRUPTION_INFO_VALID: u64 = 1 << 31;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ToyVmxExitSequence {
@@ -24,7 +28,7 @@ pub enum ToyVmxExitSequence {
     AwaitingRdmsr,
     AwaitingX87Guard,
     AwaitingSimdGuard,
-    AwaitingHlt,
+    AwaitingUdDelivery,
     Complete,
 }
 
@@ -41,8 +45,16 @@ pub struct ToyVmxExitContract {
     pub pat_rdmsr_rip: u64,
     pub x87_guard_rip: u64,
     pub simd_guard_rip: u64,
+    pub ud2_rip: u64,
     pub hlt_rip: u64,
     pub pat_mismatch_hlt_rip: u64,
+    pub hlt_rsp: u64,
+    pub hlt_cs: u16,
+    pub hlt_ss: u16,
+    pub hlt_rflags: u64,
+    pub guest_gdtr: VmcsDescriptorTableState,
+    pub guest_idtr: VmcsDescriptorTableState,
+    pub ud_handler_cookie: u64,
     pub io_port: u16,
     pub io_bitmap_b_port: u16,
     pub io_value: u8,
@@ -76,7 +88,14 @@ pub enum ToyVmxExitError {
     InvalidIoQualification,
     InvalidIoValue,
     InvalidInterruptionInfo,
+    InvalidExceptionInjection,
+    ExceptionDeliveryFailed(VmxExitReason),
+    InvalidIdtVectoringState,
     InvalidGuestPat,
+    InvalidGuestStack,
+    InvalidGuestCookie,
+    InvalidGuestReturnState,
+    InvalidDescriptorTableState,
     InvalidFpuGuardState,
     GuestPatMismatch,
     InvalidPreemptionReload,
@@ -137,6 +156,12 @@ pub fn dispatch_toy_vmx_exit(
     registers.rsp = rsp;
     if read_vmcs(access, VmcsField::GUEST_IA32_PAT)? != contract.guest_pat.raw() {
         return Err(ToyVmxExitError::InvalidGuestPat);
+    }
+
+    if *sequence == ToyVmxExitSequence::AwaitingUdDelivery {
+        let action = dispatch_ud_delivery_exit(access, registers, reason, contract)?;
+        *sequence = ToyVmxExitSequence::Complete;
+        return Ok(action);
     }
 
     if reason == VmxExitReason::PreemptionTimer {
@@ -310,17 +335,7 @@ pub fn dispatch_toy_vmx_exit(
                     Err(ToyVmxExitError::InvalidInstructionLength)
                 };
             }
-            if *sequence != ToyVmxExitSequence::AwaitingHlt {
-                return Err(ToyVmxExitError::InvalidSequence);
-            }
-            if rip != contract.hlt_rip {
-                return Err(ToyVmxExitError::InvalidGuestRip);
-            }
-            if instruction_length != 1 {
-                return Err(ToyVmxExitError::InvalidInstructionLength);
-            }
-            *sequence = ToyVmxExitSequence::Complete;
-            Ok(ToyVmxExitAction::Stop)
+            Err(ToyVmxExitError::InvalidSequence)
         }
         other => Err(ToyVmxExitError::UnexpectedReason(other)),
     }
@@ -338,9 +353,11 @@ fn dispatch_fpu_guard_exit(
             2,
             ToyVmxExitSequence::AwaitingSimdGuard,
         ),
-        ToyVmxExitSequence::AwaitingSimdGuard => {
-            (contract.simd_guard_rip, 4, ToyVmxExitSequence::AwaitingHlt)
-        }
+        ToyVmxExitSequence::AwaitingSimdGuard => (
+            contract.simd_guard_rip,
+            4,
+            ToyVmxExitSequence::AwaitingUdDelivery,
+        ),
         _ => return Err(ToyVmxExitError::InvalidSequence),
     };
     if registers.rip != expected_rip {
@@ -350,10 +367,7 @@ fn dispatch_fpu_guard_exit(
         return Err(ToyVmxExitError::InvalidInterruptionInfo);
     }
 
-    let pat = contract.guest_pat.raw();
-    if registers.rax != u64::from(pat as u32) || registers.rdx != u64::from((pat >> 32) as u32) {
-        return Err(ToyVmxExitError::InvalidGuestPat);
-    }
+    validate_guest_pat_registers(*registers, contract.guest_pat)?;
     if contract.guest_cr0 & (VMX_CR0_MONITOR_COPROCESSOR | VMX_CR0_TASK_SWITCHED)
         != (VMX_CR0_MONITOR_COPROCESSOR | VMX_CR0_TASK_SWITCHED)
         || contract.guest_cr0 & VMX_CR0_EMULATION != 0
@@ -367,10 +381,97 @@ fn dispatch_fpu_guard_exit(
     registers
         .advance_rip(fixed_length)
         .map_err(|error| ToyVmxExitError::RipAdvance(error.kind))?;
+    if next_sequence == ToyVmxExitSequence::AwaitingUdDelivery && registers.rip != contract.ud2_rip
+    {
+        return Err(ToyVmxExitError::InvalidGuestRip);
+    }
     write_vmcs(access, VmcsField::GUEST_RIP, registers.rip)?;
     rearm_preemption_timer(access, contract.preemption_timer_reload)?;
+    if next_sequence == ToyVmxExitSequence::AwaitingUdDelivery {
+        arm_ud_delivery(access)?;
+    }
     *sequence = next_sequence;
     Ok(ToyVmxExitAction::Resume)
+}
+
+fn arm_ud_delivery(access: &mut impl ToyVmcsAccess) -> Result<(), ToyVmxExitError> {
+    if read_vmcs(access, VmcsField::VM_ENTRY_INTERRUPTION_INFO)? & INTERRUPTION_INFO_VALID != 0 {
+        return Err(ToyVmxExitError::InvalidExceptionInjection);
+    }
+
+    write_vmcs(access, VmcsField::VM_ENTRY_EXCEPTION_ERROR_CODE, 0)?;
+    write_vmcs(access, VmcsField::VM_ENTRY_INSTRUCTION_LENGTH, 0)?;
+    // Keep the valid bit as the final write so a partial setup cannot describe
+    // a deliverable event.
+    write_vmcs(
+        access,
+        VmcsField::VM_ENTRY_INTERRUPTION_INFO,
+        TOY_UD_ENTRY_INTERRUPTION_INFO,
+    )?;
+
+    if read_vmcs(access, VmcsField::VM_ENTRY_EXCEPTION_ERROR_CODE)? != 0
+        || read_vmcs(access, VmcsField::VM_ENTRY_INSTRUCTION_LENGTH)? != 0
+        || read_vmcs(access, VmcsField::VM_ENTRY_INTERRUPTION_INFO)?
+            != TOY_UD_ENTRY_INTERRUPTION_INFO
+    {
+        return Err(ToyVmxExitError::InvalidExceptionInjection);
+    }
+    Ok(())
+}
+
+fn dispatch_ud_delivery_exit(
+    access: &mut impl ToyVmcsAccess,
+    registers: &GeneralRegisters,
+    reason: VmxExitReason,
+    contract: ToyVmxExitContract,
+) -> Result<ToyVmxExitAction, ToyVmxExitError> {
+    if reason != VmxExitReason::Hlt {
+        return Err(ToyVmxExitError::ExceptionDeliveryFailed(reason));
+    }
+    if registers.rip != contract.hlt_rip {
+        return Err(ToyVmxExitError::InvalidGuestRip);
+    }
+    if read_vmcs(access, VmcsField::VM_EXIT_INSTRUCTION_LENGTH)? != 1 {
+        return Err(ToyVmxExitError::InvalidInstructionLength);
+    }
+    if registers.rsp != contract.hlt_rsp {
+        return Err(ToyVmxExitError::InvalidGuestStack);
+    }
+    if registers.r15 != contract.ud_handler_cookie {
+        return Err(ToyVmxExitError::InvalidGuestCookie);
+    }
+    if read_vmcs(access, VmcsField::GUEST_CS_SELECTOR)? != u64::from(contract.hlt_cs)
+        || read_vmcs(access, VmcsField::GUEST_SS_SELECTOR)? != u64::from(contract.hlt_ss)
+        || read_vmcs(access, VmcsField::GUEST_RFLAGS)? != contract.hlt_rflags
+    {
+        return Err(ToyVmxExitError::InvalidGuestReturnState);
+    }
+    if read_vmcs(access, VmcsField::GUEST_GDTR_BASE)? != contract.guest_gdtr.base
+        || read_vmcs(access, VmcsField::GUEST_GDTR_LIMIT)? != u64::from(contract.guest_gdtr.limit)
+        || read_vmcs(access, VmcsField::GUEST_IDTR_BASE)? != contract.guest_idtr.base
+        || read_vmcs(access, VmcsField::GUEST_IDTR_LIMIT)? != u64::from(contract.guest_idtr.limit)
+    {
+        return Err(ToyVmxExitError::InvalidDescriptorTableState);
+    }
+    validate_guest_pat_registers(*registers, contract.guest_pat)?;
+    if read_vmcs(access, VmcsField::VM_ENTRY_INTERRUPTION_INFO)? & INTERRUPTION_INFO_VALID != 0 {
+        return Err(ToyVmxExitError::InvalidExceptionInjection);
+    }
+    if read_vmcs(access, VmcsField::IDT_VECTORING_INFO)? & INTERRUPTION_INFO_VALID != 0 {
+        return Err(ToyVmxExitError::InvalidIdtVectoringState);
+    }
+    Ok(ToyVmxExitAction::Stop)
+}
+
+fn validate_guest_pat_registers(
+    registers: GeneralRegisters,
+    guest_pat: VmxPat,
+) -> Result<(), ToyVmxExitError> {
+    let pat = guest_pat.raw();
+    if registers.rax != u64::from(pat as u32) || registers.rdx != u64::from((pat >> 32) as u32) {
+        return Err(ToyVmxExitError::InvalidGuestPat);
+    }
+    Ok(())
 }
 
 fn rearm_preemption_timer(
@@ -421,13 +522,30 @@ mod tests {
         length: u64,
         qualification: u64,
         interruption_info: u64,
+        entry_interruption_info: u64,
+        entry_exception_error_code: u64,
+        entry_instruction_length: u64,
+        idt_vectoring_info: u64,
         guest_pat: u64,
         guest_cr0: u64,
         guest_cr4: u64,
+        guest_cs: u64,
+        guest_ss: u64,
+        guest_rflags: u64,
+        guest_gdtr_base: u64,
+        guest_gdtr_limit: u64,
+        guest_idtr_base: u64,
+        guest_idtr_limit: u64,
         rip_write: Option<u64>,
         timer_write: Option<u64>,
-        fail_read: Option<VmcsField>,
-        fail_write: Option<VmcsField>,
+        entry_interruption_write: Option<u64>,
+        entry_error_write: Option<u64>,
+        entry_length_write: Option<u64>,
+        corrupt_entry_write: Option<VmcsField>,
+        fail_read: Option<(VmcsField, usize)>,
+        fail_write: Option<(VmcsField, usize)>,
+        matching_reads: usize,
+        matching_writes: usize,
     }
 
     impl MockAccess {
@@ -439,24 +557,46 @@ mod tests {
                 length: 0,
                 qualification: 0,
                 interruption_info: TOY_NM_INTERRUPTION_INFO,
+                entry_interruption_info: 0,
+                entry_exception_error_code: 0,
+                entry_instruction_length: 0,
+                idt_vectoring_info: 0x306,
                 guest_pat: VMX_TOY_GUEST_PAT_RAW,
                 guest_cr0: 0x8000_002b,
                 guest_cr4: 0x2220,
+                guest_cs: 0x08,
+                guest_ss: 0x10,
+                guest_rflags: 0x46,
+                guest_gdtr_base: 0x1200,
+                guest_gdtr_limit: 0x17,
+                guest_idtr_base: 0x1300,
+                guest_idtr_limit: 0x6f,
                 rip_write: None,
                 timer_write: None,
+                entry_interruption_write: None,
+                entry_error_write: None,
+                entry_length_write: None,
+                corrupt_entry_write: None,
                 fail_read: None,
                 fail_write: None,
+                matching_reads: 0,
+                matching_writes: 0,
             }
         }
     }
 
     impl ToyVmcsAccess for MockAccess {
         fn read(&mut self, field: VmcsField) -> Result<u64, VmxError> {
-            if self.fail_read == Some(field) {
-                return Err(VmxError::new(
-                    VmxErrorKind::InstructionFailed,
-                    "mock VMREAD failed",
-                ));
+            if let Some((target, occurrence)) = self.fail_read {
+                if field == target {
+                    self.matching_reads += 1;
+                    if self.matching_reads == occurrence {
+                        return Err(VmxError::new(
+                            VmxErrorKind::InstructionFailed,
+                            "mock VMREAD failed",
+                        ));
+                    }
+                }
             }
             Ok(if field == VmcsField::VM_EXIT_REASON {
                 self.reason
@@ -470,28 +610,76 @@ mod tests {
                 self.qualification
             } else if field == VmcsField::VM_EXIT_INTERRUPTION_INFO {
                 self.interruption_info
+            } else if field == VmcsField::VM_ENTRY_INTERRUPTION_INFO {
+                self.entry_interruption_info
+            } else if field == VmcsField::VM_ENTRY_EXCEPTION_ERROR_CODE {
+                self.entry_exception_error_code
+            } else if field == VmcsField::VM_ENTRY_INSTRUCTION_LENGTH {
+                self.entry_instruction_length
+            } else if field == VmcsField::IDT_VECTORING_INFO {
+                self.idt_vectoring_info
             } else if field == VmcsField::GUEST_IA32_PAT {
                 self.guest_pat
             } else if field == VmcsField::GUEST_CR0 {
                 self.guest_cr0
             } else if field == VmcsField::GUEST_CR4 {
                 self.guest_cr4
+            } else if field == VmcsField::GUEST_CS_SELECTOR {
+                self.guest_cs
+            } else if field == VmcsField::GUEST_SS_SELECTOR {
+                self.guest_ss
+            } else if field == VmcsField::GUEST_RFLAGS {
+                self.guest_rflags
+            } else if field == VmcsField::GUEST_GDTR_BASE {
+                self.guest_gdtr_base
+            } else if field == VmcsField::GUEST_GDTR_LIMIT {
+                self.guest_gdtr_limit
+            } else if field == VmcsField::GUEST_IDTR_BASE {
+                self.guest_idtr_base
+            } else if field == VmcsField::GUEST_IDTR_LIMIT {
+                self.guest_idtr_limit
             } else {
                 0
             })
         }
 
         fn write(&mut self, field: VmcsField, value: u64) -> Result<(), VmxError> {
-            if self.fail_write == Some(field) {
-                return Err(VmxError::new(
-                    VmxErrorKind::InstructionFailed,
-                    "mock VMWRITE failed",
-                ));
+            if let Some((target, occurrence)) = self.fail_write {
+                if field == target {
+                    self.matching_writes += 1;
+                    if self.matching_writes == occurrence {
+                        return Err(VmxError::new(
+                            VmxErrorKind::InstructionFailed,
+                            "mock VMWRITE failed",
+                        ));
+                    }
+                }
             }
             if field == VmcsField::GUEST_RIP {
                 self.rip_write = Some(value);
             } else if field == VmcsField::VMX_PREEMPTION_TIMER_VALUE {
                 self.timer_write = Some(value);
+            } else if field == VmcsField::VM_ENTRY_INTERRUPTION_INFO {
+                self.entry_interruption_info = if self.corrupt_entry_write == Some(field) {
+                    value ^ 1
+                } else {
+                    value
+                };
+                self.entry_interruption_write = Some(value);
+            } else if field == VmcsField::VM_ENTRY_EXCEPTION_ERROR_CODE {
+                self.entry_exception_error_code = if self.corrupt_entry_write == Some(field) {
+                    value ^ 1
+                } else {
+                    value
+                };
+                self.entry_error_write = Some(value);
+            } else if field == VmcsField::VM_ENTRY_INSTRUCTION_LENGTH {
+                self.entry_instruction_length = if self.corrupt_entry_write == Some(field) {
+                    value ^ 1
+                } else {
+                    value
+                };
+                self.entry_length_write = Some(value);
             }
             Ok(())
         }
@@ -512,8 +700,16 @@ mod tests {
             pat_rdmsr_rip: 0x1035,
             x87_guard_rip: 0x1046,
             simd_guard_rip: 0x1048,
-            hlt_rip: 0x104c,
-            pat_mismatch_hlt_rip: 0x104d,
+            ud2_rip: 0x104c,
+            hlt_rip: 0x104e,
+            pat_mismatch_hlt_rip: 0x104f,
+            hlt_rsp: 0x2ff0,
+            hlt_cs: 0x08,
+            hlt_ss: 0x10,
+            hlt_rflags: 0x46,
+            guest_gdtr: VmcsDescriptorTableState::new(0x1200, 0x17),
+            guest_idtr: VmcsDescriptorTableState::new(0x1300, 0x6f),
+            ud_handler_cookie: 0x5544_2d4f_4b21_0006,
             io_port: 0xe9,
             io_bitmap_b_port: 0x8000,
             io_value: b'A',
@@ -525,7 +721,7 @@ mod tests {
     }
 
     #[test]
-    fn preemption_io_pat_x87_simd_then_hlt_proves_the_bounded_sequence() {
+    fn preemption_io_pat_fpu_and_injected_ud_prove_the_bounded_sequence() {
         let mut access = MockAccess::preemption();
         let mut registers = GeneralRegisters::default();
         let mut sequence = ToyVmxExitSequence::AwaitingPreemption;
@@ -603,7 +799,7 @@ mod tests {
         registers.rdx = u64::from((pat >> 32) as u32);
         access.reason = 0;
         access.rip = 0x1046;
-        access.fail_read = Some(VmcsField::VM_EXIT_INSTRUCTION_LENGTH);
+        access.fail_read = Some((VmcsField::VM_EXIT_INSTRUCTION_LENGTH, 1));
         assert_eq!(
             dispatch_toy_vmx_exit(&mut access, &mut registers, &mut sequence, contract()).unwrap(),
             ToyVmxExitAction::Resume
@@ -616,13 +812,21 @@ mod tests {
             dispatch_toy_vmx_exit(&mut access, &mut registers, &mut sequence, contract()).unwrap(),
             ToyVmxExitAction::Resume
         );
-        assert_eq!(sequence, ToyVmxExitSequence::AwaitingHlt);
+        assert_eq!(sequence, ToyVmxExitSequence::AwaitingUdDelivery);
         assert_eq!(access.rip_write, Some(0x104c));
+        assert_eq!(access.entry_error_write, Some(0));
+        assert_eq!(access.entry_length_write, Some(0));
+        assert_eq!(
+            access.entry_interruption_write,
+            Some(TOY_UD_ENTRY_INTERRUPTION_INFO)
+        );
 
         access.fail_read = None;
+        access.entry_interruption_info &= !INTERRUPTION_INFO_VALID;
         access.reason = 12;
-        access.rip = 0x104c;
+        access.rip = 0x104e;
         access.length = 1;
+        registers.r15 = contract().ud_handler_cookie;
         assert_eq!(
             dispatch_toy_vmx_exit(&mut access, &mut registers, &mut sequence, contract()).unwrap(),
             ToyVmxExitAction::Stop
@@ -634,7 +838,7 @@ mod tests {
     fn hlt_before_cpuid_is_rejected() {
         let mut access = MockAccess::preemption();
         access.reason = 12;
-        access.rip = 0x104c;
+        access.rip = 0x104e;
         access.length = 1;
         let mut registers = GeneralRegisters::default();
         let mut sequence = ToyVmxExitSequence::AwaitingPreemption;
@@ -671,7 +875,7 @@ mod tests {
     #[test]
     fn vmread_and_vmwrite_failures_preserve_the_field() {
         let mut access = MockAccess::preemption();
-        access.fail_read = Some(VmcsField::GUEST_RIP);
+        access.fail_read = Some((VmcsField::GUEST_RIP, 1));
         let mut registers = GeneralRegisters::default();
         let mut sequence = ToyVmxExitSequence::AwaitingPreemption;
         assert_eq!(
@@ -684,7 +888,7 @@ mod tests {
         );
 
         access.fail_read = None;
-        access.fail_write = Some(VmcsField::VMX_PREEMPTION_TIMER_VALUE);
+        access.fail_write = Some((VmcsField::VMX_PREEMPTION_TIMER_VALUE, 1));
         assert_eq!(
             dispatch_toy_vmx_exit(&mut access, &mut registers, &mut sequence, contract())
                 .unwrap_err(),
@@ -868,6 +1072,17 @@ mod tests {
         }
     }
 
+    fn ready_ud_delivery() -> (MockAccess, GeneralRegisters, ToyVmxExitSequence) {
+        let mut access = MockAccess::preemption();
+        access.reason = 12;
+        access.rip = contract().hlt_rip;
+        access.length = 1;
+        access.entry_interruption_info = TOY_UD_ENTRY_INTERRUPTION_INFO & !INTERRUPTION_INFO_VALID;
+        let mut registers = pat_registers();
+        registers.r15 = contract().ud_handler_cookie;
+        (access, registers, ToyVmxExitSequence::AwaitingUdDelivery)
+    }
+
     #[test]
     fn fpu_guards_require_exact_nm_pat_and_control_state() {
         let mut access = MockAccess::preemption();
@@ -911,6 +1126,245 @@ mod tests {
                 ToyVmxExitError::InvalidFpuGuardState
             );
         }
+    }
+
+    #[test]
+    fn simd_guard_arms_only_the_exact_hardware_ud_event() {
+        let mut access = MockAccess::preemption();
+        access.reason = 0;
+        access.rip = contract().simd_guard_rip;
+        access.entry_interruption_info = 0x306;
+        let mut registers = pat_registers();
+        let mut sequence = ToyVmxExitSequence::AwaitingSimdGuard;
+
+        assert_eq!(
+            dispatch_toy_vmx_exit(&mut access, &mut registers, &mut sequence, contract()).unwrap(),
+            ToyVmxExitAction::Resume
+        );
+        assert_eq!(sequence, ToyVmxExitSequence::AwaitingUdDelivery);
+        assert_eq!(access.rip_write, Some(contract().ud2_rip));
+        assert_eq!(
+            access.entry_interruption_info,
+            TOY_UD_ENTRY_INTERRUPTION_INFO
+        );
+
+        let mut access = MockAccess::preemption();
+        access.reason = 0;
+        access.rip = contract().simd_guard_rip;
+        let mut registers = pat_registers();
+        let mut sequence = ToyVmxExitSequence::AwaitingSimdGuard;
+        let mut bad_contract = contract();
+        bad_contract.ud2_rip ^= 1;
+        assert_eq!(
+            dispatch_toy_vmx_exit(&mut access, &mut registers, &mut sequence, bad_contract,)
+                .unwrap_err(),
+            ToyVmxExitError::InvalidGuestRip
+        );
+        assert_eq!(access.entry_interruption_write, None);
+
+        let mut access = MockAccess::preemption();
+        access.reason = 0;
+        access.rip = contract().simd_guard_rip;
+        access.entry_interruption_info = INTERRUPTION_INFO_VALID;
+        let mut registers = pat_registers();
+        let mut sequence = ToyVmxExitSequence::AwaitingSimdGuard;
+        assert_eq!(
+            dispatch_toy_vmx_exit(&mut access, &mut registers, &mut sequence, contract())
+                .unwrap_err(),
+            ToyVmxExitError::InvalidExceptionInjection
+        );
+
+        for field in [
+            VmcsField::VM_ENTRY_EXCEPTION_ERROR_CODE,
+            VmcsField::VM_ENTRY_INSTRUCTION_LENGTH,
+            VmcsField::VM_ENTRY_INTERRUPTION_INFO,
+        ] {
+            let mut access = MockAccess::preemption();
+            access.reason = 0;
+            access.rip = contract().simd_guard_rip;
+            access.corrupt_entry_write = Some(field);
+            let mut registers = pat_registers();
+            let mut sequence = ToyVmxExitSequence::AwaitingSimdGuard;
+            assert_eq!(
+                dispatch_toy_vmx_exit(&mut access, &mut registers, &mut sequence, contract())
+                    .unwrap_err(),
+                ToyVmxExitError::InvalidExceptionInjection
+            );
+        }
+    }
+
+    #[test]
+    fn every_ud_arm_vmcs_operation_fails_without_advancing_the_sequence() {
+        for (field, occurrence) in [
+            (VmcsField::VM_ENTRY_INTERRUPTION_INFO, 1),
+            (VmcsField::VM_ENTRY_EXCEPTION_ERROR_CODE, 1),
+            (VmcsField::VM_ENTRY_INSTRUCTION_LENGTH, 1),
+            (VmcsField::VM_ENTRY_INTERRUPTION_INFO, 2),
+        ] {
+            let mut access = MockAccess::preemption();
+            access.reason = 0;
+            access.rip = contract().simd_guard_rip;
+            access.fail_read = Some((field, occurrence));
+            let mut registers = pat_registers();
+            let mut sequence = ToyVmxExitSequence::AwaitingSimdGuard;
+
+            assert_eq!(
+                dispatch_toy_vmx_exit(&mut access, &mut registers, &mut sequence, contract())
+                    .unwrap_err(),
+                ToyVmxExitError::VmcsRead {
+                    field,
+                    kind: VmxErrorKind::InstructionFailed,
+                }
+            );
+            assert_eq!(sequence, ToyVmxExitSequence::AwaitingSimdGuard);
+            if field == VmcsField::VM_ENTRY_INTERRUPTION_INFO && occurrence == 2 {
+                assert_eq!(
+                    access.entry_interruption_write,
+                    Some(TOY_UD_ENTRY_INTERRUPTION_INFO)
+                );
+            }
+        }
+
+        for field in [
+            VmcsField::VM_ENTRY_EXCEPTION_ERROR_CODE,
+            VmcsField::VM_ENTRY_INSTRUCTION_LENGTH,
+            VmcsField::VM_ENTRY_INTERRUPTION_INFO,
+        ] {
+            let mut access = MockAccess::preemption();
+            access.reason = 0;
+            access.rip = contract().simd_guard_rip;
+            access.fail_write = Some((field, 1));
+            let mut registers = pat_registers();
+            let mut sequence = ToyVmxExitSequence::AwaitingSimdGuard;
+
+            assert_eq!(
+                dispatch_toy_vmx_exit(&mut access, &mut registers, &mut sequence, contract())
+                    .unwrap_err(),
+                ToyVmxExitError::VmcsWrite {
+                    field,
+                    kind: VmxErrorKind::InstructionFailed,
+                }
+            );
+            assert_eq!(sequence, ToyVmxExitSequence::AwaitingSimdGuard);
+        }
+    }
+
+    #[test]
+    fn awaiting_ud_rejects_a_natural_exception_without_reading_its_length() {
+        let (mut access, mut registers, mut sequence) = ready_ud_delivery();
+        access.reason = 0;
+        access.rip = contract().ud2_rip;
+        access.fail_read = Some((VmcsField::VM_EXIT_INSTRUCTION_LENGTH, 1));
+
+        assert_eq!(
+            dispatch_toy_vmx_exit(&mut access, &mut registers, &mut sequence, contract())
+                .unwrap_err(),
+            ToyVmxExitError::ExceptionDeliveryFailed(VmxExitReason::ExceptionOrNmi)
+        );
+        assert_eq!(sequence, ToyVmxExitSequence::AwaitingUdDelivery);
+        assert_eq!(access.entry_interruption_write, None);
+
+        let (mut access, mut registers, mut sequence) = ready_ud_delivery();
+        access.reason = 52;
+        assert_eq!(
+            dispatch_toy_vmx_exit(&mut access, &mut registers, &mut sequence, contract())
+                .unwrap_err(),
+            ToyVmxExitError::ExceptionDeliveryFailed(VmxExitReason::PreemptionTimer)
+        );
+    }
+
+    #[test]
+    fn delivered_ud_requires_the_exact_hlt_boundary() {
+        let (mut access, mut registers, mut sequence) = ready_ud_delivery();
+        access.rip ^= 1;
+        assert_eq!(
+            dispatch_toy_vmx_exit(&mut access, &mut registers, &mut sequence, contract())
+                .unwrap_err(),
+            ToyVmxExitError::InvalidGuestRip
+        );
+
+        let (mut access, mut registers, mut sequence) = ready_ud_delivery();
+        access.length = 2;
+        assert_eq!(
+            dispatch_toy_vmx_exit(&mut access, &mut registers, &mut sequence, contract())
+                .unwrap_err(),
+            ToyVmxExitError::InvalidInstructionLength
+        );
+    }
+
+    #[test]
+    fn delivered_ud_requires_the_exact_iret_frame_and_vmcs_state() {
+        let (mut access, mut registers, mut sequence) = ready_ud_delivery();
+        registers.r15 ^= 1;
+        assert_eq!(
+            dispatch_toy_vmx_exit(&mut access, &mut registers, &mut sequence, contract())
+                .unwrap_err(),
+            ToyVmxExitError::InvalidGuestCookie
+        );
+
+        let (mut access, mut registers, mut sequence) = ready_ud_delivery();
+        access.rsp ^= 8;
+        assert_eq!(
+            dispatch_toy_vmx_exit(&mut access, &mut registers, &mut sequence, contract())
+                .unwrap_err(),
+            ToyVmxExitError::InvalidGuestStack
+        );
+
+        for field in 0..3 {
+            let (mut access, mut registers, mut sequence) = ready_ud_delivery();
+            match field {
+                0 => access.guest_cs ^= 8,
+                1 => access.guest_ss ^= 8,
+                _ => access.guest_rflags ^= 1,
+            }
+            assert_eq!(
+                dispatch_toy_vmx_exit(&mut access, &mut registers, &mut sequence, contract())
+                    .unwrap_err(),
+                ToyVmxExitError::InvalidGuestReturnState
+            );
+        }
+
+        for field in 0..4 {
+            let (mut access, mut registers, mut sequence) = ready_ud_delivery();
+            match field {
+                0 => access.guest_gdtr_base ^= 8,
+                1 => access.guest_gdtr_limit ^= 1,
+                2 => access.guest_idtr_base ^= 8,
+                _ => access.guest_idtr_limit ^= 1,
+            }
+            assert_eq!(
+                dispatch_toy_vmx_exit(&mut access, &mut registers, &mut sequence, contract())
+                    .unwrap_err(),
+                ToyVmxExitError::InvalidDescriptorTableState
+            );
+        }
+    }
+
+    #[test]
+    fn delivered_ud_requires_consumed_entry_and_no_vectoring_event() {
+        let (mut access, mut registers, mut sequence) = ready_ud_delivery();
+        access.entry_interruption_info |= INTERRUPTION_INFO_VALID;
+        assert_eq!(
+            dispatch_toy_vmx_exit(&mut access, &mut registers, &mut sequence, contract())
+                .unwrap_err(),
+            ToyVmxExitError::InvalidExceptionInjection
+        );
+
+        let (mut access, mut registers, mut sequence) = ready_ud_delivery();
+        access.idt_vectoring_info = INTERRUPTION_INFO_VALID | 6;
+        assert_eq!(
+            dispatch_toy_vmx_exit(&mut access, &mut registers, &mut sequence, contract())
+                .unwrap_err(),
+            ToyVmxExitError::InvalidIdtVectoringState
+        );
+
+        let (mut access, mut registers, mut sequence) = ready_ud_delivery();
+        registers.rax ^= 1;
+        assert_eq!(
+            dispatch_toy_vmx_exit(&mut access, &mut registers, &mut sequence, contract())
+                .unwrap_err(),
+            ToyVmxExitError::InvalidGuestPat
+        );
     }
 
     #[test]
