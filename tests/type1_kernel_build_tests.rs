@@ -439,7 +439,9 @@ fn kernel_build_script_and_ci_keep_boot_evidence_boundary() {
             "static kernel contains relocations",
             "symbol_table_check=\"passed\"",
             "diagnostic symbol was not retained",
-            "llvm-objdump --disassemble --section=.text --no-show-raw-insn",
+            "--disassemble --section=.text --no-show-raw-insn",
+            "AEGISHV_LLVM_OBJDUMP",
+            "rustc --print sysroot",
             "check-type1-host-text.sh",
             "host_fpu_simd_text_check=\"passed\"",
         ],
@@ -448,6 +450,7 @@ fn kernel_build_script_and_ci_keep_boot_evidence_boundary() {
         &ci,
         &[
             "targets: x86_64-unknown-none",
+            "components: rustfmt, clippy, llvm-tools-preview",
             "cargo clippy --locked --workspace",
             "bash scripts/build-type1-kernel.sh",
         ],

@@ -81,7 +81,7 @@ On an eligible Intel host VMLAUNCH begins with the zero-value VMX preemption-tim
 
 Owned-root activation is refused unless the current IA32_PAT entry zero is write-back, because every final host leaf uses that fixed cache selector.
 
-The required lab-tool check also records `llvm-objdump`, because final host `.text` inspection is a mandatory kernel-build gate.
+The required lab-tool check also records `llvm-objdump`, because final host `.text` inspection is a mandatory kernel-build gate. It accepts an explicit `AEGISHV_LLVM_OBJDUMP`, a command on `PATH`, or the binary installed by rustup's `llvm-tools-preview` component.
 
 Device model tests are also normal locked Rust tests:
 

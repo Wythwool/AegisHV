@@ -47,6 +47,30 @@ command_path() {
   command -v "$1" 2>/dev/null || true
 }
 
+resolve_llvm_objdump() {
+  local requested="${AEGISHV_LLVM_OBJDUMP:-llvm-objdump}"
+  local path
+  local sysroot
+  local host
+  path="$(command_path "$requested")"
+  if [ -n "$path" ]; then
+    printf '%s\n' "$path"
+    return
+  fi
+  if ! command -v rustc >/dev/null 2>&1; then
+    return
+  fi
+  sysroot="$(rustc --print sysroot 2>/dev/null || true)"
+  host="$(rustc -vV 2>/dev/null | awk '/^host:/ { print $2; exit }')"
+  for path in "$sysroot/lib/rustlib/$host/bin/llvm-objdump" \
+    "$sysroot/lib/rustlib/$host/bin/llvm-objdump.exe"; do
+    if [ -x "$path" ]; then
+      printf '%s\n' "$path"
+      return
+    fi
+  done
+}
+
 bool_for_path() {
   if [ -n "$1" ]; then
     echo true
@@ -68,7 +92,7 @@ first_line_or_unavailable() {
 }
 
 rustup_path="$(command_path rustup)"
-llvm_objdump_path="$(command_path llvm-objdump)"
+llvm_objdump_path="$(resolve_llvm_objdump)"
 qemu_path="$(command_path "${AEGISHV_QEMU:-qemu-system-x86_64}")"
 requested_timeout="${AEGISHV_TIMEOUT:-}"
 timeout_command=""

@@ -141,6 +141,30 @@ elf_integer_value() {
   fi
 }
 
+resolve_llvm_objdump() {
+  local requested="${AEGISHV_LLVM_OBJDUMP:-llvm-objdump}"
+  local path
+  local sysroot
+  local host
+  path="$(command -v "$requested" 2>/dev/null || true)"
+  if [ -n "$path" ]; then
+    printf '%s\n' "$path"
+    return
+  fi
+  if ! command -v rustc >/dev/null 2>&1; then
+    return
+  fi
+  sysroot="$(rustc --print sysroot 2>/dev/null || true)"
+  host="$(rustc -vV 2>/dev/null | awk '/^host:/ { print $2; exit }')"
+  for path in "$sysroot/lib/rustlib/$host/bin/llvm-objdump" \
+    "$sysroot/lib/rustlib/$host/bin/llvm-objdump.exe"; do
+    if [ -x "$path" ]; then
+      printf '%s\n' "$path"
+      return
+    fi
+  done
+}
+
 usage() {
   cat >&2 <<'USAGE'
 usage: scripts/inspect-type1-kernel.sh [KERNEL_ELF]
@@ -293,11 +317,12 @@ if command -v llvm-readobj >/dev/null 2>&1; then
   done
 fi
 
-if ! command -v llvm-objdump >/dev/null 2>&1; then
+llvm_objdump="$(resolve_llvm_objdump)"
+if [ -z "$llvm_objdump" ]; then
   echo "type1 kernel inspect: llvm-objdump is required for the host FPU/SIMD text check" >&2
   exit 69
 fi
-text_disassembly="$(llvm-objdump --disassemble --section=.text --no-show-raw-insn "$kernel_elf")"
+text_disassembly="$("$llvm_objdump" --disassemble --section=.text --no-show-raw-insn "$kernel_elf")"
 printf '%s\n' "$text_disassembly" | bash scripts/check-type1-host-text.sh
 host_fpu_simd_text_check="passed"
 
