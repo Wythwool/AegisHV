@@ -10,10 +10,7 @@ pub use early_memory::{
 use aegishv_arch_x86::svm::features::EferValue;
 use aegishv_arch_x86::svm::features::{SvmCpuidExt1, SvmCpuidLeaf, SvmErrorKind, SvmFeatureSet};
 use aegishv_arch_x86::svm::runtime::SvmRuntime;
-use aegishv_arch_x86::vmx::features::{
-    validate_control_register, CpuidLeaf1, CrFixedBits, FeatureControlMsr, VmxErrorKind,
-    VmxFeatureSet,
-};
+use aegishv_arch_x86::vmx::features::{CpuidLeaf1, FeatureControlMsr, VmxErrorKind, VmxFeatureSet};
 use aegishv_arch_x86::vmx::instructions::VmxInstructionExecutor;
 use aegishv_arch_x86::vmx::region::{VmxRevisionId, VmxonRegion};
 use aegishv_arch_x86::vmx::runtime::VmxRuntime;
@@ -905,9 +902,26 @@ pub struct Type1RuntimePreflight {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Type1HostControlRegister {
+    Cr0,
+    Cr4,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Type1RuntimePreflightError {
     BackendMismatch,
-    Vmx(VmxErrorKind),
+    InconsistentVmxFixedBits {
+        register: Type1HostControlRegister,
+        bits: u64,
+    },
+    ActiveHostControlBitsForbidden {
+        register: Type1HostControlRegister,
+        bits: u64,
+    },
+    RequiredHostControlBitsForbidden {
+        register: Type1HostControlRegister,
+        bits: u64,
+    },
     Svm(SvmErrorKind),
 }
 
@@ -947,30 +961,44 @@ pub fn plan_type1_runtime_preflight(
 fn plan_vmx_preflight(
     controls: Type1ControlSnapshot,
 ) -> Result<Type1RuntimePreflight, Type1RuntimePreflightError> {
-    let cr0_fixed = CrFixedBits::new(controls.vmx_cr0_fixed0, controls.vmx_cr0_fixed1);
-    let cr4_fixed = CrFixedBits::new(controls.vmx_cr4_fixed0, controls.vmx_cr4_fixed1);
-    if controls.cr0 & !controls.vmx_cr0_fixed1 != 0 || controls.cr4 & !controls.vmx_cr4_fixed1 != 0
-    {
-        return Err(Type1RuntimePreflightError::Vmx(
-            VmxErrorKind::UnsupportedCapability,
-        ));
+    let cr0_fixed_conflict = controls.vmx_cr0_fixed0 & !controls.vmx_cr0_fixed1;
+    if cr0_fixed_conflict != 0 {
+        return Err(Type1RuntimePreflightError::InconsistentVmxFixedBits {
+            register: Type1HostControlRegister::Cr0,
+            bits: cr0_fixed_conflict,
+        });
+    }
+    let cr4_fixed_conflict = controls.vmx_cr4_fixed0 & !controls.vmx_cr4_fixed1;
+    if cr4_fixed_conflict != 0 {
+        return Err(Type1RuntimePreflightError::InconsistentVmxFixedBits {
+            register: Type1HostControlRegister::Cr4,
+            bits: cr4_fixed_conflict,
+        });
+    }
+    let active_cr0_forbidden = controls.cr0 & !controls.vmx_cr0_fixed1;
+    if active_cr0_forbidden != 0 {
+        return Err(Type1RuntimePreflightError::ActiveHostControlBitsForbidden {
+            register: Type1HostControlRegister::Cr0,
+            bits: active_cr0_forbidden,
+        });
+    }
+    let active_cr4_forbidden = controls.cr4 & !controls.vmx_cr4_fixed1;
+    if active_cr4_forbidden != 0 {
+        return Err(Type1RuntimePreflightError::ActiveHostControlBitsForbidden {
+            register: Type1HostControlRegister::Cr4,
+            bits: active_cr4_forbidden,
+        });
     }
     if controls.vmx_cr4_fixed1 & TYPE1_CR4_VMXE == 0 {
-        return Err(Type1RuntimePreflightError::Vmx(
-            VmxErrorKind::UnsupportedCapability,
-        ));
+        return Err(
+            Type1RuntimePreflightError::RequiredHostControlBitsForbidden {
+                register: Type1HostControlRegister::Cr4,
+                bits: TYPE1_CR4_VMXE,
+            },
+        );
     }
     let cr0_after = controls.cr0 | controls.vmx_cr0_fixed0;
     let cr4_after = controls.cr4 | TYPE1_CR4_VMXE | controls.vmx_cr4_fixed0;
-    validate_control_register(cr0_after, cr0_fixed, "CR0 does not satisfy VMX fixed bits")
-        .map_err(|err| Type1RuntimePreflightError::Vmx(err.kind))?;
-    validate_control_register(cr4_after, cr4_fixed, "CR4 does not satisfy VMX fixed bits")
-        .map_err(|err| Type1RuntimePreflightError::Vmx(err.kind))?;
-    if cr4_after & TYPE1_CR4_VMXE == 0 {
-        return Err(Type1RuntimePreflightError::Vmx(
-            VmxErrorKind::UnsupportedCapability,
-        ));
-    }
     Ok(Type1RuntimePreflight {
         backend: Type1RuntimeBackend::IntelVmx,
         cr0_before: controls.cr0,
@@ -2080,7 +2108,10 @@ mod tests {
 
         assert_eq!(
             err,
-            Type1RuntimePreflightError::Vmx(VmxErrorKind::UnsupportedCapability)
+            Type1RuntimePreflightError::RequiredHostControlBitsForbidden {
+                register: Type1HostControlRegister::Cr4,
+                bits: TYPE1_CR4_VMXE,
+            }
         );
     }
 
@@ -2107,7 +2138,10 @@ mod tests {
 
         assert_eq!(
             err,
-            Type1RuntimePreflightError::Vmx(VmxErrorKind::UnsupportedCapability)
+            Type1RuntimePreflightError::ActiveHostControlBitsForbidden {
+                register: Type1HostControlRegister::Cr4,
+                bits: 1 << 12,
+            }
         );
     }
 

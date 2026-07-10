@@ -257,31 +257,61 @@ fn copy_limine_memory_entries(
     if count == 0 || count > aegishv_type1_kernel::TYPE1_MAX_MEMORY_MAP_ENTRIES {
         return Err(());
     }
-    if !aegishv_arch_x86::vmx::features::is_canonical_u64(handoff.memmap_entries)
-        || handoff.memmap_entries as usize % core::mem::align_of::<usize>() != 0
-    {
-        return Err(());
-    }
+    let table_size = count
+        .checked_mul(core::mem::size_of::<
+            *const aegishv_type1_boot::LimineMemmapEntry,
+        >())
+        .ok_or(())?;
+    validate_limine_object_range(
+        handoff.memmap_entries,
+        table_size,
+        core::mem::align_of::<*const aegishv_type1_boot::LimineMemmapEntry>(),
+    )?;
 
     let table =
         handoff.memmap_entries as usize as *const *const aegishv_type1_boot::LimineMemmapEntry;
     let mut copied = [aegishv_type1_boot::LimineMemmapEntry::empty();
         aegishv_type1_kernel::TYPE1_MAX_MEMORY_MAP_ENTRIES];
     for (index, slot) in copied.iter_mut().take(count).enumerate() {
-        // Limine owns the pointer array for the lifetime of the boot handoff and
-        // supplies virtual pointers that are already mapped in the HHDM.
+        // The accepted Limine response guarantees that entry_count is the
+        // accessible extent of this live pointer array. The range check above
+        // rules out arithmetic wrap and noncanonical endpoints; Limine owns and
+        // keeps the mapped array alive until bootloader memory is reclaimed.
         let entry = unsafe { table.add(index).read_volatile() };
-        if entry.is_null()
-            || entry as usize % core::mem::align_of::<aegishv_type1_boot::LimineMemmapEntry>() != 0
-            || !aegishv_arch_x86::vmx::features::is_canonical_u64(entry as usize as u64)
-        {
+        if entry.is_null() {
             return Err(());
         }
-        // Each pointed-to entry is a 24-byte Limine protocol object and remains
-        // valid until the bootloader-reclaimable ranges are explicitly reclaimed.
+        validate_limine_object_range(
+            entry as usize as u64,
+            core::mem::size_of::<aegishv_type1_boot::LimineMemmapEntry>(),
+            core::mem::align_of::<aegishv_type1_boot::LimineMemmapEntry>(),
+        )?;
+        // Limine guarantees that each validated pointer addresses one complete
+        // 24-byte protocol object which remains mapped and alive until the
+        // bootloader-reclaimable ranges are explicitly reclaimed.
         *slot = unsafe { entry.read_volatile() };
     }
     Ok((copied, count))
+}
+
+#[cfg(any(target_os = "none", test))]
+fn validate_limine_object_range(start: u64, size: usize, alignment: usize) -> Result<(), ()> {
+    if size == 0 || alignment == 0 || start % alignment as u64 != 0 {
+        return Err(());
+    }
+    let size = u64::try_from(size).map_err(|_| ())?;
+    let last = start
+        .checked_add(size)
+        .and_then(|end| end.checked_sub(1))
+        .ok_or(())?;
+    if start > usize::MAX as u64
+        || last > usize::MAX as u64
+        || !aegishv_arch_x86::vmx::features::is_canonical_u64(start)
+        || !aegishv_arch_x86::vmx::features::is_canonical_u64(last)
+    {
+        return Err(());
+    }
+    Ok(())
 }
 
 #[cfg(all(target_os = "none", target_arch = "x86_64"))]
@@ -741,4 +771,17 @@ fn halt_loop() -> ! {
 #[cfg(not(target_os = "none"))]
 fn main() {
     println!("{}", aegishv_type1_kernel::SERIAL_READY_MARKER);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_limine_object_range;
+
+    #[test]
+    fn limine_object_range_rejects_wrap_and_noncanonical_endpoints() {
+        assert!(validate_limine_object_range(0x1000, 24, 8).is_ok());
+        assert!(validate_limine_object_range(u64::MAX - 7, 16, 8).is_err());
+        assert!(validate_limine_object_range(0x0000_7fff_ffff_fff8, 16, 8).is_err());
+        assert!(validate_limine_object_range(0x1001, 24, 8).is_err());
+    }
 }

@@ -236,40 +236,72 @@ impl<const R: usize, const A: usize> PhysicalPageAllocator<R, A> {
         if run.count == 0 {
             return Ok(());
         }
-        if self.free_len >= R {
-            return Err(CoreError::new(
-                CoreErrorKind::CapacityExceeded,
-                "physical allocator free-run table is full",
-            ));
-        }
-
-        let mut index = self.free_len;
-        while index > 0 && self.free[index - 1].start > run.start {
-            self.free[index] = self.free[index - 1];
-            index -= 1;
-        }
-        self.free[index] = run;
-        self.free_len += 1;
-        self.merge_free_runs()
-    }
-
-    fn merge_free_runs(&mut self) -> Result<(), CoreError> {
+        let run_end = run.end()?;
         let mut index = 0;
-        while index + 1 < self.free_len {
-            let current = self.free[index];
-            let next = self.free[index + 1];
-            let current_end = current.end()?;
-            if current_end > next.start {
+        while index < self.free_len && self.free[index].start < run.start {
+            index += 1;
+        }
+
+        let merge_left = if index > 0 {
+            let previous_end = self.free[index - 1].end()?;
+            if previous_end > run.start {
                 return Err(CoreError::new(
                     CoreErrorKind::Overlap,
                     "physical allocator free list overlaps",
                 ));
             }
-            if current_end == next.start {
-                self.free[index].count += next.count;
-                remove_run(&mut self.free, &mut self.free_len, index + 1);
-            } else {
-                index += 1;
+            previous_end == run.start
+        } else {
+            false
+        };
+        let merge_right = if index < self.free_len {
+            if run_end > self.free[index].start {
+                return Err(CoreError::new(
+                    CoreErrorKind::Overlap,
+                    "physical allocator free list overlaps",
+                ));
+            }
+            run_end == self.free[index].start
+        } else {
+            false
+        };
+
+        let merged_count = |left: u64, right: u64| {
+            left.checked_add(right).ok_or(CoreError::new(
+                CoreErrorKind::InvalidAddress,
+                "physical allocator page-run count overflowed",
+            ))
+        };
+        match (merge_left, merge_right) {
+            (true, true) => {
+                let count = merged_count(self.free[index - 1].count, run.count)?;
+                let count = merged_count(count, self.free[index].count)?;
+                self.free[index - 1].count = count;
+                remove_run(&mut self.free, &mut self.free_len, index);
+            }
+            (true, false) => {
+                self.free[index - 1].count = merged_count(self.free[index - 1].count, run.count)?;
+            }
+            (false, true) => {
+                self.free[index] = PageRun {
+                    start: run.start,
+                    count: merged_count(run.count, self.free[index].count)?,
+                };
+            }
+            (false, false) => {
+                if self.free_len >= R {
+                    return Err(CoreError::new(
+                        CoreErrorKind::CapacityExceeded,
+                        "physical allocator free-run table is full",
+                    ));
+                }
+                let mut cursor = self.free_len;
+                while cursor > index {
+                    self.free[cursor] = self.free[cursor - 1];
+                    cursor -= 1;
+                }
+                self.free[index] = run;
+                self.free_len += 1;
             }
         }
         Ok(())
@@ -422,7 +454,7 @@ mod tests {
     }
 
     #[test]
-    fn failed_free_keeps_the_allocation_ledger_intact() {
+    fn free_merges_with_a_neighbor_when_the_run_table_is_full() {
         let map = MemoryMap::<1>::from_entries(&[MemoryRegion::new(
             0x1000,
             0x3000,
@@ -432,10 +464,31 @@ mod tests {
         let mut allocator = PhysicalPageAllocator::<1, 1>::from_memory_map(&map).unwrap();
         let page = allocator.allocate().unwrap();
 
+        allocator.free(page).unwrap();
+        assert_eq!(allocator.allocated_pages(), 0);
+        assert_eq!(allocator.free_pages(), 3);
+    }
+
+    #[test]
+    fn failed_unmergeable_free_keeps_the_allocation_ledger_intact() {
+        let map = MemoryMap::<2>::from_entries(&[
+            MemoryRegion::new(0x1000, 0x1000, MemoryRegionKind::Usable),
+            MemoryRegion::new(0x4000, 0x3000, MemoryRegionKind::Usable),
+        ])
+        .unwrap();
+        let mut allocator = PhysicalPageAllocator::<2, 2>::from_memory_map(&map).unwrap();
+        let isolated = allocator.allocate().unwrap();
+        let middle = allocator
+            .allocate_within(PageAllocationConstraint::new(0x5000, 0x6000).unwrap())
+            .unwrap();
+
         assert_eq!(
-            allocator.free(page).unwrap_err().kind,
+            allocator.free(isolated).unwrap_err().kind,
             CoreErrorKind::CapacityExceeded
         );
+        assert_eq!(allocator.allocated_pages(), 2);
+
+        allocator.free(middle).unwrap();
         assert_eq!(allocator.allocated_pages(), 1);
     }
 }
