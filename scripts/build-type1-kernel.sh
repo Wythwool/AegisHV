@@ -48,6 +48,7 @@ cargo rustc \
   -C panic=abort \
   -C relocation-model=static \
   -C code-model=kernel \
+  -C no-redzone=yes \
   -C strip=none \
   -C link-arg=-T"$linker_script"
 
@@ -72,6 +73,7 @@ expected_kernel_physical_base=$expected_kernel_physical_base
 expected_kernel_virtual_base=$expected_kernel_virtual_base
 relocation_model=static
 code_model=kernel
+red_zone=false
 serial_marker=aegishv:type1:halt
 runtime_backend_marker=aegishv:type1:backend-none
 runtime_backend_probe=cpuid-msr

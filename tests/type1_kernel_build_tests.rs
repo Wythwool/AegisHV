@@ -33,6 +33,32 @@ fn workspace_and_lockfile_include_minimal_type1_kernel_crate() {
 }
 
 #[test]
+fn type1_entry_installs_owned_host_tables_before_rust() {
+    let entry = read_repo_file("boot/x86_64/entry.S");
+    let tables = read_repo_file("boot/x86_64/host_tables.S");
+    let build = read_repo_file("scripts/build-type1-kernel.sh");
+
+    let install = entry.find("call aegishv_install_host_tables").unwrap();
+    let rust_entry = entry.find("call aegishv_type1_rust_entry").unwrap();
+    assert!(install < rust_entry);
+    assert_contains_all(
+        &tables,
+        &[
+            "__aegishv_host_gdt",
+            "__aegishv_host_tss",
+            "__aegishv_host_idt",
+            "__aegishv_double_fault_stack_top",
+            "__aegishv_nmi_stack_top",
+            "__aegishv_vmx_exit_stack_top",
+            "ltr ax",
+            "lidt [rip + __aegishv_host_idtr]",
+            "aegishv_type1_host_exception",
+        ],
+    );
+    assert!(build.contains("-C no-redzone=yes"));
+}
+
+#[test]
 fn kernel_entry_records_serial_marker_and_halt_path() {
     let lib = read_repo_file("crates/aegishv-type1-kernel/src/lib.rs");
     let main = read_repo_file("crates/aegishv-type1-kernel/src/main.rs");

@@ -8,7 +8,7 @@ use core::arch::{asm, global_asm};
 #[cfg(target_os = "none")]
 use core::panic::PanicInfo;
 #[cfg(all(target_os = "none", target_arch = "x86_64"))]
-use core::sync::atomic::{AtomicU32, AtomicU8, Ordering};
+use core::sync::atomic::{AtomicU32, AtomicU64, AtomicU8, Ordering};
 
 #[cfg(target_os = "none")]
 global_asm!(
@@ -18,6 +18,8 @@ global_asm!(
 
 #[cfg(all(target_os = "none", target_arch = "x86_64"))]
 global_asm!(include_str!("../../../boot/x86_64/vmx_entry.S"));
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+global_asm!(include_str!("../../../boot/x86_64/host_tables.S"));
 
 #[cfg(all(target_os = "none", target_arch = "x86_64"))]
 const VMX_TOY_AWAITING_CPUID: u8 = 0;
@@ -32,6 +34,33 @@ const VMX_TOY_FAILED: u8 = u8::MAX;
 static VMX_TOY_EXIT_STATE: AtomicU8 = AtomicU8::new(VMX_TOY_AWAITING_CPUID);
 #[cfg(all(target_os = "none", target_arch = "x86_64"))]
 static VMX_LAST_INSTRUCTION_ERROR: AtomicU32 = AtomicU32::new(0);
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+static HOST_LAST_EXCEPTION_VECTOR: AtomicU8 = AtomicU8::new(u8::MAX);
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+static HOST_LAST_EXCEPTION_CR2: AtomicU64 = AtomicU64::new(0);
+
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+#[repr(C, packed)]
+struct DescriptorTablePointer {
+    limit: u16,
+    base: u64,
+}
+
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+#[repr(C)]
+struct HostExceptionFrame {
+    vector: u64,
+    error_code: u64,
+    rip: u64,
+    cs: u64,
+    rflags: u64,
+}
+
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+extern "C" {
+    static __aegishv_host_gdt: u8;
+    static __aegishv_host_idt: u8;
+}
 
 #[cfg(target_os = "none")]
 #[used]
@@ -98,6 +127,12 @@ const COM1: u16 = aegishv_type1_boot::layout::SERIAL_COM1_PORT;
 pub extern "C" fn aegishv_type1_rust_entry() -> ! {
     unsafe {
         serial_init(COM1);
+    }
+    if unsafe { host_tables_are_owned() } {
+        serial_write_line(aegishv_type1_kernel::SERIAL_HOST_TABLES_OK_MARKER);
+    } else {
+        serial_write_line(aegishv_type1_kernel::SERIAL_HOST_TABLES_ERROR_MARKER);
+        halt_loop();
     }
     let handoff = unsafe { read_limine_minimal_handoff() };
     let status = aegishv_type1_kernel::limine_minimal_handoff_status(handoff);
@@ -496,6 +531,62 @@ unsafe fn write_msr(msr: u32, value: u64) {
     );
 }
 
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+unsafe fn host_tables_are_owned() -> bool {
+    let mut gdtr = DescriptorTablePointer { limit: 0, base: 0 };
+    let mut idtr = DescriptorTablePointer { limit: 0, base: 0 };
+    let (cs, ss, ds, es, fs, gs, tr): (u64, u64, u64, u64, u64, u64, u64);
+    // SAFETY: both destinations are live ten-byte packed objects, and these
+    // read-only instructions only snapshot the current CPU's descriptor state.
+    unsafe {
+        asm!(
+            "sgdt [{}]",
+            in(reg) core::ptr::addr_of_mut!(gdtr),
+            options(nostack, preserves_flags)
+        );
+        asm!(
+            "sidt [{}]",
+            in(reg) core::ptr::addr_of_mut!(idtr),
+            options(nostack, preserves_flags)
+        );
+        asm!("mov {value:x}, cs", value = out(reg) cs, options(nomem, nostack, preserves_flags));
+        asm!("mov {value:x}, ss", value = out(reg) ss, options(nomem, nostack, preserves_flags));
+        asm!("mov {value:x}, ds", value = out(reg) ds, options(nomem, nostack, preserves_flags));
+        asm!("mov {value:x}, es", value = out(reg) es, options(nomem, nostack, preserves_flags));
+        asm!("mov {value:x}, fs", value = out(reg) fs, options(nomem, nostack, preserves_flags));
+        asm!("mov {value:x}, gs", value = out(reg) gs, options(nomem, nostack, preserves_flags));
+        asm!("str {value:x}", value = out(reg) tr, options(nomem, nostack, preserves_flags));
+    }
+    // SAFETY: SGDT and SIDT initialized the complete packed fields above;
+    // unaligned reads avoid creating references to packed u64 members.
+    let (gdtr_base, idtr_base) = unsafe {
+        (
+            core::ptr::addr_of!(gdtr.base).read_unaligned(),
+            core::ptr::addr_of!(idtr.base).read_unaligned(),
+        )
+    };
+    // SAFETY: the linker-owned GDT is mapped and writable for the kernel
+    // lifetime. LTR has changed the installed TSS descriptor to busy type 11.
+    let tss_access = unsafe {
+        core::ptr::addr_of!(__aegishv_host_gdt)
+            .add(61)
+            .read_volatile()
+    };
+
+    gdtr.limit == 0x47
+        && idtr.limit == 0x0fff
+        && gdtr_base == core::ptr::addr_of!(__aegishv_host_gdt) as u64
+        && idtr_base == core::ptr::addr_of!(__aegishv_host_idt) as u64
+        && cs as u16 == 0x28
+        && ss as u16 == 0x30
+        && ds as u16 == 0x30
+        && es as u16 == 0x30
+        && fs as u16 == 0x30
+        && gs as u16 == 0x30
+        && tr as u16 == 0x38
+        && tss_access & 0x8f == 0x8b
+}
+
 #[cfg(target_os = "none")]
 unsafe fn materialize_type1_runtime_regions(
     handoff: aegishv_type1_kernel::LimineMinimalHandoff,
@@ -615,6 +706,33 @@ unsafe fn apply_type1_enable_plan(
     } else {
         Ok(())
     }
+}
+
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+#[no_mangle]
+extern "C" fn aegishv_type1_host_exception(frame: *const HostExceptionFrame, cr2: u64) -> ! {
+    if !frame.is_null() {
+        // SAFETY: the dedicated assembly stubs normalize vector and error code
+        // before passing a live exception frame. The handler never returns.
+        let vector = unsafe { (*frame).vector };
+        HOST_LAST_EXCEPTION_VECTOR.store(vector as u8, Ordering::Release);
+    }
+    HOST_LAST_EXCEPTION_CR2.store(cr2, Ordering::Release);
+    // SAFETY: direct COM1 initialization is lock-free and remains available on
+    // the dedicated exception stacks without relying on interrupted state.
+    unsafe { serial_init(COM1) };
+    serial_write_line(aegishv_type1_kernel::SERIAL_HOST_EXCEPTION_MARKER);
+    halt_loop()
+}
+
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+#[no_mangle]
+extern "C" fn aegishv_type1_host_fatal() -> ! {
+    // SAFETY: the catch-all IDT entry deliberately reinitializes COM1 and does
+    // not touch the unnormalized hardware exception frame.
+    unsafe { serial_init(COM1) };
+    serial_write_line(aegishv_type1_kernel::SERIAL_HOST_FATAL_MARKER);
+    halt_loop()
 }
 
 #[cfg(all(target_os = "none", target_arch = "x86_64"))]

@@ -14,6 +14,7 @@ aegishv_type1_start:
 
     lea __aegishv_boot_stack_top(%rip), %rsp
     andq $-16, %rsp
+    call aegishv_install_host_tables
     call aegishv_type1_rust_entry
 
 .Lhalt:
