@@ -242,9 +242,7 @@ impl EptViolationQualification {
             EptAccess::Write => 1 << 1,
             EptAccess::Execute => 1 << 2,
         };
-        Self {
-            raw: bit | (1 << 7),
-        }
+        Self { raw: bit }
     }
 
     pub const fn access(self) -> Result<EptAccess, VmxError> {
@@ -260,8 +258,12 @@ impl EptViolationQualification {
         }
     }
 
-    pub const fn guest_physical_valid(self) -> bool {
+    pub const fn guest_linear_address_valid(self) -> bool {
         self.raw & (1 << 7) != 0
+    }
+
+    pub const fn caused_by_guest_page_walk(self) -> bool {
+        self.raw & (1 << 8) != 0
     }
 }
 
@@ -277,12 +279,6 @@ pub fn handle_ept_violation<const N: usize>(
     gpa: GuestPhysical,
     qualification: EptViolationQualification,
 ) -> Result<EptViolationAction, VmxError> {
-    if !qualification.guest_physical_valid() {
-        return Err(VmxError::new(
-            VmxErrorKind::InvalidEptViolation,
-            "EPT violation did not provide a valid guest physical address",
-        ));
-    }
     let access = qualification.access()?;
     let mapping = match plan.lookup(gpa) {
         Some(mapping) => mapping,
@@ -409,6 +405,20 @@ mod tests {
         .unwrap_err();
 
         assert_eq!(err.kind, VmxErrorKind::InvalidEptViolation);
+    }
+
+    #[test]
+    fn ept_violation_does_not_require_a_guest_linear_address() {
+        let mut plan = EptMapPlan::<1>::new();
+        plan.map(mapping(0x4000, EptPermissions::READ)).unwrap();
+
+        let qualification = EptViolationQualification::for_access(EptAccess::Execute);
+        assert!(!qualification.guest_linear_address_valid());
+        assert_eq!(
+            handle_ept_violation(&plan, GuestPhysical::new(0x4000).unwrap(), qualification,)
+                .unwrap(),
+            EptViolationAction::ResumeAfterPermissionChange
+        );
     }
 
     #[test]

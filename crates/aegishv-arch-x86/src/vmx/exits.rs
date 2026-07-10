@@ -9,11 +9,15 @@ pub enum VmxExitReason {
     CrAccess,
     EptViolation,
     MonitorTrapFlag,
+    VmEntryFailure(u32),
     Unknown(u32),
 }
 
 impl VmxExitReason {
     pub const fn from_basic_reason(raw: u32) -> Self {
+        if raw & (1 << 31) != 0 {
+            return Self::VmEntryFailure(raw & 0xffff);
+        }
         match raw & 0xffff {
             10 => Self::Cpuid,
             12 => Self::Hlt,
@@ -382,6 +386,14 @@ mod tests {
         assert_eq!(
             (regs.rax, regs.rbx, regs.rcx, regs.rdx, regs.rip),
             (1, 2, 3, 4, 0x1002)
+        );
+    }
+
+    #[test]
+    fn exit_reason_preserves_vm_entry_failure() {
+        assert_eq!(
+            VmxExitReason::from_basic_reason((1 << 31) | 33),
+            VmxExitReason::VmEntryFailure(33)
         );
     }
 
