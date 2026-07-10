@@ -17,7 +17,7 @@ These links identify project ownership metadata. They are not a copyright assign
 ## What this repository is today
 
 - Host-side KVM sensor.
-- Separate no-std x86_64 lab kernel with a modern Limine ISO build path, owned GDT/TSS/IDT state, an early physical allocator, and strict serial evidence tooling.
+- Separate no-std x86_64 lab kernel with a modern Limine ISO build path, owned GDT/TSS/IDT state, one live early physical-allocation ledger with linked-kernel and inherited-CR3-root reservations, and strict serial evidence tooling.
 - Wired Intel VMX toy-guest path with VMXON, a complete VMCS, four-level guest paging and EPT, refusal of CPU signatures known to have broken VMX preemption timers, an initial zero-value sentinel followed by a proven nonzero deadline exit from a finite TSC-or-count probe with an HLT fallback, unconditional port-I/O exiting, validated `OUT 0xe9, AL`, CPUID and HLT exits, bounded per-stage resumes, and VMXOFF.
 - Replayable parser/correlation pipeline.
 - W^X correlation scoped by VM, address space, and guest-physical page.

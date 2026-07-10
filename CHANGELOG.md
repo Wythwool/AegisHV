@@ -9,12 +9,12 @@
 - Added a bootable x86_64 Type-1 lab kernel with current Limine configuration, a validated HHDM/memory-map/executable-address handoff, aligned physical relocation support, and a page-separated RX/R/RW linker layout.
 - Added early transition fault handling plus owned GDT, TSS, IDT, double-fault/NMI/machine-check stacks, boot stack, and VM-exit stack state before the Rust and VMX paths run.
 - Added kernel ELF inspection, ISO staging/building, tool probing, image manifests, bounded QEMU execution, strict serial-log review, and opt-in evidence capture. Raw ELF QEMU boot is refused because it cannot provide the Limine handoff.
-- Added explicit host-table, runtime, VMXON, VMCS-load, guest configuration, CPUID-exit, HLT-exit, completion, and failure markers.
+- Added explicit host-table, runtime, VMXON, VMCS-load, guest configuration, preemption-exit, I/O-exit, CPUID-exit, HLT-exit, completion, and failure markers.
 - Added Intel VMX VMLAUNCH/VMRESUME lifecycle handling, hardware instruction wrappers, complete minimal host/guest/control VMCS construction, four-level guest paging, four-level EPT, and an assembly VM-entry/exit trampoline.
-- Added a fixed isolated Intel guest containing `mov eax, 0; cpuid; hlt`; the runtime handles the CPUID exit, resumes the guest, handles HLT, and shuts VMX down.
-- Allocated VMXON, VMCS, guest, paging, and EPT pages only from bounded Limine `USABLE` memory below 4 GiB; bootloader-reclaimable pages remain reserved.
+- Added a fixed isolated Intel guest with a finite TSC-or-count deadline probe and HLT fallback followed by an `AL='A'; OUT 0xe9,AL; CPUID leaf/subleaf 0; HLT` payload; the runtime contains the port write, handles the ordered exits, keeps every resume bounded, and shuts VMX down.
+- Kept VMXON/VMCS and toy-guest/EPT allocations under one early physical-allocation ledger. It reserves the linked kernel span and current inherited CR3 root page before consuming bounded Limine `USABLE` memory below 4 GiB; bootloader-reclaimable pages remain excluded.
 - Validated VMX CR0/CR4 fixed bits, true-control MSRs including mandatory default-one bits, host architectural state, and required write-back four-level EPT capabilities before guest entry.
-- Tightened Intel QEMU evidence to require the complete ordered eight-marker host/VMX/CPUID/resume/HLT chain and reject contradictory backends, skipped operations, host faults, and guest entry/exit/resume errors.
+- Tightened Intel QEMU evidence to require the complete ordered ten-marker host/VMX/preemption/I/O/CPUID/HLT chain plus consistent CPU/timer diagnostics, and reject contradictory backends, skipped operations, host faults, guest timeouts, and guest entry/exit/resume errors.
 - Booted the modern Limine ISO locally under QEMU TCG through owned host-table installation and runtime preflight. TCG did not expose VMX and WHPX was unavailable, so this is not Intel guest-execution evidence.
 - Added AMD SVM hardware instruction wrappers and a checked runtime sequence for EFER.SVME, VMLOAD, VMRUN, VMSAVE, and INVLPGA.
 - Corrected guest CR3 typing, VM-entry failure decoding, and EPT qualification semantics in the Intel model layer.

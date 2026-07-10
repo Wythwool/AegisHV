@@ -6,6 +6,8 @@ This document separates invariants enforced by the bootable x86_64 lab path from
 
 - Limine memory-map structure and ranges are validated before allocation.
 - Overlapping regions with different types are rejected by the core memory model.
+- One early physical-allocation ledger survives the VMXON/VMCS smoke cycle and is reused for guest, guest-page-table, and EPT allocation. The live path does not rebuild an allocator from the Limine map.
+- Before that ledger allocates any page, it excludes the complete page-covered linker image and the 4K root page named by the inherited active CR3. Invalid linker bounds, an invalid CR3 root, or a changed root before guest setup fails closed.
 - Runtime pages are allocated only from bounded Limine `USABLE` regions between 1 MiB and 4 GiB. Bootloader-reclaimable pages are excluded while Limine responses and boot page tables may still reference them.
 - VMXON, VMCS, guest code, guest stack, guest page tables, and EPT structures occupy twelve distinct 4K-aligned physical pages.
 - Physical-to-HHDM conversions reject misalignment, overflow, and non-canonical ranges before raw memory access.
@@ -31,7 +33,7 @@ These are BSP bring-up invariants. AP startup, per-CPU descriptor/VMX ownership,
 - The toy EPT maps only the fixed guest pages with the permissions required by that guest.
 - x86 page-table plan models reject mappings that are both writable and executable.
 
-The lab kernel still executes with Limine-provided host mappings and HHDM aliases. It does not install a hypervisor-owned CR3, prove W^X across every alias, or provide guard pages. The linker and guest/EPT permissions must not be described as production host W^X enforcement.
+The lab kernel still executes with Limine-provided host mappings and HHDM aliases. Reserving the inherited active CR3 root does not reserve or take ownership of the lower page-table tree. The kernel does not install a hypervisor-owned CR3, prove W^X across every alias, or provide guard pages. The linker and guest/EPT permissions must not be described as production host W^X enforcement.
 
 ## Intel VMX Entry
 

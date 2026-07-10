@@ -19,7 +19,7 @@ The default `aegishv` binary remains the Linux host-side sensor. Building or boo
 
 `scripts/plan-type1-image.sh` validates the checked-in boot inputs and writes the kernel ELF, output ISO, expected bases, and serial contract to `target/type1/aegishv-type1-image-plan.txt`.
 
-`scripts/build-type1-kernel.sh` builds `target/type1/aegishv-type1.elf` for `x86_64-unknown-none`. The ELF validates the Limine handoff, owned host state, CPU capabilities, VMX controls, runtime regions, and explicit error paths. On an eligible Intel host, the runtime proceeds through VMXON, complete VMCS/EPT setup, a zero-value VMX preemption-timer sentinel, a real nonzero deadline exit from a finite TSC-or-count probe, contained port I/O, CPUID and HLT exits, bounded resumes, and VMXOFF.
+`scripts/build-type1-kernel.sh` builds `target/type1/aegishv-type1.elf` for `x86_64-unknown-none`. The ELF validates the Limine handoff, owned host state, CPU capabilities, VMX controls, runtime regions, and explicit error paths. One early physical-allocation ledger reserves the linked kernel span and inherited active CR3 root before supplying the VMX and guest/EPT pages; the same owner is retained through guest setup. On an eligible Intel host, the runtime proceeds through VMXON, complete VMCS/EPT setup, a zero-value VMX preemption-timer sentinel, a real nonzero deadline exit from a finite TSC-or-count probe, contained port I/O, CPUID and HLT exits, bounded resumes, and VMXOFF.
 
 The ELF is not a standalone QEMU boot input. Passing it through QEMU `-kernel` does not provide the required Limine handoff.
 

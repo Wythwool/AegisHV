@@ -9,7 +9,7 @@ The phase backlog lives in `../BACKLOG.md`. That file tracks IDs, scope, accepta
 - A current Limine configuration, page-separated x86_64 ELF layout, kernel builder, ISO builder, and bounded QEMU evidence tooling.
 - Validated Limine base revision, HHDM, memory-map, and executable-address handoff with aligned physical relocation support.
 - Early transition fault handling and owned GDT, TSS, IDT, double-fault/NMI/machine-check stacks, boot stack, and VM-exit stack state.
-- Bounded physical allocation only from Limine `USABLE` memory for VMXON, VMCS, guest, guest-page-table, and EPT pages.
+- One bounded physical-allocation ledger, retained across VMX preflight and guest setup, for VMXON, VMCS, guest, guest-page-table, and EPT pages. It excludes the linked kernel image and the inherited active CR3 root before allocating only from Limine `USABLE` memory.
 - Intel VMX feature, feature-control, CR0/CR4 fixed-bit, true-control, host-state, `IA32_VMX_MISC` preemption-timer-rate, known-broken timer CPU-signature refusal, and EPT capability validation.
 - A complete VMCS, four-level guest paging, four-level EPT, and an assembly VM-entry/exit trampoline for one isolated 64-bit guest.
 - A fixed guest with a finite TSC-or-count deadline probe and HLT fallback followed by an `AL='A'; OUT 0xE9,AL; CPUID leaf/subleaf 0; HLT` payload, unconditional I/O exiting, an initial zero-value timer sentinel, and a real nonzero deadline exit from the probe. The reload is derived from a hard `0x01000000`-TSC-tick budget and `IA32_VMX_MISC`, cannot produce an effective deadline above that budget, and is refused below 2. The probe fallback uses an eight-times-later TSC horizon plus a finite iteration limit and reports `guest-timeout` rather than wedging the BSP if the timer does not fire. Only after the VMX deadline exit does the host move RIP to the payload; its I/O is validated without replaying the write, later VMRESUME paths remain bounded, and HLT is followed by VMXOFF.
@@ -45,7 +45,7 @@ These userspace contracts are not wired to the bare-metal toy guest. The reposit
 
 ## Required subsystems for production
 
-- A hypervisor-owned host CR3, enforced W^X mappings across all aliases, guard pages, and explicit teardown.
+- A hypervisor-owned host CR3, reservation of its complete page-table tree, enforced W^X mappings across all aliases, guard pages, and explicit teardown. The current code reserves only the inherited root page and still runs on Limine mappings.
 - SMP/AP startup, per-CPU VMX state, vCPU scheduling, APIC/interrupt routing, guest-timer virtualization, scheduler-driven preemption, and interrupt injection.
 - Full architectural context policy, including PAT, XSAVE/FPU state, required MSRs, selective I/O and MSR bitmaps, and broad exit coverage. Unconditional I/O exiting for the fixed guest is not a general device policy.
 - A general guest/module loader, reusable VM/vCPU lifecycle, multiple address spaces, memory reclamation, and guest crash recovery.
