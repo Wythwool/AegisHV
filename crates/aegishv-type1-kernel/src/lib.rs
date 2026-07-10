@@ -4,9 +4,11 @@ pub mod early_memory;
 pub mod toy_guest;
 
 pub use early_memory::{
-    allocate_type1_runtime_memory, Type1EarlyMemoryError, Type1RuntimeMemoryAllocation,
-    Type1ToyGuestHostPages, TYPE1_MAX_MEMORY_MAP_ENTRIES, TYPE1_RUNTIME_MAX_PHYSICAL_EXCLUSIVE,
-    TYPE1_RUNTIME_MIN_PHYSICAL,
+    allocate_type1_runtime_memory, allocate_type1_runtime_memory_with_reservations,
+    inherited_x86_cr3_root_reservation, linked_kernel_reservation, Type1EarlyMemoryError,
+    Type1PhysicalReservation, Type1RuntimeMemoryAllocation, Type1ToyGuestHostPages,
+    TYPE1_MAX_MEMORY_MAP_ENTRIES, TYPE1_MAX_PHYSICAL_RESERVATIONS,
+    TYPE1_RUNTIME_MAX_PHYSICAL_EXCLUSIVE, TYPE1_RUNTIME_MIN_PHYSICAL,
 };
 pub use toy_guest::{
     materialize_type1_toy_guest, Type1PageTableWrite, Type1PhysicalPageWriter,

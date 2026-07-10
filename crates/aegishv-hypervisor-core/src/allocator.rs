@@ -102,6 +102,94 @@ impl<const R: usize, const A: usize> PhysicalPageAllocator<R, A> {
         self.allocated_len
     }
 
+    pub fn reserve_range(&mut self, base: u64, length: u64) -> Result<u64, CoreError> {
+        if length == 0 {
+            return Err(CoreError::new(
+                CoreErrorKind::InvalidAddress,
+                "physical reservation has an empty address range",
+            ));
+        }
+        let raw_end = base.checked_add(length).ok_or(CoreError::new(
+            CoreErrorKind::InvalidAddress,
+            "physical reservation end address overflowed",
+        ))?;
+        let start = align_down(base, PAGE_SIZE_4K);
+        let end = align_up(raw_end, PAGE_SIZE_4K)?;
+
+        for page in self.allocated.iter().take(self.allocated_len).copied() {
+            if page < end && page + PAGE_SIZE_4K > start {
+                return Err(CoreError::new(
+                    CoreErrorKind::Overlap,
+                    "physical reservation overlaps an allocated page",
+                ));
+            }
+        }
+
+        for run in self.free.iter().take(self.free_len).copied() {
+            let run_end = run.end()?;
+            if start > run.start && end < run_end && self.free_len >= R {
+                return Err(CoreError::new(
+                    CoreErrorKind::CapacityExceeded,
+                    "physical allocator cannot split a free run for a reservation",
+                ));
+            }
+        }
+
+        let free_before = self.free_pages();
+        let mut index = 0;
+        while index < self.free_len {
+            let run = self.free[index];
+            let run_end = run.end()?;
+            if end <= run.start {
+                break;
+            }
+            if start >= run_end {
+                index += 1;
+                continue;
+            }
+
+            let left_count = if start > run.start {
+                (start - run.start) / PAGE_SIZE_4K
+            } else {
+                0
+            };
+            let right_count = if end < run_end {
+                (run_end - end) / PAGE_SIZE_4K
+            } else {
+                0
+            };
+            match (left_count, right_count) {
+                (0, 0) => remove_run(&mut self.free, &mut self.free_len, index),
+                (0, right) => {
+                    self.free[index] = PageRun {
+                        start: end,
+                        count: right,
+                    };
+                    index += 1;
+                }
+                (left, 0) => {
+                    self.free[index].count = left;
+                    index += 1;
+                }
+                (left, right) => {
+                    let mut cursor = self.free_len;
+                    while cursor > index + 1 {
+                        self.free[cursor] = self.free[cursor - 1];
+                        cursor -= 1;
+                    }
+                    self.free[index].count = left;
+                    self.free[index + 1] = PageRun {
+                        start: end,
+                        count: right,
+                    };
+                    self.free_len += 1;
+                    index += 2;
+                }
+            }
+        }
+        Ok(free_before - self.free_pages())
+    }
+
     pub fn allocate(&mut self) -> Result<HostPhysical, CoreError> {
         self.allocate_within(PageAllocationConstraint::any())
     }
@@ -449,6 +537,62 @@ mod tests {
             0x10_0000
         );
         assert_eq!(allocator.free_pages(), 0x200 - 1);
+    }
+
+    #[test]
+    fn reservation_removes_every_touched_page_and_splits_the_run() {
+        let map = MemoryMap::<2>::from_entries(&[MemoryRegion::new(
+            0x1000,
+            0x5000,
+            MemoryRegionKind::Usable,
+        )])
+        .unwrap();
+        let mut allocator = PhysicalPageAllocator::<2, 4>::from_memory_map(&map).unwrap();
+
+        assert_eq!(allocator.reserve_range(0x2800, 0x100).unwrap(), 1);
+        assert_eq!(allocator.free_pages(), 4);
+        assert_eq!(allocator.allocate().unwrap().get(), 0x1000);
+        assert_eq!(allocator.allocate().unwrap().get(), 0x3000);
+    }
+
+    #[test]
+    fn failed_reservation_split_keeps_the_free_list_intact() {
+        let map = MemoryMap::<1>::from_entries(&[MemoryRegion::new(
+            0x1000,
+            0x5000,
+            MemoryRegionKind::Usable,
+        )])
+        .unwrap();
+        let mut allocator = PhysicalPageAllocator::<1, 2>::from_memory_map(&map).unwrap();
+
+        assert_eq!(
+            allocator.reserve_range(0x3000, 0x1000).unwrap_err().kind,
+            CoreErrorKind::CapacityExceeded
+        );
+        assert_eq!(allocator.free_pages(), 5);
+        assert_eq!(allocator.allocate().unwrap().get(), 0x1000);
+    }
+
+    #[test]
+    fn reservation_rejects_overlap_with_an_allocated_page() {
+        let map = MemoryMap::<1>::from_entries(&[MemoryRegion::new(
+            0x1000,
+            0x3000,
+            MemoryRegionKind::Usable,
+        )])
+        .unwrap();
+        let mut allocator = PhysicalPageAllocator::<2, 2>::from_memory_map(&map).unwrap();
+        let page = allocator.allocate().unwrap();
+
+        assert_eq!(
+            allocator
+                .reserve_range(page.get(), PAGE_SIZE_4K)
+                .unwrap_err()
+                .kind,
+            CoreErrorKind::Overlap
+        );
+        assert_eq!(allocator.allocated_pages(), 1);
+        assert_eq!(allocator.free_pages(), 2);
     }
 
     #[test]
