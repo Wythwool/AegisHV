@@ -1,5 +1,12 @@
 #![no_std]
 
+pub mod early_memory;
+
+pub use early_memory::{
+    allocate_type1_runtime_memory, Type1EarlyMemoryError, Type1RuntimeMemoryAllocation,
+    TYPE1_MAX_MEMORY_MAP_ENTRIES, TYPE1_RUNTIME_MAX_PHYSICAL_EXCLUSIVE, TYPE1_RUNTIME_MIN_PHYSICAL,
+};
+
 use aegishv_arch_x86::svm::features::EferValue;
 use aegishv_arch_x86::svm::features::{SvmCpuidExt1, SvmCpuidLeaf, SvmErrorKind, SvmFeatureSet};
 use aegishv_arch_x86::svm::runtime::SvmRuntime;
@@ -55,11 +62,15 @@ pub const LIMINE_MEMMAP_ENTRY_COUNT_OFFSET: usize = 8;
 pub const LIMINE_MEMMAP_ENTRIES_OFFSET: usize = 16;
 pub const LIMINE_EXECUTABLE_PHYSICAL_BASE_OFFSET: usize = 8;
 pub const LIMINE_EXECUTABLE_VIRTUAL_BASE_OFFSET: usize = 16;
-pub const TYPE1_RUNTIME_REGION_BASE_OFFSET: u64 = 0x80_000;
 pub const TYPE1_RUNTIME_PAGE_SIZE: u64 = 4096;
+#[cfg(test)]
+pub const TYPE1_RUNTIME_REGION_BASE_OFFSET: u64 = 0x80_000;
+#[cfg(test)]
 pub const TYPE1_VMXON_REGION_OFFSET: u64 = TYPE1_RUNTIME_REGION_BASE_OFFSET;
+#[cfg(test)]
 pub const TYPE1_VMCS_REGION_OFFSET: u64 =
     TYPE1_RUNTIME_REGION_BASE_OFFSET + TYPE1_RUNTIME_PAGE_SIZE;
+#[cfg(test)]
 pub const TYPE1_SVM_VMCB_REGION_OFFSET: u64 =
     TYPE1_RUNTIME_REGION_BASE_OFFSET + (2 * TYPE1_RUNTIME_PAGE_SIZE);
 pub const CPUID_VENDOR_LEAF: u32 = 0;
@@ -466,6 +477,7 @@ pub struct Type1RuntimeMemoryPlan {
 }
 
 impl Type1RuntimeMemoryPlan {
+    #[cfg(test)]
     pub const fn from_executable_base(
         executable_physical_base: u64,
     ) -> Result<Self, Type1RuntimePlanError> {
@@ -552,6 +564,7 @@ pub const fn select_type1_runtime_backend(
     }
 }
 
+#[cfg(test)]
 pub const fn plan_type1_runtime(
     handoff: LimineMinimalHandoff,
     request: Type1BackendRequest,
@@ -570,6 +583,48 @@ pub const fn plan_type1_runtime(
         Ok(backend) => backend,
         Err(err) => return Err(err),
     };
+    Ok(Type1RuntimePlan { backend, memory })
+}
+
+pub const fn plan_type1_runtime_with_memory(
+    handoff: LimineMinimalHandoff,
+    request: Type1BackendRequest,
+    capabilities: Type1ArchCapabilities,
+    memory: Type1RuntimeMemoryPlan,
+) -> Result<Type1RuntimePlan, Type1RuntimePlanError> {
+    let status = limine_minimal_handoff_status(handoff);
+    if !status.is_ready() {
+        return Err(Type1RuntimePlanError::Handoff(status));
+    }
+    let backend = match select_type1_runtime_backend(request, capabilities) {
+        Ok(backend) => backend,
+        Err(err) => return Err(err),
+    };
+    match backend {
+        Type1RuntimeBackend::None => {}
+        Type1RuntimeBackend::IntelVmx => {
+            if memory.runtime_base != memory.vmxon_physical
+                || memory.vmxon_physical == 0
+                || memory.vmcs_physical == 0
+                || memory.vmxon_physical == memory.vmcs_physical
+            {
+                return Err(Type1RuntimePlanError::InvalidRuntimeAddress);
+            }
+            if memory.vmxon_physical % TYPE1_RUNTIME_PAGE_SIZE != 0
+                || memory.vmcs_physical % TYPE1_RUNTIME_PAGE_SIZE != 0
+            {
+                return Err(Type1RuntimePlanError::RuntimeAddressMisaligned);
+            }
+        }
+        Type1RuntimeBackend::AmdSvm => {
+            if memory.runtime_base != memory.svm_vmcb_physical || memory.svm_vmcb_physical == 0 {
+                return Err(Type1RuntimePlanError::InvalidRuntimeAddress);
+            }
+            if memory.svm_vmcb_physical % TYPE1_RUNTIME_PAGE_SIZE != 0 {
+                return Err(Type1RuntimePlanError::RuntimeAddressMisaligned);
+            }
+        }
+    }
     Ok(Type1RuntimePlan { backend, memory })
 }
 
@@ -894,9 +949,19 @@ fn plan_vmx_preflight(
 ) -> Result<Type1RuntimePreflight, Type1RuntimePreflightError> {
     let cr0_fixed = CrFixedBits::new(controls.vmx_cr0_fixed0, controls.vmx_cr0_fixed1);
     let cr4_fixed = CrFixedBits::new(controls.vmx_cr4_fixed0, controls.vmx_cr4_fixed1);
-    let cr0_after = (controls.cr0 | controls.vmx_cr0_fixed0) & controls.vmx_cr0_fixed1;
-    let cr4_after =
-        (controls.cr4 | TYPE1_CR4_VMXE | controls.vmx_cr4_fixed0) & controls.vmx_cr4_fixed1;
+    if controls.cr0 & !controls.vmx_cr0_fixed1 != 0 || controls.cr4 & !controls.vmx_cr4_fixed1 != 0
+    {
+        return Err(Type1RuntimePreflightError::Vmx(
+            VmxErrorKind::UnsupportedCapability,
+        ));
+    }
+    if controls.vmx_cr4_fixed1 & TYPE1_CR4_VMXE == 0 {
+        return Err(Type1RuntimePreflightError::Vmx(
+            VmxErrorKind::UnsupportedCapability,
+        ));
+    }
+    let cr0_after = controls.cr0 | controls.vmx_cr0_fixed0;
+    let cr4_after = controls.cr4 | TYPE1_CR4_VMXE | controls.vmx_cr4_fixed0;
     validate_control_register(cr0_after, cr0_fixed, "CR0 does not satisfy VMX fixed bits")
         .map_err(|err| Type1RuntimePreflightError::Vmx(err.kind))?;
     validate_control_register(cr4_after, cr4_fixed, "CR4 does not satisfy VMX fixed bits")
@@ -1539,19 +1604,50 @@ mod tests {
     }
 
     #[test]
-    fn runtime_memory_plan_uses_page_aligned_regions_after_kernel() {
-        let plan = plan_type1_runtime(
+    fn runtime_plan_accepts_distinct_allocator_owned_vmx_pages() {
+        let plan = plan_type1_runtime_with_memory(
             ready_handoff(),
             Type1BackendRequest::Auto,
             Type1ArchCapabilities::intel_vmx(),
+            Type1RuntimeMemoryPlan {
+                runtime_base: 0x40_0000,
+                vmxon_physical: 0x40_0000,
+                vmcs_physical: 0x40_1000,
+                svm_vmcb_physical: 0,
+            },
         )
         .unwrap();
 
         assert_eq!(plan.backend, Type1RuntimeBackend::IntelVmx);
-        assert_eq!(plan.memory.runtime_base, 0x28_0000);
-        assert_eq!(plan.memory.vmxon_physical, 0x28_0000);
-        assert_eq!(plan.memory.vmcs_physical, 0x28_1000);
-        assert_eq!(plan.memory.svm_vmcb_physical, 0x28_2000);
+        assert_eq!(plan.memory.vmxon_physical, 0x40_0000);
+        assert_eq!(plan.memory.vmcs_physical, 0x40_1000);
+        assert_eq!(plan.memory.svm_vmcb_physical, 0);
+    }
+
+    #[test]
+    fn runtime_plan_rejects_duplicate_or_misaligned_vmx_pages() {
+        for memory in [
+            Type1RuntimeMemoryPlan {
+                runtime_base: 0x40_0000,
+                vmxon_physical: 0x40_0000,
+                vmcs_physical: 0x40_0000,
+                svm_vmcb_physical: 0,
+            },
+            Type1RuntimeMemoryPlan {
+                runtime_base: 0x40_0001,
+                vmxon_physical: 0x40_0001,
+                vmcs_physical: 0x40_1000,
+                svm_vmcb_physical: 0,
+            },
+        ] {
+            assert!(plan_type1_runtime_with_memory(
+                ready_handoff(),
+                Type1BackendRequest::IntelVmx,
+                Type1ArchCapabilities::intel_vmx(),
+                memory,
+            )
+            .is_err());
+        }
     }
 
     #[test]
@@ -1978,6 +2074,33 @@ mod tests {
                 vmx_cr0_fixed1: u64::MAX,
                 vmx_cr4_fixed0: 0,
                 vmx_cr4_fixed1: !TYPE1_CR4_VMXE,
+            },
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            err,
+            Type1RuntimePreflightError::Vmx(VmxErrorKind::UnsupportedCapability)
+        );
+    }
+
+    #[test]
+    fn runtime_preflight_refuses_to_clear_active_control_bits() {
+        let err = plan_type1_runtime_preflight(
+            plan_type1_runtime(
+                ready_handoff(),
+                Type1BackendRequest::IntelVmx,
+                Type1ArchCapabilities::intel_vmx(),
+            )
+            .unwrap(),
+            Type1ControlSnapshot {
+                cr0: 0x8000_0011,
+                cr4: 1 << 12,
+                efer: 0x500,
+                vmx_cr0_fixed0: 0,
+                vmx_cr0_fixed1: u64::MAX,
+                vmx_cr4_fixed0: 0,
+                vmx_cr4_fixed1: !(1 << 12),
             },
         )
         .unwrap_err();

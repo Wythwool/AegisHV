@@ -119,10 +119,29 @@ fn runtime_markers(
     let capability_report = aegishv_type1_kernel::type1_capabilities_from_snapshot(unsafe {
         read_type1_cpu_snapshot()
     });
-    match aegishv_type1_kernel::plan_type1_runtime(
+    let backend = match aegishv_type1_kernel::select_type1_runtime_backend(
+        aegishv_type1_kernel::Type1BackendRequest::Auto,
+        capability_report.capabilities,
+    ) {
+        Ok(backend) => backend,
+        Err(_) => return runtime_plan_error_markers(),
+    };
+    let (memory_entries, memory_entry_count) = match copy_limine_memory_entries(handoff) {
+        Ok(entries) => entries,
+        Err(()) => return runtime_plan_error_markers(),
+    };
+    let allocation = match aegishv_type1_kernel::allocate_type1_runtime_memory::<
+        { aegishv_type1_kernel::TYPE1_MAX_MEMORY_MAP_ENTRIES },
+    >(&memory_entries[..memory_entry_count], backend)
+    {
+        Ok(allocation) => allocation,
+        Err(_) => return runtime_plan_error_markers(),
+    };
+    match aegishv_type1_kernel::plan_type1_runtime_with_memory(
         handoff,
         aegishv_type1_kernel::Type1BackendRequest::Auto,
         capability_report.capabilities,
+        allocation.plan(),
     ) {
         Ok(plan) => {
             let backend_marker = plan.backend.serial_marker();
@@ -203,6 +222,66 @@ fn runtime_markers(
             aegishv_type1_kernel::SERIAL_RUNTIME_VMCS_LOAD_ERROR_MARKER,
         ),
     }
+}
+
+#[cfg(target_os = "none")]
+const fn runtime_plan_error_markers() -> (
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+) {
+    (
+        aegishv_type1_kernel::SERIAL_RUNTIME_PLAN_ERROR_MARKER,
+        aegishv_type1_kernel::SERIAL_RUNTIME_PREFLIGHT_ERROR_MARKER,
+        aegishv_type1_kernel::SERIAL_RUNTIME_ENABLE_ERROR_MARKER,
+        aegishv_type1_kernel::SERIAL_RUNTIME_REGIONS_ERROR_MARKER,
+        aegishv_type1_kernel::SERIAL_RUNTIME_VMXON_ERROR_MARKER,
+        aegishv_type1_kernel::SERIAL_RUNTIME_VMCS_LOAD_ERROR_MARKER,
+    )
+}
+
+#[cfg(target_os = "none")]
+fn copy_limine_memory_entries(
+    handoff: aegishv_type1_kernel::LimineMinimalHandoff,
+) -> Result<
+    (
+        [aegishv_type1_boot::LimineMemmapEntry; aegishv_type1_kernel::TYPE1_MAX_MEMORY_MAP_ENTRIES],
+        usize,
+    ),
+    (),
+> {
+    let count = usize::try_from(handoff.memmap_entry_count).map_err(|_| ())?;
+    if count == 0 || count > aegishv_type1_kernel::TYPE1_MAX_MEMORY_MAP_ENTRIES {
+        return Err(());
+    }
+    if !aegishv_arch_x86::vmx::features::is_canonical_u64(handoff.memmap_entries)
+        || handoff.memmap_entries as usize % core::mem::align_of::<usize>() != 0
+    {
+        return Err(());
+    }
+
+    let table =
+        handoff.memmap_entries as usize as *const *const aegishv_type1_boot::LimineMemmapEntry;
+    let mut copied = [aegishv_type1_boot::LimineMemmapEntry::empty();
+        aegishv_type1_kernel::TYPE1_MAX_MEMORY_MAP_ENTRIES];
+    for (index, slot) in copied.iter_mut().take(count).enumerate() {
+        // Limine owns the pointer array for the lifetime of the boot handoff and
+        // supplies virtual pointers that are already mapped in the HHDM.
+        let entry = unsafe { table.add(index).read_volatile() };
+        if entry.is_null()
+            || entry as usize % core::mem::align_of::<aegishv_type1_boot::LimineMemmapEntry>() != 0
+            || !aegishv_arch_x86::vmx::features::is_canonical_u64(entry as usize as u64)
+        {
+            return Err(());
+        }
+        // Each pointed-to entry is a 24-byte Limine protocol object and remains
+        // valid until the bootloader-reclaimable ranges are explicitly reclaimed.
+        *slot = unsafe { entry.read_volatile() };
+    }
+    Ok((copied, count))
 }
 
 #[cfg(all(target_os = "none", target_arch = "x86_64"))]

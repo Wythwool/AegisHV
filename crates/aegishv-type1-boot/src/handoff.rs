@@ -21,7 +21,8 @@ pub enum BootMemoryKind {
 impl BootMemoryKind {
     pub const fn to_core_kind(self) -> MemoryRegionKind {
         match self {
-            Self::Usable | Self::BootloaderReclaimable => MemoryRegionKind::Usable,
+            Self::Usable => MemoryRegionKind::Usable,
+            Self::BootloaderReclaimable => MemoryRegionKind::Reserved,
             Self::Acpi => MemoryRegionKind::Acpi,
             Self::Mmio => MemoryRegionKind::Mmio,
             Self::Bad => MemoryRegionKind::Bad,
@@ -140,10 +141,7 @@ pub fn validate_boot_handoff(
                 return Err(BootValidationError::MemoryRegionOverlap);
             }
         }
-        if matches!(
-            region.kind,
-            BootMemoryKind::Usable | BootMemoryKind::BootloaderReclaimable
-        ) {
+        if region.kind == BootMemoryKind::Usable {
             usable_regions += 1;
             usable_bytes = usable_bytes.saturating_add(region.length);
         }
@@ -271,5 +269,22 @@ mod tests {
             validate_boot_handoff(&valid_handoff(&regions, &bad_module)).unwrap_err(),
             BootValidationError::ModuleOverlapsKernel
         );
+    }
+
+    #[test]
+    fn bootloader_reclaimable_memory_is_not_allocator_usable() {
+        assert_eq!(
+            BootMemoryKind::BootloaderReclaimable.to_core_kind(),
+            MemoryRegionKind::Reserved
+        );
+
+        let regions = [
+            BootMemoryRegion::new(0x40_0000, 0x200_000, BootMemoryKind::Usable),
+            BootMemoryRegion::new(0x60_0000, 0x100_000, BootMemoryKind::BootloaderReclaimable),
+        ];
+        let report = validate_boot_handoff(&valid_handoff(&regions, &[])).unwrap();
+
+        assert_eq!(report.usable_regions, 1);
+        assert_eq!(report.usable_bytes, 0x200_000);
     }
 }

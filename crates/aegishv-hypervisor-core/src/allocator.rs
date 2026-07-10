@@ -4,6 +4,34 @@ use crate::memory::MemoryMap;
 
 pub const PAGE_SIZE_4K: u64 = 4096;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PageAllocationConstraint {
+    pub min_address: u64,
+    pub max_address_exclusive: u64,
+}
+
+impl PageAllocationConstraint {
+    pub const fn new(min_address: u64, max_address_exclusive: u64) -> Result<Self, CoreError> {
+        if min_address >= max_address_exclusive {
+            return Err(CoreError::new(
+                CoreErrorKind::InvalidAddress,
+                "physical allocation constraint has an empty address range",
+            ));
+        }
+        Ok(Self {
+            min_address,
+            max_address_exclusive,
+        })
+    }
+
+    pub const fn any() -> Self {
+        Self {
+            min_address: 0,
+            max_address_exclusive: u64::MAX,
+        }
+    }
+}
+
 pub trait PageZeroer {
     fn zero_page(&mut self, page: HostPhysical) -> Result<(), CoreError>;
 }
@@ -37,7 +65,7 @@ pub struct PhysicalPageAllocator<const R: usize, const A: usize> {
 }
 
 impl<const R: usize, const A: usize> PhysicalPageAllocator<R, A> {
-    pub fn from_memory_map(map: &MemoryMap<R>) -> Result<Self, CoreError> {
+    pub fn from_memory_map<const M: usize>(map: &MemoryMap<M>) -> Result<Self, CoreError> {
         let mut allocator = Self {
             free: [PageRun::empty(); R],
             free_len: 0,
@@ -75,25 +103,46 @@ impl<const R: usize, const A: usize> PhysicalPageAllocator<R, A> {
     }
 
     pub fn allocate(&mut self) -> Result<HostPhysical, CoreError> {
+        self.allocate_within(PageAllocationConstraint::any())
+    }
+
+    pub fn allocate_within(
+        &mut self,
+        constraint: PageAllocationConstraint,
+    ) -> Result<HostPhysical, CoreError> {
+        if constraint.min_address >= constraint.max_address_exclusive {
+            return Err(CoreError::new(
+                CoreErrorKind::InvalidAddress,
+                "physical allocation constraint has an empty address range",
+            ));
+        }
         if self.allocated_len >= A {
             return Err(CoreError::new(
                 CoreErrorKind::CapacityExceeded,
                 "physical allocator allocation tracking table is full",
             ));
         }
-        if self.free_len == 0 {
-            return Err(CoreError::new(
-                CoreErrorKind::OutOfMemory,
-                "physical allocator has no free 4K pages",
-            ));
+        let mut selected = None;
+        for index in 0..self.free_len {
+            let run = self.free[index];
+            let run_end = run.end()?;
+            let candidate = align_up(run.start.max(constraint.min_address), PAGE_SIZE_4K)?;
+            let candidate_end = match candidate.checked_add(PAGE_SIZE_4K) {
+                Some(value) => value,
+                None => continue,
+            };
+            let allowed_end = run_end.min(constraint.max_address_exclusive);
+            if candidate_end <= allowed_end {
+                selected = Some((index, candidate, run_end));
+                break;
+            }
         }
 
-        let page = self.free[0].start;
-        self.free[0].start += PAGE_SIZE_4K;
-        self.free[0].count -= 1;
-        if self.free[0].count == 0 {
-            remove_run(&mut self.free, &mut self.free_len, 0);
-        }
+        let (run_index, page, run_end) = selected.ok_or(CoreError::new(
+            CoreErrorKind::OutOfMemory,
+            "physical allocator has no free 4K page in the requested address range",
+        ))?;
+        self.take_page_from_run(run_index, page, run_end)?;
 
         self.allocated[self.allocated_len] = page;
         self.allocated_len += 1;
@@ -106,7 +155,9 @@ impl<const R: usize, const A: usize> PhysicalPageAllocator<R, A> {
     ) -> Result<HostPhysical, CoreError> {
         let page = self.allocate()?;
         if let Err(err) = zeroer.zero_page(page) {
-            let _ = self.free(page);
+            if let Err(rollback_err) = self.free(page) {
+                return Err(rollback_err);
+            }
             return Err(err);
         }
         Ok(page)
@@ -130,11 +181,55 @@ impl<const R: usize, const A: usize> PhysicalPageAllocator<R, A> {
                 "physical page was not allocated by this allocator",
             ))?;
 
-        remove_allocated(&mut self.allocated, &mut self.allocated_len, index);
         self.insert_free_run(PageRun {
             start: page.get(),
             count: 1,
-        })
+        })?;
+        remove_allocated(&mut self.allocated, &mut self.allocated_len, index);
+        Ok(())
+    }
+
+    fn take_page_from_run(
+        &mut self,
+        index: usize,
+        page: u64,
+        run_end: u64,
+    ) -> Result<(), CoreError> {
+        let run = self.free[index];
+        let page_end = page + PAGE_SIZE_4K;
+        let before_count = (page - run.start) / PAGE_SIZE_4K;
+        let after_count = (run_end - page_end) / PAGE_SIZE_4K;
+
+        match (before_count, after_count) {
+            (0, 0) => remove_run(&mut self.free, &mut self.free_len, index),
+            (0, after) => {
+                self.free[index] = PageRun {
+                    start: page_end,
+                    count: after,
+                };
+            }
+            (before, 0) => self.free[index].count = before,
+            (before, after) => {
+                if self.free_len >= R {
+                    return Err(CoreError::new(
+                        CoreErrorKind::CapacityExceeded,
+                        "physical allocator cannot split a free run at the requested page",
+                    ));
+                }
+                let mut cursor = self.free_len;
+                while cursor > index + 1 {
+                    self.free[cursor] = self.free[cursor - 1];
+                    cursor -= 1;
+                }
+                self.free[index].count = before;
+                self.free[index + 1] = PageRun {
+                    start: page_end,
+                    count: after,
+                };
+                self.free_len += 1;
+            }
+        }
+        Ok(())
     }
 
     fn insert_free_run(&mut self, run: PageRun) -> Result<(), CoreError> {
@@ -306,5 +401,41 @@ mod tests {
             CoreErrorKind::ZeroingFailed
         );
         assert_eq!(allocator.free_pages(), 1);
+    }
+
+    #[test]
+    fn constrained_allocation_skips_low_memory_and_splits_a_run() {
+        let map = MemoryMap::<2>::from_entries(&[MemoryRegion::new(
+            0,
+            0x20_0000,
+            MemoryRegionKind::Usable,
+        )])
+        .unwrap();
+        let mut allocator = PhysicalPageAllocator::<2, 2>::from_memory_map(&map).unwrap();
+        let constraint = PageAllocationConstraint::new(0x10_0000, 0x20_0000).unwrap();
+
+        assert_eq!(
+            allocator.allocate_within(constraint).unwrap().get(),
+            0x10_0000
+        );
+        assert_eq!(allocator.free_pages(), 0x200 - 1);
+    }
+
+    #[test]
+    fn failed_free_keeps_the_allocation_ledger_intact() {
+        let map = MemoryMap::<1>::from_entries(&[MemoryRegion::new(
+            0x1000,
+            0x3000,
+            MemoryRegionKind::Usable,
+        )])
+        .unwrap();
+        let mut allocator = PhysicalPageAllocator::<1, 1>::from_memory_map(&map).unwrap();
+        let page = allocator.allocate().unwrap();
+
+        assert_eq!(
+            allocator.free(page).unwrap_err().kind,
+            CoreErrorKind::CapacityExceeded
+        );
+        assert_eq!(allocator.allocated_pages(), 1);
     }
 }
