@@ -93,7 +93,7 @@ impl<const Q: usize, const P: usize> VcpuScheduler<Q, P> {
                 "physical CPU is outside the scheduler mapping table",
             ));
         }
-        let vcpu = self.running[index].take().ok_or(CoreError::new(
+        let vcpu = self.running[index].ok_or(CoreError::new(
             CoreErrorKind::InvalidState,
             "physical CPU has no running vCPU to halt",
         ))?;
@@ -105,6 +105,7 @@ impl<const Q: usize, const P: usize> VcpuScheduler<Q, P> {
         }
         self.halted[self.halted_len] = Some(vcpu);
         self.halted_len += 1;
+        self.running[index] = None;
         Ok(vcpu)
     }
 
@@ -220,6 +221,57 @@ mod tests {
 
         scheduler.wake(vcpu(0)).unwrap();
         assert_eq!(scheduler.state_of(vcpu(0)), Some(VcpuRunState::Runnable));
+    }
+
+    #[test]
+    fn halt_preserves_running_vcpu_when_halted_table_is_full() {
+        let mut scheduler = VcpuScheduler::<1, 2>::new();
+        scheduler.enqueue(vcpu(0)).unwrap();
+        scheduler
+            .schedule_on(PhysicalCpuId::new(0).unwrap())
+            .unwrap();
+        scheduler
+            .halt_running(PhysicalCpuId::new(0).unwrap())
+            .unwrap();
+
+        scheduler.enqueue(vcpu(1)).unwrap();
+        scheduler
+            .schedule_on(PhysicalCpuId::new(1).unwrap())
+            .unwrap();
+
+        let error = scheduler
+            .halt_running(PhysicalCpuId::new(1).unwrap())
+            .unwrap_err();
+
+        assert_eq!(error.kind, CoreErrorKind::CapacityExceeded);
+        assert_eq!(scheduler.state_of(vcpu(0)), Some(VcpuRunState::Halted));
+        assert_eq!(
+            scheduler.state_of(vcpu(1)),
+            Some(VcpuRunState::Running(PhysicalCpuId::new(1).unwrap()))
+        );
+    }
+
+    #[test]
+    fn halt_moves_running_vcpu_only_after_capacity_is_available() {
+        let mut scheduler = VcpuScheduler::<1, 1>::new();
+        scheduler.enqueue(vcpu(0)).unwrap();
+        scheduler
+            .schedule_on(PhysicalCpuId::new(0).unwrap())
+            .unwrap();
+
+        let halted = scheduler
+            .halt_running(PhysicalCpuId::new(0).unwrap())
+            .unwrap();
+
+        assert_eq!(halted, vcpu(0));
+        assert_eq!(scheduler.state_of(vcpu(0)), Some(VcpuRunState::Halted));
+        assert_eq!(
+            scheduler
+                .halt_running(PhysicalCpuId::new(0).unwrap())
+                .unwrap_err()
+                .kind,
+            CoreErrorKind::InvalidState
+        );
     }
 
     #[test]
