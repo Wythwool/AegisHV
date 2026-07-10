@@ -238,31 +238,7 @@ __aegishv_transition_idt:
 __aegishv_host_tss:
     .skip 104
 
-.p2align 12
-__aegishv_double_fault_stack:
-    .skip 16384
-.global __aegishv_double_fault_stack_top
-__aegishv_double_fault_stack_top:
-
-.p2align 12
-__aegishv_nmi_stack:
-    .skip 16384
-.global __aegishv_nmi_stack_top
-__aegishv_nmi_stack_top:
-
-.p2align 12
-__aegishv_machine_check_stack:
-    .skip 16384
-.global __aegishv_machine_check_stack_top
-__aegishv_machine_check_stack_top:
-
 .p2align 4
 .global __aegishv_host_idt
 __aegishv_host_idt:
-    .skip 4096
-
-.p2align 4
-__aegishv_vmx_exit_stack:
-    .skip 65536
-.global __aegishv_vmx_exit_stack_top
-__aegishv_vmx_exit_stack_top:
+.skip 4096

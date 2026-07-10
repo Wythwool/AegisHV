@@ -37,6 +37,19 @@ const VMX_TOY_COMPLETE: u8 = 5;
 const VMX_TOY_FAILED: u8 = u8::MAX;
 
 #[cfg(all(target_os = "none", target_arch = "x86_64"))]
+const X86_CR0_WRITE_PROTECT: u64 = 1 << 16;
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+const X86_CR4_PAGE_GLOBAL_ENABLE: u64 = 1 << 7;
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+const X86_CR4_FIVE_LEVEL_PAGING: u64 = 1 << 12;
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+const X86_EFER_NO_EXECUTE_ENABLE: u64 = 1 << 11;
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+const X86_CPUID_EXTENDED_NX: u32 = 1 << 20;
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+const X86_CPUID_ADDRESS_SIZE_LEAF: u32 = 0x8000_0008;
+
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
 static VMX_TOY_EXIT_STATE: AtomicU8 = AtomicU8::new(VMX_TOY_AWAITING_PREEMPTION);
 #[cfg(all(target_os = "none", target_arch = "x86_64"))]
 static VMX_TOY_PREEMPTION_RELOAD: AtomicU32 = AtomicU32::new(0);
@@ -68,10 +81,37 @@ struct HostExceptionFrame {
 extern "C" {
     static __aegishv_kernel_start: u8;
     static __aegishv_kernel_end: u8;
+    static __aegishv_text_start: u8;
+    static __aegishv_text_end: u8;
+    static __aegishv_rodata_start: u8;
+    static __aegishv_rodata_end: u8;
+    static __aegishv_writable_start: u8;
+    static __aegishv_writable_end: u8;
+    static mut __aegishv_host_page_tables_start: u8;
+    static __aegishv_host_page_tables_end: u8;
+    static __aegishv_double_fault_guard_bottom: u8;
+    static __aegishv_double_fault_guard_top: u8;
+    static __aegishv_double_fault_stack_bottom: u8;
+    static __aegishv_double_fault_stack_top: u8;
+    static __aegishv_nmi_guard_bottom: u8;
+    static __aegishv_nmi_guard_top: u8;
+    static __aegishv_nmi_stack_bottom: u8;
+    static __aegishv_nmi_stack_top: u8;
+    static __aegishv_machine_check_guard_bottom: u8;
+    static __aegishv_machine_check_guard_top: u8;
+    static __aegishv_machine_check_stack_bottom: u8;
+    static __aegishv_machine_check_stack_top: u8;
+    static __aegishv_vmx_exit_guard_bottom: u8;
+    static __aegishv_vmx_exit_guard_top: u8;
+    static __aegishv_vmx_exit_stack_bottom: u8;
     static __aegishv_host_gdt: [u8; 72];
     static __aegishv_host_idt: [u8; 4096];
     static __aegishv_host_tss: [u8; 104];
     static __aegishv_vmx_exit_stack_top: u8;
+    static __aegishv_boot_stack_guard_bottom: u8;
+    static __aegishv_boot_stack_guard_top: u8;
+    static __aegishv_boot_stack_bottom: u8;
+    static __aegishv_boot_stack_top: u8;
     fn aegishv_vmx_vmexit_entry();
     fn aegishv_vmx_launch(frame: *const aegishv_arch_x86::vmx::exits::GeneralRegisters) -> u64;
 }
@@ -293,6 +333,7 @@ type RuntimeMarkerSet = (
 #[cfg(target_os = "none")]
 struct PreparedRuntimeMemory {
     allocation: aegishv_type1_kernel::Type1RuntimeMemoryAllocation,
+    inherited_cr3: u64,
     inherited_cr3_root: aegishv_type1_kernel::Type1PhysicalReservation,
 }
 
@@ -322,8 +363,9 @@ fn runtime_markers(
     };
     // SAFETY: this is a read-only snapshot of the paging root currently
     // keeping the bootloader-provided address space live on the BSP.
+    let inherited_cr3 = unsafe { read_cr3() };
     let active_cr3_root =
-        match aegishv_type1_kernel::inherited_x86_cr3_root_reservation(unsafe { read_cr3() }) {
+        match aegishv_type1_kernel::inherited_x86_cr3_root_reservation(inherited_cr3) {
             Ok(reservation) => reservation,
             Err(_) => return (runtime_plan_error_markers(), None),
         };
@@ -436,6 +478,7 @@ fn runtime_markers(
         markers,
         Some(PreparedRuntimeMemory {
             allocation,
+            inherited_cr3,
             inherited_cr3_root: active_cr3_root,
         }),
     )
@@ -482,6 +525,400 @@ fn type1_kernel_physical_reservation(
     _handoff: aegishv_type1_kernel::LimineMinimalHandoff,
 ) -> Result<aegishv_type1_kernel::Type1PhysicalReservation, ()> {
     Err(())
+}
+
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+fn linked_host_physical_address(
+    handoff: aegishv_type1_kernel::LimineMinimalHandoff,
+    virtual_address: u64,
+) -> Result<u64, ()> {
+    let offset = virtual_address
+        .checked_sub(handoff.executable_virtual_base)
+        .ok_or(())?;
+    handoff
+        .executable_physical_base
+        .checked_add(offset)
+        .ok_or(())
+}
+
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+fn linked_host_mapping(
+    handoff: aegishv_type1_kernel::LimineMinimalHandoff,
+    virtual_start: u64,
+    virtual_end: u64,
+    permissions: aegishv_type1_kernel::host_paging::HostPagePermissions,
+) -> Result<aegishv_type1_kernel::host_paging::HostPageMapping, ()> {
+    let length = virtual_end
+        .checked_sub(virtual_start)
+        .filter(|length| *length != 0)
+        .ok_or(())?;
+    let physical_start = linked_host_physical_address(handoff, virtual_start)?;
+    Ok(aegishv_type1_kernel::host_paging::HostPageMapping::new(
+        virtual_start,
+        physical_start,
+        length,
+        permissions,
+    ))
+}
+
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+unsafe fn prepare_owned_host_page_tables(
+    handoff: aegishv_type1_kernel::LimineMinimalHandoff,
+) -> Result<aegishv_type1_kernel::host_paging::HostPageTableImage, ()> {
+    use aegishv_type1_kernel::host_paging::{
+        build_host_page_table_image, HostPageMapping, HostPagePermissions, HostPageTableLayout,
+        HostPagingCapabilities, HostUnmappedPage, HOST_KERNEL_WINDOW_SIZE, HOST_PAGE_SIZE_4K,
+        HOST_PAGE_TABLE_PAGE_COUNT,
+    };
+
+    // SAFETY: the extended CPUID leaves are read-only and the limit leaf is
+    // architectural on every x86-64 CPU.
+    let extended_limit =
+        unsafe { __cpuid_count(aegishv_type1_kernel::CPUID_EXTENDED_LIMIT_LEAF, 0).eax };
+    if extended_limit < X86_CPUID_ADDRESS_SIZE_LEAF {
+        return Err(());
+    }
+    // SAFETY: the limit above proves both extended leaves are available.
+    let (extended_features, address_sizes) = unsafe {
+        (
+            __cpuid_count(aegishv_type1_kernel::CPUID_EXTENDED_FEATURE_LEAF, 0),
+            __cpuid_count(X86_CPUID_ADDRESS_SIZE_LEAF, 0),
+        )
+    };
+    if extended_features.edx & X86_CPUID_EXTENDED_NX == 0 {
+        return Err(());
+    }
+    let physical_address_bits = (address_sizes.eax & 0xff) as u8;
+    if !(36..=52).contains(&physical_address_bits) {
+        return Err(());
+    }
+
+    // SAFETY: this BSP owns CR0/CR4 and EFER at CPL0. NX is advertised by
+    // CPUID, and setting WP/NXE before the switch makes every planned leaf's
+    // permission meaningful as soon as the new root becomes active.
+    let cr4 = unsafe { read_cr4() };
+    if cr4 & X86_CR4_FIVE_LEVEL_PAGING != 0 {
+        return Err(());
+    }
+    let efer = unsafe { read_msr(aegishv_type1_kernel::IA32_EFER_MSR) };
+    unsafe {
+        write_msr(
+            aegishv_type1_kernel::IA32_EFER_MSR,
+            efer | X86_EFER_NO_EXECUTE_ENABLE,
+        )
+    };
+    let cr0 = unsafe { read_cr0() };
+    unsafe { write_cr0(cr0 | X86_CR0_WRITE_PROTECT) };
+    if unsafe { read_msr(aegishv_type1_kernel::IA32_EFER_MSR) } & X86_EFER_NO_EXECUTE_ENABLE == 0
+        || unsafe { read_cr0() } & X86_CR0_WRITE_PROTECT == 0
+    {
+        return Err(());
+    }
+
+    // SAFETY: these linker symbols are only observed as addresses. Linker
+    // assertions make every boundary page-aligned, ordered, and contained in
+    // the one 2 MiB higher-half kernel window.
+    let (
+        kernel_start,
+        kernel_end,
+        text_start,
+        text_end,
+        rodata_start,
+        rodata_end,
+        writable_start,
+        writable_end,
+        table_start,
+        table_end,
+        double_fault_guard_bottom,
+        double_fault_guard_top,
+        nmi_guard_bottom,
+        nmi_guard_top,
+        machine_check_guard_bottom,
+        machine_check_guard_top,
+        vmx_exit_guard_bottom,
+        vmx_exit_guard_top,
+        boot_stack_guard_bottom,
+        boot_stack_guard_top,
+    ) = unsafe {
+        (
+            core::ptr::addr_of!(__aegishv_kernel_start) as u64,
+            core::ptr::addr_of!(__aegishv_kernel_end) as u64,
+            core::ptr::addr_of!(__aegishv_text_start) as u64,
+            core::ptr::addr_of!(__aegishv_text_end) as u64,
+            core::ptr::addr_of!(__aegishv_rodata_start) as u64,
+            core::ptr::addr_of!(__aegishv_rodata_end) as u64,
+            core::ptr::addr_of!(__aegishv_writable_start) as u64,
+            core::ptr::addr_of!(__aegishv_writable_end) as u64,
+            core::ptr::addr_of_mut!(__aegishv_host_page_tables_start) as u64,
+            core::ptr::addr_of!(__aegishv_host_page_tables_end) as u64,
+            core::ptr::addr_of!(__aegishv_double_fault_guard_bottom) as u64,
+            core::ptr::addr_of!(__aegishv_double_fault_guard_top) as u64,
+            core::ptr::addr_of!(__aegishv_nmi_guard_bottom) as u64,
+            core::ptr::addr_of!(__aegishv_nmi_guard_top) as u64,
+            core::ptr::addr_of!(__aegishv_machine_check_guard_bottom) as u64,
+            core::ptr::addr_of!(__aegishv_machine_check_guard_top) as u64,
+            core::ptr::addr_of!(__aegishv_vmx_exit_guard_bottom) as u64,
+            core::ptr::addr_of!(__aegishv_vmx_exit_guard_top) as u64,
+            core::ptr::addr_of!(__aegishv_boot_stack_guard_bottom) as u64,
+            core::ptr::addr_of!(__aegishv_boot_stack_guard_top) as u64,
+        )
+    };
+    if kernel_start != handoff.executable_virtual_base
+        || kernel_end
+            .checked_sub(kernel_start)
+            .filter(|length| *length <= HOST_KERNEL_WINDOW_SIZE)
+            .is_none()
+        || table_end.checked_sub(table_start)
+            != Some(HOST_PAGE_SIZE_4K * HOST_PAGE_TABLE_PAGE_COUNT as u64)
+    {
+        return Err(());
+    }
+
+    let table_physical = linked_host_physical_address(handoff, table_start)?;
+    let table_layout =
+        HostPageTableLayout::contiguous(table_physical, table_start).map_err(|_| ())?;
+    let mappings: [HostPageMapping; 8] = [
+        linked_host_mapping(
+            handoff,
+            text_start,
+            text_end,
+            HostPagePermissions::READ_EXECUTE,
+        )?,
+        linked_host_mapping(
+            handoff,
+            rodata_start,
+            rodata_end,
+            HostPagePermissions::READ_ONLY,
+        )?,
+        linked_host_mapping(
+            handoff,
+            writable_start,
+            double_fault_guard_bottom,
+            HostPagePermissions::READ_WRITE,
+        )?,
+        linked_host_mapping(
+            handoff,
+            double_fault_guard_top,
+            nmi_guard_bottom,
+            HostPagePermissions::READ_WRITE,
+        )?,
+        linked_host_mapping(
+            handoff,
+            nmi_guard_top,
+            machine_check_guard_bottom,
+            HostPagePermissions::READ_WRITE,
+        )?,
+        linked_host_mapping(
+            handoff,
+            machine_check_guard_top,
+            vmx_exit_guard_bottom,
+            HostPagePermissions::READ_WRITE,
+        )?,
+        linked_host_mapping(
+            handoff,
+            vmx_exit_guard_top,
+            boot_stack_guard_bottom,
+            HostPagePermissions::READ_WRITE,
+        )?,
+        linked_host_mapping(
+            handoff,
+            boot_stack_guard_top,
+            writable_end,
+            HostPagePermissions::READ_WRITE,
+        )?,
+    ];
+    let unmapped_pages = [
+        HostUnmappedPage::NULL,
+        HostUnmappedPage::new(double_fault_guard_bottom),
+        HostUnmappedPage::new(nmi_guard_bottom),
+        HostUnmappedPage::new(machine_check_guard_bottom),
+        HostUnmappedPage::new(vmx_exit_guard_bottom),
+        HostUnmappedPage::new(boot_stack_guard_bottom),
+    ];
+    let image = build_host_page_table_image(
+        HostPagingCapabilities::new(true, false, physical_address_bits),
+        table_layout,
+        kernel_start,
+        &mappings,
+        &unmapped_pages,
+    )
+    .map_err(|_| ())?;
+    // SAFETY: the linker reserves exactly four aligned writable pages inside
+    // the still-live inherited mapping; the image contains exactly four
+    // validated hardware page-table pages.
+    unsafe { materialize_owned_host_page_tables(&image)? };
+    Ok(image)
+}
+
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+unsafe fn materialize_owned_host_page_tables(
+    image: &aegishv_type1_kernel::host_paging::HostPageTableImage,
+) -> Result<(), ()> {
+    use aegishv_type1_kernel::host_paging::{
+        HOST_PAGE_TABLE_ENTRY_COUNT, HOST_PAGE_TABLE_PAGE_COUNT,
+    };
+
+    let start = core::ptr::addr_of_mut!(__aegishv_host_page_tables_start) as usize;
+    let end = core::ptr::addr_of!(__aegishv_host_page_tables_end) as usize;
+    let expected_bytes = HOST_PAGE_TABLE_ENTRY_COUNT
+        .checked_mul(HOST_PAGE_TABLE_PAGE_COUNT)
+        .and_then(|entries| entries.checked_mul(core::mem::size_of::<u64>()))
+        .ok_or(())?;
+    if end.checked_sub(start) != Some(expected_bytes) || start % 4096 != 0 {
+        return Err(());
+    }
+    let destination = start as *mut u64;
+    let mut table_index = 0;
+    while table_index < HOST_PAGE_TABLE_PAGE_COUNT {
+        let entries = image.tables()[table_index].entries();
+        let mut entry_index = 0;
+        while entry_index < HOST_PAGE_TABLE_ENTRY_COUNT {
+            let flat_index = table_index * HOST_PAGE_TABLE_ENTRY_COUNT + entry_index;
+            // SAFETY: the checked pool size covers every computed u64 slot and
+            // the pool start is page-aligned, hence u64-aligned.
+            unsafe {
+                destination
+                    .add(flat_index)
+                    .write_volatile(entries[entry_index])
+            };
+            entry_index += 1;
+        }
+        table_index += 1;
+    }
+    core::sync::atomic::compiler_fence(Ordering::SeqCst);
+
+    let mut table_index = 0;
+    while table_index < HOST_PAGE_TABLE_PAGE_COUNT {
+        let entries = image.tables()[table_index].entries();
+        let mut entry_index = 0;
+        while entry_index < HOST_PAGE_TABLE_ENTRY_COUNT {
+            let flat_index = table_index * HOST_PAGE_TABLE_ENTRY_COUNT + entry_index;
+            // SAFETY: this is the read-back of the same checked initialized
+            // slot written above before the table root is made active.
+            if unsafe { destination.add(flat_index).read_volatile() } != entries[entry_index] {
+                return Err(());
+            }
+            entry_index += 1;
+        }
+        table_index += 1;
+    }
+    Ok(())
+}
+
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+unsafe fn snapshot_materialized_host_page_tables(
+    planned: &aegishv_type1_kernel::host_paging::HostPageTableImage,
+) -> Result<
+    [aegishv_type1_kernel::host_paging::HostPageTable;
+        aegishv_type1_kernel::host_paging::HOST_PAGE_TABLE_PAGE_COUNT],
+    (),
+> {
+    use aegishv_type1_kernel::host_paging::{
+        HostPageTable, HOST_PAGE_TABLE_ENTRY_COUNT, HOST_PAGE_TABLE_PAGE_COUNT,
+    };
+
+    let start = core::ptr::addr_of_mut!(__aegishv_host_page_tables_start) as usize;
+    let end = core::ptr::addr_of!(__aegishv_host_page_tables_end) as usize;
+    let expected_bytes = HOST_PAGE_TABLE_ENTRY_COUNT
+        .checked_mul(HOST_PAGE_TABLE_PAGE_COUNT)
+        .and_then(|entries| entries.checked_mul(core::mem::size_of::<u64>()))
+        .ok_or(())?;
+    if end.checked_sub(start) != Some(expected_bytes) || start % 4096 != 0 {
+        return Err(());
+    }
+    let mut snapshot = *planned.tables();
+    let source = start as *const u64;
+    let mut table_index = 0;
+    while table_index < HOST_PAGE_TABLE_PAGE_COUNT {
+        let mut entries = [0_u64; HOST_PAGE_TABLE_ENTRY_COUNT];
+        let mut entry_index = 0;
+        while entry_index < HOST_PAGE_TABLE_ENTRY_COUNT {
+            let flat_index = table_index * HOST_PAGE_TABLE_ENTRY_COUNT + entry_index;
+            // SAFETY: materialization already checked this exact four-page
+            // pool, and the active root maps it once as supervisor RW/NX.
+            entries[entry_index] = unsafe { source.add(flat_index).read_volatile() };
+            entry_index += 1;
+        }
+        snapshot[table_index] = HostPageTable::from_entries(entries);
+        table_index += 1;
+    }
+    Ok(snapshot)
+}
+
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+unsafe fn activate_owned_host_paging(
+    image: &aegishv_type1_kernel::host_paging::HostPageTableImage,
+    inherited_cr3: u64,
+) -> Result<(), ()> {
+    let root = image.root_physical_address();
+    let original_cr4 = unsafe { read_cr4() };
+    if root == 0
+        || root % aegishv_type1_kernel::host_paging::HOST_PAGE_SIZE_4K != 0
+        || original_cr4 & X86_CR4_FIVE_LEVEL_PAGING != 0
+    {
+        return Err(());
+    }
+
+    let cr4_without_global = original_cr4 & !X86_CR4_PAGE_GLOBAL_ENABLE;
+    if cr4_without_global != original_cr4 {
+        // SAFETY: clearing PGE at CPL0 invalidates inherited global TLB
+        // entries before the new root removes every Limine alias.
+        unsafe { write_cr4(cr4_without_global) };
+        if unsafe { read_cr4() } != cr4_without_global {
+            unsafe { write_cr4(original_cr4) };
+            return Err(());
+        }
+    }
+
+    // SAFETY: all four hierarchy pages were materialized and read back, and
+    // the current RIP/RSP plus host tables are covered by the new root.
+    unsafe { write_cr3(root) };
+    if unsafe { read_cr3() } != root {
+        unsafe {
+            write_cr3(inherited_cr3);
+            write_cr4(original_cr4);
+        }
+        return Err(());
+    }
+    if cr4_without_global != original_cr4 {
+        // SAFETY: inherited global translations were flushed while PGE was
+        // clear; restoring the original CR4 does not recreate those entries.
+        unsafe { write_cr4(original_cr4) };
+        if unsafe { read_cr4() } != original_cr4 {
+            unsafe {
+                write_cr3(inherited_cr3);
+                write_cr4(original_cr4);
+            }
+            return Err(());
+        }
+    }
+    core::sync::atomic::compiler_fence(Ordering::SeqCst);
+
+    // SAFETY: the new root maps the table pool RW/NX and hardware may only
+    // have added architectural accessed/dirty bits since the switch.
+    let materialized = match unsafe { snapshot_materialized_host_page_tables(image) } {
+        Ok(tables) => tables,
+        Err(()) => {
+            // SAFETY: the reserved inherited root is still available and
+            // restores the bootloader mapping before the terminal error path.
+            unsafe { write_cr3(inherited_cr3) };
+            return Err(());
+        }
+    };
+    let live_state_is_valid = image.validate_materialized_tables(&materialized).is_ok()
+        && unsafe { read_cr3() } == root
+        && unsafe { read_cr0() } & X86_CR0_WRITE_PROTECT != 0
+        && unsafe { read_cr4() } & X86_CR4_FIVE_LEVEL_PAGING == 0
+        && unsafe { read_msr(aegishv_type1_kernel::IA32_EFER_MSR) } & X86_EFER_NO_EXECUTE_ENABLE
+            != 0
+        && unsafe { host_tables_are_owned() };
+    if !live_state_is_valid {
+        // SAFETY: the inherited root was reserved and remained untouched; it
+        // is restored before reporting a post-switch validation failure.
+        unsafe { write_cr3(inherited_cr3) };
+        return Err(());
+    }
+    Ok(())
 }
 
 #[cfg(target_os = "none")]
@@ -851,6 +1288,15 @@ unsafe fn write_cr4(value: u64) {
 }
 
 #[cfg(all(target_os = "none", target_arch = "x86_64"))]
+unsafe fn write_cr3(value: u64) {
+    asm!(
+        "mov cr3, {}",
+        in(reg) value,
+        options(nostack, preserves_flags)
+    );
+}
+
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
 unsafe fn write_msr(msr: u32, value: u64) {
     let low = value as u32;
     let high = (value >> 32) as u32;
@@ -1114,8 +1560,23 @@ unsafe fn run_type1_vmx_toy_guest(
         Ok(execution) => execution,
         Err(_) => vmx_guest_entry_error(),
     };
+    // SAFETY: all Limine response reads and HHDM-backed runtime/guest writes
+    // are complete. The next root maps only the linked higher-half kernel,
+    // with RX/R/RW permissions and five explicit non-present guard pages.
+    let owned_host_paging = match unsafe { prepare_owned_host_page_tables(handoff) } {
+        Ok(image) => image,
+        Err(()) => host_paging_error(),
+    };
+    // SAFETY: the inherited CR3 root was reserved before any allocation and
+    // remains available for rollback until the new root passes live readback.
+    if unsafe { activate_owned_host_paging(&owned_host_paging, runtime_memory.inherited_cr3) }
+        .is_err()
+    {
+        host_paging_error();
+    }
+    serial_write_line(aegishv_type1_kernel::SERIAL_HOST_PAGING_OK_MARKER);
     // SAFETY: owned descriptor tables are active and preflight validated the
-    // current CR fixed bits before this VMCS host-state snapshot.
+    // current CR fixed bits; the snapshot now records the owned host CR3.
     let host =
         match unsafe { capture_vmx_host_state(capabilities.cr0_fixed, capabilities.cr4_fixed) } {
             Ok(host) => host,
@@ -1193,6 +1654,12 @@ unsafe fn run_type1_vmx_toy_guest(
 #[cfg(all(target_os = "none", target_arch = "x86_64"))]
 fn vmx_guest_entry_error() -> ! {
     serial_write_line(aegishv_type1_kernel::SERIAL_VMX_GUEST_ENTRY_ERROR_MARKER);
+    halt_loop()
+}
+
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+fn host_paging_error() -> ! {
+    serial_write_line(aegishv_type1_kernel::SERIAL_HOST_PAGING_ERROR_MARKER);
     halt_loop()
 }
 

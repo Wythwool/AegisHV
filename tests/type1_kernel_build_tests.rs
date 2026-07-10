@@ -38,6 +38,7 @@ fn workspace_and_lockfile_include_minimal_type1_kernel_crate() {
 fn type1_entry_installs_owned_host_tables_before_rust() {
     let entry = read_repo_file("boot/x86_64/entry.S");
     let tables = read_repo_file("boot/x86_64/host_tables.S");
+    let linker = read_repo_file("boot/linker/x86_64-type1.ld");
     let build = read_repo_file("scripts/build-type1-kernel.sh");
 
     let transition = entry.find("call aegishv_install_transition_idt").unwrap();
@@ -55,11 +56,21 @@ fn type1_entry_installs_owned_host_tables_before_rust() {
             "__aegishv_double_fault_stack_top",
             "__aegishv_nmi_stack_top",
             "__aegishv_machine_check_stack_top",
-            "__aegishv_vmx_exit_stack_top",
             "aegishv_install_transition_idt",
             "ltr ax",
             "lidt [rip + __aegishv_host_idtr]",
             "aegishv_type1_host_exception",
+        ],
+    );
+    assert_contains_all(
+        &linker,
+        &[
+            "__aegishv_double_fault_guard_bottom",
+            "__aegishv_nmi_guard_bottom",
+            "__aegishv_machine_check_guard_bottom",
+            "__aegishv_vmx_exit_guard_bottom",
+            "__aegishv_vmx_exit_stack_top",
+            "__aegishv_boot_stack_guard_bottom",
         ],
     );
     let vmx_entry = read_repo_file("boot/x86_64/vmx_entry.S");
@@ -106,6 +117,7 @@ fn kernel_entry_records_serial_marker_and_halt_path() {
             "Type1VmxBasic",
             "Type1RuntimeRegionMaterialization",
             "Type1RuntimeMemoryAllocation",
+            "pub mod host_paging",
             "allocate_type1_runtime_memory",
             "TYPE1_MAX_MEMORY_MAP_ENTRIES",
             "Type1VmxonCyclePlan",
@@ -140,6 +152,8 @@ fn kernel_entry_records_serial_marker_and_halt_path() {
             "SERIAL_RUNTIME_VMCS_LOAD_OK_MARKER",
             "SERIAL_RUNTIME_VMCS_LOAD_ERROR_MARKER",
             "SERIAL_RUNTIME_VMCS_LOAD_SKIPPED_MARKER",
+            "SERIAL_HOST_PAGING_OK_MARKER",
+            "SERIAL_HOST_PAGING_ERROR_MARKER",
             "SERIAL_VMX_INSTRUCTION_ERROR_PREFIX",
             "aegishv:type1:vm-instruction-error=0x",
             "Type1RuntimePlan",
@@ -226,9 +240,58 @@ fn live_type1_path_keeps_one_early_physical_memory_owner() {
     let guest_path = main
         .split_once("unsafe fn run_type1_vmx_toy_guest")
         .expect("live VMX guest path")
-        .1;
+        .1
+        .split_once("fn vmx_guest_entry_error")
+        .expect("end of live VMX guest path")
+        .0;
     assert!(!guest_path.contains("copy_limine_memory_entries("));
     assert!(!guest_path.contains(allocator_call));
+}
+
+#[test]
+fn final_vmx_path_switches_to_owned_paging_after_hhdm_materialization() {
+    let main = read_repo_file("crates/aegishv-type1-kernel/src/main.rs");
+    let guest_path = main
+        .split_once("unsafe fn run_type1_vmx_toy_guest")
+        .expect("live VMX guest path")
+        .1
+        .split_once("fn vmx_guest_entry_error")
+        .expect("end of live VMX guest path")
+        .0;
+
+    let guest_materialization = guest_path
+        .find("materialize_type1_toy_guest")
+        .expect("guest HHDM materialization");
+    let paging_prepare = guest_path
+        .find("prepare_owned_host_page_tables")
+        .expect("owned host page-table preparation");
+    let paging_activate = guest_path
+        .find("activate_owned_host_paging")
+        .expect("owned host CR3 activation");
+    let host_capture = guest_path
+        .find("capture_vmx_host_state")
+        .expect("VMCS host-state capture");
+    let vmx_launch = guest_path.find("aegishv_vmx_launch").expect("VMX launch");
+
+    assert!(guest_materialization < paging_prepare);
+    assert!(paging_prepare < paging_activate);
+    assert!(paging_activate < host_capture);
+    assert!(host_capture < vmx_launch);
+    let after_activation = &guest_path[paging_activate..];
+    assert!(!after_activation.contains("HhdmPageWriter"));
+    assert!(!after_activation.contains("physical_to_hhdm"));
+    assert_contains_all(
+        &main,
+        &[
+            "SERIAL_HOST_PAGING_OK_MARKER",
+            "SERIAL_HOST_PAGING_ERROR_MARKER",
+            "X86_CR0_WRITE_PROTECT",
+            "X86_EFER_NO_EXECUTE_ENABLE",
+            "X86_CR4_FIVE_LEVEL_PAGING",
+            "validate_materialized_tables",
+            "write_cr3(root)",
+        ],
+    );
 }
 
 #[test]
@@ -340,8 +403,19 @@ fn kernel_build_script_and_ci_keep_boot_evidence_boundary() {
             "runtime_vmxon_markers_present=true",
             "runtime_vmcs_load=smoke-cycle",
             "runtime_vmcs_load_markers_present=true",
+            "load_segment_page_alignment=\"passed\"",
             "load_segment_permissions=\"passed\"",
+            "PT_LOAD contains malformed layout fields",
+            "expected exactly three PT_LOAD segments",
             "expected RX, R, and RW PT_LOAD permissions",
+            "Offset:",
+            "VirtualAddress:",
+            "PhysicalAddress:",
+            "Alignment:",
+            "alignment_value < 4096",
+            "(alignment_value & (alignment_value - 1)) != 0",
+            "PT_LOAD fields are not 4K aligned",
+            "not congruent modulo p_align",
             "static_elf_check=\"passed\"",
             "static kernel contains relocations",
             "symbol_table_check=\"passed\"",

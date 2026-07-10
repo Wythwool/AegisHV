@@ -41,6 +41,8 @@ runtime_vmcs_load_markers=(
 host_state_markers=(
   "aegishv:type1:host-tables-ok"
   "aegishv:type1:host-tables-error"
+  "aegishv:type1:host-paging-ok"
+  "aegishv:type1:host-paging-error"
   "aegishv:type1:host-exception"
   "aegishv:type1:host-fatal"
 )
@@ -84,6 +86,15 @@ required_layout_sections=(
   ".limine_requests"
   ".data"
   ".bss"
+  ".double_fault_guard"
+  ".double_fault_stack"
+  ".nmi_guard"
+  ".nmi_stack"
+  ".machine_check_guard"
+  ".machine_check_stack"
+  ".vmx_exit_guard"
+  ".vmx_exit_stack"
+  ".boot_stack_guard"
   ".boot_stack"
 )
 
@@ -108,6 +119,17 @@ require_section_field() {
   if ! printf '%s\n' "$block" | grep -Fq "$expected"; then
     echo "type1 kernel inspect: section $section did not contain expected field: $expected" >&2
     exit 70
+  fi
+}
+
+elf_integer_value() {
+  local value="$1"
+  if [[ "$value" =~ ^0[xX]([[:xdigit:]]+)$ ]]; then
+    printf '%d\n' "$((16#${BASH_REMATCH[1]}))"
+  elif [[ "$value" =~ ^[[:digit:]]+$ ]]; then
+    printf '%d\n' "$((10#$value))"
+  else
+    return 1
   fi
 }
 
@@ -159,23 +181,61 @@ if command -v llvm-readobj >/dev/null 2>&1; then
   done
   require_section_field ".text" "Address: $expected_entry"
   require_section_field ".bss" "Type: SHT_NOBITS"
+  for guard in .double_fault_guard .nmi_guard .machine_check_guard .vmx_exit_guard .boot_stack_guard; do
+    require_section_field "$guard" "Size: 4096"
+    require_section_field "$guard" "Type: SHT_NOBITS"
+  done
+  for ist_stack in .double_fault_stack .nmi_stack .machine_check_stack; do
+    require_section_field "$ist_stack" "Size: 16384"
+    require_section_field "$ist_stack" "Type: SHT_NOBITS"
+  done
+  require_section_field ".vmx_exit_stack" "Size: 65536"
+  require_section_field ".vmx_exit_stack" "Type: SHT_NOBITS"
   require_section_field ".boot_stack" "Size: 262144"
   require_section_field ".boot_stack" "Type: SHT_NOBITS"
+  program_headers="$(llvm-readobj --program-headers "$kernel_elf")"
   load_segment_page_alignment="passed"
   load_segment_count=0
-  while IFS= read -r address; do
+  while IFS='|' read -r offset virtual_address physical_address alignment; do
     load_segment_count=$((load_segment_count + 1))
-    case "$address" in
-      0x*000) ;;
-      *)
-        echo "type1 kernel inspect: PT_LOAD is not page aligned: $address" >&2
-        exit 70
-        ;;
-    esac
+    if ! offset_value="$(elf_integer_value "$offset")" \
+      || ! virtual_value="$(elf_integer_value "$virtual_address")" \
+      || ! physical_value="$(elf_integer_value "$physical_address")" \
+      || ! alignment_value="$(elf_integer_value "$alignment")"; then
+      echo "type1 kernel inspect: PT_LOAD contains malformed layout fields: offset=$offset virtual=$virtual_address physical=$physical_address alignment=$alignment" >&2
+      exit 70
+    fi
+    if (( alignment_value < 4096 || (alignment_value & (alignment_value - 1)) != 0 )); then
+      echo "type1 kernel inspect: PT_LOAD alignment is not a power of two of at least 4K: $alignment" >&2
+      exit 70
+    fi
+    if (( (offset_value & 4095) != 0 \
+      || (virtual_value & 4095) != 0 \
+      || (physical_value & 4095) != 0 )); then
+      echo "type1 kernel inspect: PT_LOAD fields are not 4K aligned: offset=$offset virtual=$virtual_address physical=$physical_address" >&2
+      exit 70
+    fi
+    alignment_mask=$((alignment_value - 1))
+    if (( (offset_value & alignment_mask) != (virtual_value & alignment_mask) \
+      || (offset_value & alignment_mask) != (physical_value & alignment_mask) )); then
+      echo "type1 kernel inspect: PT_LOAD offset, virtual address, and physical address are not congruent modulo p_align: offset=$offset virtual=$virtual_address physical=$physical_address alignment=$alignment" >&2
+      exit 70
+    fi
   done < <(
-    llvm-readobj --program-headers "$kernel_elf" | awk '
-      /Type: PT_LOAD/ { load = 1; next }
-      load && /VirtualAddress:/ { print $2; load = 0 }
+    printf '%s\n' "$program_headers" | awk '
+      /Type: PT_LOAD/ {
+        load = 1
+        offset = virtual_address = physical_address = alignment = "missing"
+        next
+      }
+      load && /Offset:/ { offset = $2; next }
+      load && /VirtualAddress:/ { virtual_address = $2; next }
+      load && /PhysicalAddress:/ { physical_address = $2; next }
+      load && /Alignment:/ {
+        alignment = $2
+        print offset "|" virtual_address "|" physical_address "|" alignment
+        load = 0
+      }
     '
   )
   if [ "$load_segment_count" -ne 3 ]; then
@@ -184,7 +244,7 @@ if command -v llvm-readobj >/dev/null 2>&1; then
   fi
   load_segment_permissions="passed"
   load_permissions="$(
-    llvm-readobj --program-headers "$kernel_elf" | awk '
+    printf '%s\n' "$program_headers" | awk '
       /Type: PT_LOAD/ { load = 1; read = 0; write = 0; execute = 0; next }
       load && /PF_R/ { read = 1 }
       load && /PF_W/ { write = 1 }
@@ -216,7 +276,7 @@ if command -v llvm-readobj >/dev/null 2>&1; then
   fi
   symbol_table_check="passed"
   symbols="$(llvm-readobj --symbols "$kernel_elf")"
-  for symbol in aegishv_type1_start __aegishv_kernel_start __aegishv_kernel_end __aegishv_boot_stack_bottom __aegishv_boot_stack_top __aegishv_double_fault_stack_top __aegishv_nmi_stack_top __aegishv_machine_check_stack_top __aegishv_vmx_exit_stack_top aegishv_vmx_vmexit_entry; do
+  for symbol in aegishv_type1_start __aegishv_kernel_start __aegishv_kernel_end __aegishv_text_start __aegishv_text_end __aegishv_rodata_start __aegishv_rodata_end __aegishv_writable_start __aegishv_writable_end __aegishv_host_page_tables_start __aegishv_host_page_tables_end __aegishv_double_fault_guard_bottom __aegishv_double_fault_guard_top __aegishv_double_fault_stack_bottom __aegishv_double_fault_stack_top __aegishv_nmi_guard_bottom __aegishv_nmi_guard_top __aegishv_nmi_stack_bottom __aegishv_nmi_stack_top __aegishv_machine_check_guard_bottom __aegishv_machine_check_guard_top __aegishv_machine_check_stack_bottom __aegishv_machine_check_stack_top __aegishv_vmx_exit_guard_bottom __aegishv_vmx_exit_guard_top __aegishv_vmx_exit_stack_bottom __aegishv_vmx_exit_stack_top __aegishv_boot_stack_guard_bottom __aegishv_boot_stack_guard_top __aegishv_boot_stack_bottom __aegishv_boot_stack_top aegishv_vmx_vmexit_entry; do
     if ! grep -Fq "Name: $symbol" <<< "$symbols"; then
       echo "type1 kernel inspect: diagnostic symbol was not retained: $symbol" >&2
       exit 70
