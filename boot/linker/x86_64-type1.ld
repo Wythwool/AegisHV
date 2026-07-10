@@ -61,6 +61,9 @@ SECTIONS
   ASSERT((ADDR(.rodata) & 0xfff) == 0, "rodata must be page aligned")
   ASSERT((ADDR(.limine_requests) & 0xfff) == 0, "Limine requests must be page aligned")
   ASSERT((ADDR(.data) & 0xfff) == 0, "data must be page aligned")
+  ASSERT((__aegishv_kernel_start & 0xfff) == 0, "kernel start must be page aligned")
+  ASSERT((__aegishv_kernel_end & 0xfff) == 0, "kernel end must be page aligned")
+  ASSERT(__aegishv_kernel_end > __aegishv_kernel_start, "kernel image must not be empty")
   ASSERT(BOOT_STACK_SIZE >= 0x00020000, "boot stack is below the audited minimum")
   ASSERT(SIZEOF(.boot_stack) == BOOT_STACK_SIZE, "boot stack size changed")
 

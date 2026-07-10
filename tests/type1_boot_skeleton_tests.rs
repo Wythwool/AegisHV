@@ -63,6 +63,8 @@ fn boot_artifacts_define_limine_linker_and_entry_boundaries() {
         &[
             "ENTRY(aegishv_type1_start)",
             "KERNEL_PHYS_BASE = 0x00200000",
+            "__aegishv_kernel_start",
+            "__aegishv_kernel_end",
             "__aegishv_boot_stack_top",
             ".limine_requests",
             "KEEP(*(.limine_requests_start))",
@@ -71,6 +73,7 @@ fn boot_artifacts_define_limine_linker_and_entry_boundaries() {
             "*(.got .got.*)",
             ".boot_stack ALIGN(4K) (NOLOAD)",
             "ASSERT((ADDR(.text) & 0xfff) == 0",
+            "ASSERT((__aegishv_kernel_end & 0xfff) == 0",
         ],
     );
     assert_contains_all(

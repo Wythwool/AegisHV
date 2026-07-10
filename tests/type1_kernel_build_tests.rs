@@ -202,6 +202,36 @@ fn kernel_entry_records_serial_marker_and_halt_path() {
 }
 
 #[test]
+fn live_type1_path_keeps_one_early_physical_memory_owner() {
+    let main = read_repo_file("crates/aegishv-type1-kernel/src/main.rs");
+    let allocator_call = "allocate_type1_runtime_memory_with_reservations::<";
+
+    assert_eq!(
+        main.matches(allocator_call).count(),
+        1,
+        "the live kernel must construct exactly one early allocator"
+    );
+    assert_contains_all(
+        &main,
+        &[
+            "struct PreparedRuntimeMemory",
+            "linked_kernel_reservation",
+            "inherited_x86_cr3_root_reservation",
+            "&[kernel_reservation, active_cr3_root]",
+            "runtime_memory.allocation.allocate_intel_toy_guest()",
+            "current_cr3_root != runtime_memory.inherited_cr3_root",
+        ],
+    );
+
+    let guest_path = main
+        .split_once("unsafe fn run_type1_vmx_toy_guest")
+        .expect("live VMX guest path")
+        .1;
+    assert!(!guest_path.contains("copy_limine_memory_entries("));
+    assert!(!guest_path.contains(allocator_call));
+}
+
+#[test]
 fn kernel_build_script_and_ci_keep_boot_evidence_boundary() {
     let script = read_repo_file("scripts/build-type1-kernel.sh");
     let inspect = read_repo_file("scripts/inspect-type1-kernel.sh");

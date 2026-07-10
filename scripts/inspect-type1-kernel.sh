@@ -216,7 +216,7 @@ if command -v llvm-readobj >/dev/null 2>&1; then
   fi
   symbol_table_check="passed"
   symbols="$(llvm-readobj --symbols "$kernel_elf")"
-  for symbol in aegishv_type1_start __aegishv_boot_stack_bottom __aegishv_boot_stack_top aegishv_vmx_vmexit_entry; do
+  for symbol in aegishv_type1_start __aegishv_kernel_start __aegishv_kernel_end __aegishv_boot_stack_bottom __aegishv_boot_stack_top __aegishv_double_fault_stack_top __aegishv_nmi_stack_top __aegishv_machine_check_stack_top __aegishv_vmx_exit_stack_top aegishv_vmx_vmexit_entry; do
     if ! grep -Fq "Name: $symbol" <<< "$symbols"; then
       echo "type1 kernel inspect: diagnostic symbol was not retained: $symbol" >&2
       exit 70

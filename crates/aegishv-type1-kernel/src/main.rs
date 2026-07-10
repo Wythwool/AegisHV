@@ -66,6 +66,8 @@ struct HostExceptionFrame {
 
 #[cfg(all(target_os = "none", target_arch = "x86_64"))]
 extern "C" {
+    static __aegishv_kernel_start: u8;
+    static __aegishv_kernel_end: u8;
     static __aegishv_host_gdt: [u8; 72];
     static __aegishv_host_idt: [u8; 4096];
     static __aegishv_host_tss: [u8; 104];
@@ -240,12 +242,15 @@ pub extern "C" fn aegishv_type1_rust_entry() -> ! {
     if status.is_ready() {
         serial_write_line(status.serial_marker());
         let (
-            backend_marker,
-            preflight_marker,
-            enable_marker,
-            regions_marker,
-            vmxon_marker,
-            vmcs_marker,
+            (
+                backend_marker,
+                preflight_marker,
+                enable_marker,
+                regions_marker,
+                vmxon_marker,
+                vmcs_marker,
+            ),
+            mut runtime_memory,
         ) = runtime_markers(handoff);
         serial_write_line(backend_marker);
         serial_write_line(preflight_marker);
@@ -260,9 +265,13 @@ pub extern "C" fn aegishv_type1_rust_entry() -> ! {
             && vmxon_marker == aegishv_type1_kernel::SERIAL_RUNTIME_VMXON_OK_MARKER
             && vmcs_marker == aegishv_type1_kernel::SERIAL_RUNTIME_VMCS_LOAD_OK_MARKER
         {
+            let runtime_memory = match runtime_memory.as_mut() {
+                Some(allocation) => allocation,
+                None => halt_loop(),
+            };
             // SAFETY: every preceding marker corresponds to successful host
             // table, capability, VMXON, and VMCS-load validation on this BSP.
-            unsafe { run_type1_vmx_toy_guest(handoff) };
+            unsafe { run_type1_vmx_toy_guest(handoff, runtime_memory) };
         }
     } else {
         serial_write_line(aegishv_type1_kernel::SERIAL_LIMINE_MISSING_MARKER);
@@ -272,16 +281,25 @@ pub extern "C" fn aegishv_type1_rust_entry() -> ! {
 }
 
 #[cfg(target_os = "none")]
+type RuntimeMarkerSet = (
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+);
+
+#[cfg(target_os = "none")]
+struct PreparedRuntimeMemory {
+    allocation: aegishv_type1_kernel::Type1RuntimeMemoryAllocation,
+    inherited_cr3_root: aegishv_type1_kernel::Type1PhysicalReservation,
+}
+
+#[cfg(target_os = "none")]
 fn runtime_markers(
     handoff: aegishv_type1_kernel::LimineMinimalHandoff,
-) -> (
-    &'static str,
-    &'static str,
-    &'static str,
-    &'static str,
-    &'static str,
-    &'static str,
-) {
+) -> (RuntimeMarkerSet, Option<PreparedRuntimeMemory>) {
     // SAFETY: CPUID is available in x86-64 mode and RDMSR is reached only for
     // the vendor capability advertised by CPUID.
     let capability_report = aegishv_type1_kernel::type1_capabilities_from_snapshot(unsafe {
@@ -292,20 +310,34 @@ fn runtime_markers(
         capability_report.capabilities,
     ) {
         Ok(backend) => backend,
-        Err(_) => return runtime_plan_error_markers(),
+        Err(_) => return (runtime_plan_error_markers(), None),
     };
     let (memory_entries, memory_entry_count) = match copy_limine_memory_entries(handoff) {
         Ok(entries) => entries,
-        Err(()) => return runtime_plan_error_markers(),
+        Err(()) => return (runtime_plan_error_markers(), None),
     };
-    let allocation = match aegishv_type1_kernel::allocate_type1_runtime_memory::<
+    let kernel_reservation = match type1_kernel_physical_reservation(handoff) {
+        Ok(reservation) => reservation,
+        Err(()) => return (runtime_plan_error_markers(), None),
+    };
+    // SAFETY: this is a read-only snapshot of the paging root currently
+    // keeping the bootloader-provided address space live on the BSP.
+    let active_cr3_root =
+        match aegishv_type1_kernel::inherited_x86_cr3_root_reservation(unsafe { read_cr3() }) {
+            Ok(reservation) => reservation,
+            Err(_) => return (runtime_plan_error_markers(), None),
+        };
+    let allocation = match aegishv_type1_kernel::allocate_type1_runtime_memory_with_reservations::<
         { aegishv_type1_kernel::TYPE1_MAX_MEMORY_MAP_ENTRIES },
-    >(&memory_entries[..memory_entry_count], backend)
-    {
+    >(
+        &memory_entries[..memory_entry_count],
+        backend,
+        &[kernel_reservation, active_cr3_root],
+    ) {
         Ok(allocation) => allocation,
-        Err(_) => return runtime_plan_error_markers(),
+        Err(_) => return (runtime_plan_error_markers(), None),
     };
-    match aegishv_type1_kernel::plan_type1_runtime_with_memory(
+    let markers = match aegishv_type1_kernel::plan_type1_runtime_with_memory(
         handoff,
         aegishv_type1_kernel::Type1BackendRequest::Auto,
         capability_report.capabilities,
@@ -399,18 +431,18 @@ fn runtime_markers(
             aegishv_type1_kernel::SERIAL_RUNTIME_VMXON_ERROR_MARKER,
             aegishv_type1_kernel::SERIAL_RUNTIME_VMCS_LOAD_ERROR_MARKER,
         ),
-    }
+    };
+    (
+        markers,
+        Some(PreparedRuntimeMemory {
+            allocation,
+            inherited_cr3_root: active_cr3_root,
+        }),
+    )
 }
 
 #[cfg(target_os = "none")]
-const fn runtime_plan_error_markers() -> (
-    &'static str,
-    &'static str,
-    &'static str,
-    &'static str,
-    &'static str,
-    &'static str,
-) {
+const fn runtime_plan_error_markers() -> RuntimeMarkerSet {
     (
         aegishv_type1_kernel::SERIAL_RUNTIME_PLAN_ERROR_MARKER,
         aegishv_type1_kernel::SERIAL_RUNTIME_PREFLIGHT_ERROR_MARKER,
@@ -419,6 +451,37 @@ const fn runtime_plan_error_markers() -> (
         aegishv_type1_kernel::SERIAL_RUNTIME_VMXON_ERROR_MARKER,
         aegishv_type1_kernel::SERIAL_RUNTIME_VMCS_LOAD_ERROR_MARKER,
     )
+}
+
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+fn type1_kernel_physical_reservation(
+    handoff: aegishv_type1_kernel::LimineMinimalHandoff,
+) -> Result<aegishv_type1_kernel::Type1PhysicalReservation, ()> {
+    // SAFETY: these linker symbols bound the one loaded kernel image and only
+    // their addresses are observed; no memory is read through either symbol.
+    let (virtual_start, virtual_end) = unsafe {
+        (
+            core::ptr::addr_of!(__aegishv_kernel_start) as u64,
+            core::ptr::addr_of!(__aegishv_kernel_end) as u64,
+        )
+    };
+    if virtual_start != handoff.executable_virtual_base {
+        return Err(());
+    }
+    aegishv_type1_kernel::linked_kernel_reservation(
+        handoff.executable_physical_base,
+        handoff.executable_virtual_base,
+        virtual_start,
+        virtual_end,
+    )
+    .map_err(|_| ())
+}
+
+#[cfg(all(target_os = "none", not(target_arch = "x86_64")))]
+fn type1_kernel_physical_reservation(
+    _handoff: aegishv_type1_kernel::LimineMinimalHandoff,
+) -> Result<aegishv_type1_kernel::Type1PhysicalReservation, ()> {
+    Err(())
 }
 
 #[cfg(target_os = "none")]
@@ -918,7 +981,10 @@ unsafe fn run_type1_vmcs_load_cycle(
 }
 
 #[cfg(all(target_os = "none", target_arch = "x86_64"))]
-unsafe fn run_type1_vmx_toy_guest(handoff: aegishv_type1_kernel::LimineMinimalHandoff) -> ! {
+unsafe fn run_type1_vmx_toy_guest(
+    handoff: aegishv_type1_kernel::LimineMinimalHandoff,
+    runtime_memory: &mut PreparedRuntimeMemory,
+) -> ! {
     use aegishv_arch_x86::vmx::instructions::VmxInstructionExecutor;
     use aegishv_arch_x86::vmx::vmcs_config::{
         MinimalVmcsConfiguration, VmcsExecutionState, VmcsGuestState64,
@@ -950,20 +1016,17 @@ unsafe fn run_type1_vmx_toy_guest(handoff: aegishv_type1_kernel::LimineMinimalHa
         aegishv_type1_kernel::SERIAL_VMX_TIMER_EFFECTIVE_PREFIX,
         capabilities.preemption_timer.effective_budget_tsc_ticks,
     );
-    let (memory_entries, memory_entry_count) = match copy_limine_memory_entries(handoff) {
-        Ok(entries) => entries,
-        Err(()) => vmx_guest_entry_error(),
-    };
-    let mut allocation = match aegishv_type1_kernel::allocate_type1_runtime_memory::<
-        { aegishv_type1_kernel::TYPE1_MAX_MEMORY_MAP_ENTRIES },
-    >(
-        &memory_entries[..memory_entry_count],
-        aegishv_type1_kernel::Type1RuntimeBackend::IntelVmx,
-    ) {
-        Ok(allocation) => allocation,
-        Err(_) => vmx_guest_entry_error(),
-    };
-    let guest_pages = match allocation.allocate_intel_toy_guest() {
+    // SAFETY: this only snapshots the current paging root. The lower PCID or
+    // cache-control bits are deliberately ignored for physical ownership.
+    let current_cr3_root =
+        match aegishv_type1_kernel::inherited_x86_cr3_root_reservation(unsafe { read_cr3() }) {
+            Ok(reservation) => reservation,
+            Err(_) => vmx_guest_entry_error(),
+        };
+    if current_cr3_root != runtime_memory.inherited_cr3_root {
+        vmx_guest_entry_error();
+    }
+    let guest_pages = match runtime_memory.allocation.allocate_intel_toy_guest() {
         Ok(pages) => pages,
         Err(_) => vmx_guest_entry_error(),
     };
@@ -975,7 +1038,7 @@ unsafe fn run_type1_vmx_toy_guest(handoff: aegishv_type1_kernel::LimineMinimalHa
         handoff,
         aegishv_type1_kernel::Type1BackendRequest::IntelVmx,
         capability_report.capabilities,
-        allocation.plan(),
+        runtime_memory.allocation.plan(),
     ) {
         Ok(plan) if plan.backend == aegishv_type1_kernel::Type1RuntimeBackend::IntelVmx => plan,
         _ => vmx_guest_entry_error(),
