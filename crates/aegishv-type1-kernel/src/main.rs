@@ -7,12 +7,31 @@ use core::arch::x86_64::__cpuid_count;
 use core::arch::{asm, global_asm};
 #[cfg(target_os = "none")]
 use core::panic::PanicInfo;
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+use core::sync::atomic::{AtomicU32, AtomicU8, Ordering};
 
 #[cfg(target_os = "none")]
 global_asm!(
     include_str!("../../../boot/x86_64/entry.S"),
     options(att_syntax)
 );
+
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+global_asm!(include_str!("../../../boot/x86_64/vmx_entry.S"));
+
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+const VMX_TOY_AWAITING_CPUID: u8 = 0;
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+const VMX_TOY_AWAITING_HLT: u8 = 1;
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+const VMX_TOY_COMPLETE: u8 = 2;
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+const VMX_TOY_FAILED: u8 = u8::MAX;
+
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+static VMX_TOY_EXIT_STATE: AtomicU8 = AtomicU8::new(VMX_TOY_AWAITING_CPUID);
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+static VMX_LAST_INSTRUCTION_ERROR: AtomicU32 = AtomicU32::new(0);
 
 #[cfg(target_os = "none")]
 #[used]
@@ -596,6 +615,122 @@ unsafe fn apply_type1_enable_plan(
     } else {
         Ok(())
     }
+}
+
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+#[no_mangle]
+extern "C" fn aegishv_vmx_exit_dispatch(
+    frame: *mut aegishv_arch_x86::vmx::exits::GeneralRegisters,
+) -> u64 {
+    if frame.is_null()
+        || (frame as usize)
+            % core::mem::align_of::<aegishv_arch_x86::vmx::exits::GeneralRegisters>()
+            != 0
+    {
+        VMX_TOY_EXIT_STATE.store(VMX_TOY_FAILED, Ordering::Release);
+        serial_write_line(aegishv_type1_kernel::SERIAL_VMX_GUEST_EXIT_ERROR_MARKER);
+        return 1;
+    }
+    let mut sequence = match VMX_TOY_EXIT_STATE.load(Ordering::Acquire) {
+        VMX_TOY_AWAITING_CPUID => {
+            aegishv_arch_x86::vmx::toy_exit::ToyVmxExitSequence::AwaitingCpuid
+        }
+        VMX_TOY_AWAITING_HLT => aegishv_arch_x86::vmx::toy_exit::ToyVmxExitSequence::AwaitingHlt,
+        VMX_TOY_COMPLETE => aegishv_arch_x86::vmx::toy_exit::ToyVmxExitSequence::Complete,
+        _ => {
+            serial_write_line(aegishv_type1_kernel::SERIAL_VMX_GUEST_EXIT_ERROR_MARKER);
+            return 1;
+        }
+    };
+    let contract = aegishv_arch_x86::vmx::toy_exit::ToyVmxExitContract {
+        cpuid_rip: aegishv_type1_kernel::TYPE1_TOY_CPUID_RIP,
+        hlt_rip: aegishv_type1_kernel::TYPE1_TOY_HLT_RIP,
+    };
+    let mut executor = aegishv_arch_x86::vmx::hardware::HardwareVmxInstructions::new();
+    // SAFETY: this function is reached only at the VMCS HOST_RIP. The current
+    // CPU therefore still owns the launched VMCS until the stop path runs VMXOFF.
+    let mut access =
+        unsafe { aegishv_arch_x86::vmx::toy_exit::InstructionVmcsAccess::new(&mut executor) };
+    // SAFETY: the VM-exit assembly allocates one aligned GeneralRegisters
+    // object on its private stack and passes its live address to this function.
+    let registers = unsafe { &mut *frame };
+
+    match aegishv_arch_x86::vmx::toy_exit::dispatch_toy_vmx_exit(
+        &mut access,
+        registers,
+        &mut sequence,
+        contract,
+    ) {
+        Ok(aegishv_arch_x86::vmx::toy_exit::ToyVmxExitAction::Resume)
+            if sequence == aegishv_arch_x86::vmx::toy_exit::ToyVmxExitSequence::AwaitingHlt =>
+        {
+            VMX_TOY_EXIT_STATE.store(VMX_TOY_AWAITING_HLT, Ordering::Release);
+            serial_write_line(aegishv_type1_kernel::SERIAL_VMX_GUEST_CPUID_EXIT_OK_MARKER);
+            0
+        }
+        Ok(aegishv_arch_x86::vmx::toy_exit::ToyVmxExitAction::Stop)
+            if sequence == aegishv_arch_x86::vmx::toy_exit::ToyVmxExitSequence::Complete =>
+        {
+            VMX_TOY_EXIT_STATE.store(VMX_TOY_COMPLETE, Ordering::Release);
+            serial_write_line(aegishv_type1_kernel::SERIAL_VMX_GUEST_HLT_EXIT_OK_MARKER);
+            1
+        }
+        _ => {
+            VMX_TOY_EXIT_STATE.store(VMX_TOY_FAILED, Ordering::Release);
+            serial_write_line(aegishv_type1_kernel::SERIAL_VMX_GUEST_EXIT_ERROR_MARKER);
+            1
+        }
+    }
+}
+
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+#[no_mangle]
+extern "C" fn aegishv_vmx_exit_stop(
+    _frame: *mut aegishv_arch_x86::vmx::exits::GeneralRegisters,
+) -> ! {
+    let complete = VMX_TOY_EXIT_STATE.load(Ordering::Acquire) == VMX_TOY_COMPLETE;
+    let mut executor = aegishv_arch_x86::vmx::hardware::HardwareVmxInstructions::new();
+    // SAFETY: HOST_RIP reaches this handler only while this CPU remains in VMX
+    // operation with the toy VMCS current. No later VMX instruction is issued.
+    let left_vmx = unsafe {
+        aegishv_arch_x86::vmx::instructions::VmxInstructionExecutor::vmxoff(&mut executor)
+    }
+    .is_ok();
+    if complete && left_vmx {
+        serial_write_line(aegishv_type1_kernel::SERIAL_VMX_GUEST_RUN_OK_MARKER);
+    } else {
+        serial_write_line(aegishv_type1_kernel::SERIAL_VMX_GUEST_EXIT_ERROR_MARKER);
+    }
+    halt_loop()
+}
+
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+#[no_mangle]
+extern "C" fn aegishv_vmx_resume_failed(
+    _frame: *mut aegishv_arch_x86::vmx::exits::GeneralRegisters,
+    flags: u64,
+) -> ! {
+    VMX_TOY_EXIT_STATE.store(VMX_TOY_FAILED, Ordering::Release);
+    serial_write_line(aegishv_type1_kernel::SERIAL_VMX_GUEST_RESUME_ERROR_MARKER);
+    let mut executor = aegishv_arch_x86::vmx::hardware::HardwareVmxInstructions::new();
+    if flags & 1 == 0 && flags & (1 << 6) != 0 {
+        // SAFETY: VMfailValid leaves the VMCS current, and the instruction
+        // error field is architecturally readable until VMXOFF below.
+        if let Ok(error) = unsafe {
+            aegishv_arch_x86::vmx::instructions::VmxInstructionExecutor::vmread(
+                &mut executor,
+                aegishv_arch_x86::vmx::vmcs::VmcsField::VM_INSTRUCTION_ERROR.raw(),
+            )
+        } {
+            VMX_LAST_INSTRUCTION_ERROR.store(error as u32, Ordering::Release);
+        }
+    }
+    // SAFETY: a failed VMRESUME leaves the current VMCS owned by this CPU and
+    // the processor in VMX operation, so VMXOFF is the terminal cleanup step.
+    let _ = unsafe {
+        aegishv_arch_x86::vmx::instructions::VmxInstructionExecutor::vmxoff(&mut executor)
+    };
+    halt_loop()
 }
 
 #[cfg(target_os = "none")]

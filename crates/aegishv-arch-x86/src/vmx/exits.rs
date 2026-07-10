@@ -376,6 +376,12 @@ mod tests {
         assert_eq!(core::mem::offset_of!(GeneralRegisters, rsi), 48);
         assert_eq!(core::mem::offset_of!(GeneralRegisters, rdi), 56);
         assert_eq!(core::mem::offset_of!(GeneralRegisters, r8), 64);
+        assert_eq!(core::mem::offset_of!(GeneralRegisters, r9), 72);
+        assert_eq!(core::mem::offset_of!(GeneralRegisters, r10), 80);
+        assert_eq!(core::mem::offset_of!(GeneralRegisters, r11), 88);
+        assert_eq!(core::mem::offset_of!(GeneralRegisters, r12), 96);
+        assert_eq!(core::mem::offset_of!(GeneralRegisters, r13), 104);
+        assert_eq!(core::mem::offset_of!(GeneralRegisters, r14), 112);
         assert_eq!(core::mem::offset_of!(GeneralRegisters, r15), 120);
         assert_eq!(core::mem::offset_of!(GeneralRegisters, rip), 128);
     }
