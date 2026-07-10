@@ -19,7 +19,7 @@ This matrix separates checked paths, locally observed bring-up, implemented-but-
 | Live Linux tracefs KVM smoke | planned | `scripts/live-tracefs-smoke.sh`, `scripts/live-kvm-integration.sh` | Manual runner evidence required before broad live claims |
 | Intel VMX model and VMCS/EPT construction tests | checked | `aegishv-arch-x86::vmx` tests and bare-metal kernel build checks | Model/build wording required |
 | x86_64 Limine ISO boot through owned host tables and preflight | observed | Local modern-Limine ISO boot under QEMU TCG; VMX unavailable | Retain a reviewable manifest and serial log before moving to `checked` |
-| Intel VMX toy-guest runtime | implemented | VMXON/VMCS/EPT, VMLAUNCH to CPUID exit, VMRESUME to HLT exit are wired in code | Complete eight-marker nested-VMX or bare-metal evidence required |
+| Intel VMX toy-guest runtime | implemented | VMXON/VMCS/EPT, zero-value timer sentinel, nonzero finite-probe deadline with HLT fallback, unconditional I/O exiting, and bounded resumes through I/O, CPUID, and HLT are wired in code | Complete ten-marker evidence plus validated CPU/timer diagnostics required |
 | Intel VMX guest execution | planned | No reviewed nested-VMX or bare-metal guest-execution log; TCG does not expose VMX and WHPX is unavailable | Must not be claimed as demonstrated |
 | AMD SVM model tests | checked | `aegishv-arch-x86::svm` unit tests | Lab-model wording required |
 | AMD SVM live guest path | unsupported | No VMRUN-backed guest execution path | Must not be claimed |
@@ -33,7 +33,7 @@ This matrix separates checked paths, locally observed bring-up, implemented-but-
 
 | Area | Status | Current Evidence | Release Gate |
 | --- | --- | --- | --- |
-| Fixed Intel `CPUID; HLT` toy guest | implemented | Guest bytes, four-level guest paging, EPT, VMCS, and exit state machine build and test | Hardware marker chain required before execution claim |
+| Fixed Intel deadline-probe/port-I/O/`CPUID`/`HLT` toy guest | implemented | Guest bytes, finite timeout fallback, four-level guest paging, EPT, VMCS, nonzero timer deadline, I/O validation, and exit state machine build and test | Hardware marker chain required before execution claim |
 | General guest loader and lifecycle | unsupported | No kernel/module loader or production vCPU lifecycle | Must not be claimed |
 | Offline x86_64 VMI translation fixtures | checked | `vmi_cli_tests`, VMI fixture tests | Fixture-only wording required |
 | Offline ARM64 VMI translation fixtures | checked | `vmi_cli_tests`, VMI fixture tests | Fixture-only wording required |
@@ -57,6 +57,6 @@ This matrix separates checked paths, locally observed bring-up, implemented-but-
 
 ## Still Missing For Production Coverage
 
-No matrix row covers a hypervisor-owned CR3 with enforced W^X and guard pages; SMP and per-CPU VMX; APIC, interrupts, timers, and devices; IOMMU isolation; a general guest loader; PAT, XSAVE/FPU, and full MSR context; live AMD or ARM paths; or hardware soak and the secure update/attestation/incident-response lifecycle. These are not present and remain release blockers for production wording.
+No matrix row covers a hypervisor-owned CR3 with enforced W^X and guard pages; SMP and per-CPU VMX; APIC, interrupts, guest-timer virtualization, scheduler-driven preemption, and devices; IOMMU isolation; a general guest loader; PAT, XSAVE/FPU, and full MSR context; live AMD or ARM paths; or hardware soak and the secure update/attestation/incident-response lifecycle. These are not present and remain release blockers for production wording.
 
 Any row moved from `planned`, `observed`, or `implemented` to `checked` needs a script, test, or attached lab log that a reviewer can reproduce.

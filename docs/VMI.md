@@ -22,7 +22,7 @@ The current VMI code covers:
 
 These pieces are offline/testable infrastructure. They are not evidence of live guest inspection.
 
-The bootable x86_64 lab kernel has a wired Intel VMX path for one fixed `CPUID; HLT` guest. That path does not provide a stable guest-memory reader, a reusable vCPU register source, snapshot consistency, OS profiles, or an adapter to `src/vmi.rs`. The available TCG boot did not execute the VMX path, so it is not live VMI evidence either.
+The bootable x86_64 lab kernel has a wired Intel VMX path for one fixed port-I/O/`CPUID`/`HLT` guest with a VMX preemption-timer stage deadline. That path does not provide a stable guest-memory reader, a reusable vCPU register source, snapshot consistency, OS profiles, or an adapter to `src/vmi.rs`. The available TCG boot did not execute the VMX path, so it is not live VMI evidence either.
 
 Linux profile metadata format notes live in `docs/VMI_LINUX.md`. Windows profile and pre-extracted symbol cache format notes live in `docs/VMI_WINDOWS.md` and `docs/VMI_WINDOWS_SYMBOLS.md`.
 

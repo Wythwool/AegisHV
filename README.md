@@ -18,7 +18,7 @@ These links identify project ownership metadata. They are not a copyright assign
 
 - Host-side KVM sensor.
 - Separate no-std x86_64 lab kernel with a modern Limine ISO build path, owned GDT/TSS/IDT state, an early physical allocator, and strict serial evidence tooling.
-- Wired Intel VMX toy-guest path with VMXON, a complete VMCS, four-level guest paging and EPT, VMLAUNCH into `CPUID; HLT`, CPUID exit handling, VMRESUME, HLT exit handling, and VMXOFF.
+- Wired Intel VMX toy-guest path with VMXON, a complete VMCS, four-level guest paging and EPT, refusal of CPU signatures known to have broken VMX preemption timers, an initial zero-value sentinel followed by a proven nonzero deadline exit from a finite TSC-or-count probe with an HLT fallback, unconditional port-I/O exiting, validated `OUT 0xe9, AL`, CPUID and HLT exits, bounded per-stage resumes, and VMXOFF.
 - Replayable parser/correlation pipeline.
 - W^X correlation scoped by VM, address space, and guest-physical page.
 - Best-effort VM identity enrichment from PID, process start time, QEMU args, cgroups/systemd, UUID/name hints, and QMP socket hints.
@@ -45,9 +45,9 @@ That distinction matters. The userspace sensor and bare-metal lab kernel have di
 
 A modern Limine ISO has booted locally under QEMU TCG through the owned host descriptor tables and runtime preflight. That is boot-boundary evidence only: TCG did not expose VMX in the available environment, and WHPX was unavailable, so the run could not execute the Intel toy guest.
 
-The VMX guest path is present in code, but execution is claimed only after the strict eight-marker chain in `docs/TYPE1_BOOT_BOUNDARY.md` is captured on a reviewed nested-VMX or bare-metal host. A successful chain would prove one BSP, one fixed guest, one CPUID exit, one VMRESUME, and one HLT exit—not production readiness.
+The VMX guest path is present in code, but execution is claimed only after the strict ten-marker chain and validated CPU/timer diagnostic set in `docs/TYPE1_BOOT_BOUNDARY.md` are captured on a reviewed nested-VMX or bare-metal host. Successful evidence would prove one BSP, one fixed guest, a nonzero VMX preemption deadline exit, a trapped and validated port write that is never replayed on the host, one CPUID exit, bounded resumes, and one HLT exit—not production readiness.
 
-Production blockers still include a hypervisor-owned CR3 with enforced W^X and guard pages, SMP/per-CPU VMX, APIC/interrupt/timer virtualization, a general guest loader, complete PAT/XSAVE/FPU/MSR context, devices and IOMMU isolation, live AMD/ARM backends, hardware soak, and a secure update/attestation/incident-response lifecycle.
+Production blockers still include a hypervisor-owned CR3 with enforced W^X and guard pages, SMP/per-CPU VMX, APIC/interrupt/guest-timer virtualization and scheduler-driven preemption, an independent host watchdog, a general guest loader, complete PAT/XSAVE/FPU/MSR context, devices and IOMMU isolation, live AMD/ARM backends, hardware soak, and a secure update/attestation/incident-response lifecycle. The fixed CPU-signature denylist and toy probe cannot rule out unknown timer or TSC errata.
 
 ## Highlights in 0.4.0
 

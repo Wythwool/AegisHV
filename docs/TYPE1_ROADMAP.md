@@ -10,16 +10,16 @@ The phase backlog lives in `../BACKLOG.md`. That file tracks IDs, scope, accepta
 - Validated Limine base revision, HHDM, memory-map, and executable-address handoff with aligned physical relocation support.
 - Early transition fault handling and owned GDT, TSS, IDT, double-fault/NMI/machine-check stacks, boot stack, and VM-exit stack state.
 - Bounded physical allocation only from Limine `USABLE` memory for VMXON, VMCS, guest, guest-page-table, and EPT pages.
-- Intel VMX feature, feature-control, CR0/CR4 fixed-bit, true-control, host-state, and EPT capability validation.
+- Intel VMX feature, feature-control, CR0/CR4 fixed-bit, true-control, host-state, `IA32_VMX_MISC` preemption-timer-rate, known-broken timer CPU-signature refusal, and EPT capability validation.
 - A complete VMCS, four-level guest paging, four-level EPT, and an assembly VM-entry/exit trampoline for one isolated 64-bit guest.
-- A fixed guest containing `mov eax, 0; cpuid; hlt`, with code paths for VMLAUNCH, CPUID exit handling, VMRESUME, HLT exit handling, and VMXOFF.
-- A strict eight-marker evidence contract that rejects contradictory backends, skipped VMX operations, host faults, and guest entry/exit/resume failures.
+- A fixed guest with a finite TSC-or-count deadline probe and HLT fallback followed by an `AL='A'; OUT 0xE9,AL; CPUID leaf/subleaf 0; HLT` payload, unconditional I/O exiting, an initial zero-value timer sentinel, and a real nonzero deadline exit from the probe. The reload is derived from a hard `0x01000000`-TSC-tick budget and `IA32_VMX_MISC`, cannot produce an effective deadline above that budget, and is refused below 2. The probe fallback uses an eight-times-later TSC horizon plus a finite iteration limit and reports `guest-timeout` rather than wedging the BSP if the timer does not fire. Only after the VMX deadline exit does the host move RIP to the payload; its I/O is validated without replaying the write, later VMRESUME paths remain bounded, and HLT is followed by VMXOFF.
+- A strict ten-marker evidence contract that includes preemption, I/O, CPUID, and HLT exits, audits one internally consistent CPU-signature/timer diagnostic set, and rejects contradictory backends, skipped VMX operations, host faults, guest timeouts, and guest entry/exit/resume failures.
 
 ## Evidence boundary
 
 A modern Limine ISO has booted locally under QEMU TCG through owned host-table installation and runtime preflight. The available TCG environment did not expose VMX, and WHPX was unavailable. That run proves the boot boundary only; it does not prove VMXON, VMLAUNCH, guest execution, VMRESUME, or VM-exit handling.
 
-Intel guest execution remains unproven until a reviewed nested-VMX or bare-metal run captures the complete marker chain described in `TYPE1_BOOT_BOUNDARY.md`. Even a successful chain proves only one BSP, one fixed guest, one CPUID exit, one resume, and one HLT exit. It is not production qualification.
+Intel guest execution remains unproven until a reviewed nested-VMX or bare-metal run captures the complete marker chain and validated CPU/timer diagnostics described in `TYPE1_BOOT_BOUNDARY.md`. Even successful evidence proves only one BSP, one fixed guest, its containment and port-I/O exits, one CPUID exit, bounded resumes, and one HLT exit. It is not production qualification.
 
 ## Backend contracts now present
 
@@ -46,15 +46,15 @@ These userspace contracts are not wired to the bare-metal toy guest. The reposit
 ## Required subsystems for production
 
 - A hypervisor-owned host CR3, enforced W^X mappings across all aliases, guard pages, and explicit teardown.
-- SMP/AP startup, per-CPU VMX state, vCPU scheduling, APIC/interrupt routing, timers, preemption, and interrupt injection.
-- Full architectural context policy, including PAT, XSAVE/FPU state, required MSRs, I/O and MSR bitmaps, and broad exit coverage.
+- SMP/AP startup, per-CPU VMX state, vCPU scheduling, APIC/interrupt routing, guest-timer virtualization, scheduler-driven preemption, and interrupt injection.
+- Full architectural context policy, including PAT, XSAVE/FPU state, required MSRs, selective I/O and MSR bitmaps, and broad exit coverage. Unconditional I/O exiting for the fixed guest is not a general device policy.
 - A general guest/module loader, reusable VM/vCPU lifecycle, multiple address spaces, memory reclamation, and guest crash recovery.
 - A runtime Stage-2 permission manager with huge-page splits, invalidation, single-step/retrap, storm control, concurrency tests, and hostile-guest coverage.
 - Device emulation plus an IOMMU-enforced DMA boundary for any passthrough path. Page ownership, DMA-domain, PCI, VT-d/AMD-Vi/SMMU, and quarantine models are not hardware programming.
 - A live guest memory/register adapter and consistent snapshot/retry rules before the offline VMI layer can inspect a running guest.
 - Linux and Windows profile distribution, symbol resolution, process/module attribution, and syscall-path checks on live data.
 - Live AMD SVM and ARM64 EL2 entry paths before those architectures are claimed.
-- Panic/watchdog recovery, crash evidence, long-duration hardware soak, broad CPU/firmware coverage, fuzzing, secure/measured boot, attestation, signed rollback-safe updates, and incident response.
+- An independent host watchdog for timer failure, panic/watchdog recovery, crash evidence, long-duration hardware soak, broad CPU/firmware coverage beyond the fixed known-broken signature denylist, fuzzing, secure/measured boot, attestation, signed rollback-safe updates, and incident response.
 
 ## Next implementation sequence
 

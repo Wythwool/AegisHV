@@ -8,10 +8,12 @@ The repository now contains a bootable x86_64 Type-1 lab kernel and a wired Inte
 - A page-separated RX/R/RW ELF layout, current Limine configuration syntax, and an ISO builder gated on reviewed Limine and xorriso inputs.
 - An owned GDT, 64-bit TSS, IDT, double-fault IST, NMI IST, 256 KiB boot stack, and VM-exit stack installed before Rust code runs. The kernel verifies the loaded tables and selectors before VMX bring-up.
 - Allocation of VMXON, VMCS, guest code/stack/page-table, and EPT pages only from bounded Limine `USABLE` memory. Bootloader-reclaimable memory remains excluded.
-- Validation of `IA32_VMX_BASIC`, true control MSRs, CR0/CR4 fixed bits, and required four-level write-back EPT capabilities.
-- A complete VMCS for one isolated 64-bit guest. The guest executes `CPUID` followed by `HLT`; the VM-exit trampoline handles CPUID, performs `VMRESUME`, verifies the HLT exit, then executes `VMXOFF`.
+- Validation of `IA32_VMX_BASIC`, `IA32_VMX_MISC`, true control MSRs, CR0/CR4 fixed bits, required four-level write-back EPT capabilities, and the CPU signature against the known-broken VMX preemption-timer denylist used by Linux KVM.
+- A complete VMCS for one isolated 64-bit guest. Its code begins with a finite TSC-or-count deadline probe and HLT fallback followed by an `AL='A'; OUT 0xE9,AL; CPUID leaf/subleaf 0; HLT` payload. An initial timer value of exactly zero forces a sentinel exit before the first instruction. The handler derives a reload from a hard `0x01000000`-TSC-tick budget and the `IA32_VMX_MISC` timer-rate field and resumes at the probe. The effective VMX deadline cannot exceed that budget, and a reload below 2 is refused. The probe reaches HLT at either a `0x08000000`-TSC-tick horizon or a `0x01000000`-iteration limit. Only a real nonzero timer exit before that fallback moves guest RIP to the payload.
+- Unconditional I/O exiting prevents the toy guest's `OUT` from reaching the physical port. The exit handler accepts only the expected immediate byte write of `A` to port `0xe9`, advances guest RIP without issuing a host `OUT`, and rejects malformed, unexpected, string, REP, input, or wrong-port accesses.
+- The VM-exit trampoline handles the zero-value sentinel, the nonzero probe deadline, I/O, CPUID, and HLT exits in that order, performs bounded `VMRESUME` operations between them, then executes `VMXOFF`. The preemption success marker is emitted only for the nonzero probe deadline. An HLT or timer exit at the exact fallback RIP, and any timer expiry during a later payload stage, is a fail-closed guest timeout. Other unexpected probe exits remain guest-exit errors.
 - Guest code is RX, stack and page tables are RW/NX, and VMXE is present in hardware guest CR4 only as required by the fixed bits while its guest-visible shadow is clear.
-- Strict serial evidence requires the ordered host-table, VMXON, VMCS-load, guest-configuration, CPUID-exit, HLT-exit, and final run markers. Host faults and every guest entry/exit/resume error marker invalidate the run.
+- Strict serial evidence requires the ordered host-table, VMXON, VMCS-load, guest-configuration, preemption-exit, I/O-exit, CPUID-exit, HLT-exit, and final run markers. Host faults, `aegishv:type1:guest-timeout`, and every guest entry/exit/resume error marker invalidate the run.
 
 The main artifacts are `crates/aegishv-type1-kernel`, `boot/x86_64`, `boot/linker/x86_64-type1.ld`, `boot/limine/limine.conf`, and the `scripts/type1-*` build and evidence helpers.
 
@@ -25,18 +27,23 @@ aegishv:type1:backend-vmx
 aegishv:type1:vmxon-cycle-ok
 aegishv:type1:vmcs-load-ok
 aegishv:type1:guest-config-ok
+aegishv:type1:guest-preempt-exit-ok
+aegishv:type1:guest-io-exit-ok
 aegishv:type1:guest-cpuid-exit-ok
 aegishv:type1:guest-hlt-exit-ok
 aegishv:type1:guest-run-ok
 ```
 
-Such a log is not production qualification. It proves one BSP, one VMCS, one CPUID exit, one resume, and one HLT exit on the recorded CPU/QEMU configuration.
+The strict evidence helper also requires exactly one well-formed serial diagnostic set for the CPUID signature, VMX timer rate, reload, and effective TSC-tick deadline. It verifies `reload >= 2`, `effective = reload << rate`, and `effective <= 0x01000000`. These values make the recorded timer configuration auditable but do not expand the ten-marker chain or replace hardware review.
+
+Such a log is not production qualification. It proves one BSP, one VMCS, a nonzero timer deadline exit from the finite probe, one contained port-I/O exit, one CPUID exit, bounded resumes, and one HLT exit on the recorded CPU/QEMU configuration.
 
 ## Still Missing
 
-- Per-CPU VMX state, AP startup, APIC/interrupt routing, vCPU scheduling, timers, and preemption.
+- Per-CPU VMX state, AP startup, APIC/interrupt routing, vCPU scheduling, guest-visible timer virtualization, and scheduler-driven preemption.
+- An independent host watchdog for timer failure and qualification beyond the fixed known-broken CPU-signature denylist.
 - General guest loading, multiple address spaces, device emulation, block/network/console backends, and an IOMMU-backed DMA boundary.
-- XSAVE/FPU state, MSR and I/O bitmap policy, interrupt injection, broad exit coverage, EPT invalidation, memory overcommit, and recovery from a guest crash.
+- XSAVE/FPU state, MSR and selective I/O bitmap policy, interrupt injection, broad exit coverage, EPT invalidation, memory overcommit, and recovery from a guest crash.
 - Guard pages and a hypervisor-owned host page-table root; the bring-up kernel still uses Limine's mappings.
 - Live AMD SVM guest entry, ARM64 EL2 entry, device assignment, suspend/resume, firmware diversity, fuzzed hostile-guest coverage, and long-duration hardware testing.
 - Secure boot, measured boot/attestation, signed updates, rollback, crash dumps, operational telemetry, and a supported production lifecycle are not implemented.

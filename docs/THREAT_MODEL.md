@@ -23,14 +23,14 @@ AegisHV has two separate security surfaces with different claims.
 
 The modern Limine ISO has booted locally under QEMU TCG through owned GDT/TSS/IDT installation and runtime preflight. TCG did not expose VMX in the available environment, and WHPX was unavailable. This is boot evidence only.
 
-The source contains VMXON, complete VMCS and EPT setup, VMLAUNCH into a fixed `CPUID; HLT` guest, CPUID exit handling, VMRESUME, HLT exit handling, and VMXOFF. Those paths are not treated as executed until the complete strict marker chain is captured on a reviewed nested-VMX or bare-metal host.
+The source contains VMXON, complete VMCS and EPT setup, VMLAUNCH into a finite TSC-or-count deadline probe with an HLT fallback, a zero-value timer sentinel followed by a real nonzero deadline exit, and a fixed `AL='A'; OUT 0xE9,AL; CPUID leaf/subleaf 0; HLT` payload. If the timer fails, either the TSC horizon or finite iteration limit reaches the fallback and returns control through a `guest-timeout` path. Unconditional I/O exiting, validated and suppressed port-I/O handling, bounded resumes through CPUID and HLT, and VMXOFF follow. Those paths are not treated as executed until the complete strict marker chain and CPU/timer diagnostic audit are captured on a reviewed nested-VMX or bare-metal host.
 
 ## Threats not yet contained by the lab kernel
 
-- Malicious or malformed general guests; only a fixed eight-byte guest is in scope.
-- SMP races, cross-CPU VMX state, APIC/interrupt/timer attacks, scheduling, and preemption.
+- Malicious or malformed general guests; only the fixed deadline probe and payload are in scope.
+- SMP races, cross-CPU VMX state, APIC/interrupt/guest-timer attacks, live scheduling, and scheduler-driven preemption. The fixed path's VMX preemption timer is only a stage deadline.
 - Host page-table alias attacks; the lab kernel uses Limine's mappings rather than an owned CR3 with global W^X and guard pages.
-- FPU/XSAVE, PAT, MSR, I/O, interrupt-injection, and broad VM-exit state confusion.
+- FPU/XSAVE, PAT, MSR, selective I/O/device policy, interrupt-injection, and broad VM-exit state confusion. Unconditional I/O exiting contains the fixed guest's port access but is not a general device model.
 - DMA and malicious devices; no IOMMU-backed isolation boundary or production device model is live.
 - Guest-loader, image-parser, multi-VM, overcommit, migration, suspend/resume, or guest crash-recovery threats.
 - AMD SVM and ARM64 EL2 runtime threats; those live paths are absent.

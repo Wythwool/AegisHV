@@ -14,12 +14,14 @@ aegishv:type1:backend-vmx
 aegishv:type1:vmxon-cycle-ok
 aegishv:type1:vmcs-load-ok
 aegishv:type1:guest-config-ok
+aegishv:type1:guest-preempt-exit-ok
+aegishv:type1:guest-io-exit-ok
 aegishv:type1:guest-cpuid-exit-ok
 aegishv:type1:guest-hlt-exit-ok
 aegishv:type1:guest-run-ok
 ```
 
-The CPUID exit proves initial VMLAUNCH entry. The HLT exit after it proves that VMRESUME returned to the guest. Any contradictory backend, host-table failure, runtime failure, skipped VMX operation, guest entry/exit/resume error, exception, missing-handoff, or panic marker invalidates the run.
+The preemption marker is emitted only after an initial zero-value sentinel exit is followed by a real nonzero timer expiration from the finite TSC-or-count probe. It therefore proves the deadline fired rather than merely that the timer field was written. If an HLT or timer exit occurs at the exact later fallback RIP reached by either limit, the run emits `aegishv:type1:guest-timeout` and regains control instead of wedging the BSP; other unexpected probe exits remain guest-exit errors. The I/O exit proves that unconditional exiting contained the expected `OUT 0xe9, AL`; the handler validates it and does not replay the write on the host. CPUID and HLT prove the subsequent bounded VMRESUME stages. Any contradictory backend, host-table failure, runtime failure, skipped VMX operation, `aegishv:type1:guest-timeout`, guest entry/exit/resume error, exception, missing-handoff, or panic marker invalidates the run.
 
 The [Type-1 boot boundary](TYPE1_BOOT_BOUNDARY.md) defines what this chain proves and what remains outside it.
 
@@ -38,6 +40,7 @@ The [Type-1 boot boundary](TYPE1_BOOT_BOUNDARY.md) defines what this chain prove
 - QEMU smoke evidence manifest from `scripts/type1-qemu-evidence.sh`;
 - local lab-chain summary from `scripts/run-type1-lab.sh`;
 - host CPU, firmware, accelerator, and QEMU versions;
+- exactly one serial-reported CPUID signature and internally consistent VMX timer rate, reload, and effective-deadline diagnostic set;
 - VM-instruction error output for any failed entry or resume attempt;
 - shutdown or crash record;
 - negative test showing unsupported hosts fail or skip clearly.
