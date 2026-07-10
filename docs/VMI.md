@@ -22,7 +22,7 @@ The current VMI code covers:
 
 These pieces are offline/testable infrastructure. They are not evidence of live guest inspection.
 
-The bootable x86_64 lab kernel has a wired Intel VMX path for one fixed deadline/I/O/`CPUID`/MSR/PAT/`#NM`/`HLT` guest. Its trap-all I/O pages, one-read PAT MSR allowlist, synthetic `IA32_EFER`, deliberate PAT transition, and two fixed guard faults are not a stable guest-memory reader, a reusable vCPU register source, general MSR or exception virtualization, FPU/SIMD context management, snapshot consistency, OS profiles, or an adapter to `src/vmi.rs`. The available TCG boot did not execute the VMX path, so it is not live VMI evidence either.
+The bootable x86_64 lab kernel has a wired Intel VMX path for one fixed deadline/I/O/`CPUID`/MSR/PAT/`#NM`/vector-6-injection/`HLT` guest. Its trap-all I/O pages, one-read PAT MSR allowlist, synthetic `IA32_EFER`, deliberate PAT transition, two fixed guard faults, and one immutable CPL0 `#UD` injection/`IRETQ` round trip are not a stable guest-memory reader, a reusable vCPU register source, general MSR or exception virtualization, FPU/SIMD context management, snapshot consistency, OS profiles, or an adapter to `src/vmi.rs`. The available TCG boot did not execute the VMX path, so it is not live VMI evidence either.
 
 Linux profile metadata format notes live in `docs/VMI_LINUX.md`. Windows profile and pre-extracted symbol cache format notes live in `docs/VMI_WINDOWS.md` and `docs/VMI_WINDOWS_SYMBOLS.md`.
 

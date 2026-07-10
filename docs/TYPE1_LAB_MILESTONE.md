@@ -23,13 +23,14 @@ aegishv:type1:guest-rdmsr-exit-ok
 aegishv:type1:guest-pat-state-ok
 aegishv:type1:guest-nm-x87-exit-ok
 aegishv:type1:guest-nm-simd-exit-ok
+aegishv:type1:guest-ud-inject-ok
 aegishv:type1:guest-hlt-exit-ok
 aegishv:type1:guest-run-ok
 ```
 
 The host-paging marker is emitted only after NXE/WP and CR3 readback, live-table validation, and owned descriptor-table reachability succeed. `guest-config-ok` additionally requires both bitmap controls, exact bitmap-address readback, PAT control support, exact guest/host PAT-field readback, and the fixed `TS=1`, `EM=0`, `OSFXSR=1` state. The preemption marker requires a real nonzero timer expiration after the zero sentinel. The two I/O markers prove the trap-all pages contained the expected port operations, while the RDMSR marker proves the trapped `IA32_EFER` stage returned synthetic zero. The fixed MSR page permits only direct guest `RDMSR IA32_PAT`; all writes and other reads remain trapped.
 
-`guest-pat-state-ok` requires the direct PAT read to match the deliberate valid guest value, the saved guest VMCS field to match, and the captured host PAT to be restored and read back. `guest-nm-x87-exit-ok` and `guest-nm-simd-exit-ok` require exact vector-7 hardware-exception exits at the fixed `FNOP` and `MOVDQA`-self RIPs. Those instructions minimize side effects if a guard regresses, but success still requires that neither executes. These three markers make the chain sixteen entries long; they do not prove XSAVE/FXSAVE, host SIMD preservation, context switching, or general exception injection. Any contradictory backend, host-table or host-paging failure, runtime failure, skipped VMX operation, `guest-timeout`, guest entry/exit/resume error, unexpected exception, missing handoff, or panic invalidates the run.
+`guest-pat-state-ok` requires the direct PAT read to match the deliberate valid guest value, the saved guest VMCS field to match, and the captured host PAT to be restored and read back. `guest-nm-x87-exit-ok` and `guest-nm-simd-exit-ok` require exact vector-7 hardware-exception exits at the fixed `FNOP` and `MOVDQA`-self RIPs. Those instructions minimize side effects if a guard regresses, but success still requires that neither executes. `guest-ud-inject-ok` is emitted only at the later HLT exit after one fixed vector-6 hardware exception has been injected at VM entry, traversed the immutable CPL0 IDT gate, and returned from the integer-only handler with `IRETQ`, the expected cookie, and the restored guest stack. These four markers make the chain seventeen entries long. They do not prove XSAVE/FXSAVE, host SIMD preservation, context switching, general exceptions, error-code injection, reinjection, IST or privilege transitions, external interrupts/APIC, SMP, guest-OS support, or production readiness. Any contradictory backend, host-table or host-paging failure, runtime failure, skipped VMX operation, `guest-timeout`, `guest-ud-inject-error`, guest entry/exit/resume error, unexpected exception, missing handoff, or panic invalidates the run.
 
 The [Type-1 boot boundary](TYPE1_BOOT_BOUNDARY.md) defines what this chain proves and what remains outside it.
 
