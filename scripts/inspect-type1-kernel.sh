@@ -53,12 +53,18 @@ vmx_guest_markers=(
   "aegishv:type1:guest-io-b-exit-ok"
   "aegishv:type1:guest-cpuid-exit-ok"
   "aegishv:type1:guest-rdmsr-exit-ok"
+  "aegishv:type1:guest-pat-state-ok"
+  "aegishv:type1:guest-nm-x87-exit-ok"
+  "aegishv:type1:guest-nm-simd-exit-ok"
   "aegishv:type1:guest-hlt-exit-ok"
   "aegishv:type1:guest-run-ok"
   "aegishv:type1:guest-timeout"
   "aegishv:type1:guest-entry-error"
   "aegishv:type1:guest-exit-error"
   "aegishv:type1:guest-resume-error"
+  "aegishv:type1:guest-pat-state-error"
+  "aegishv:type1:guest-nm-x87-exit-error"
+  "aegishv:type1:guest-nm-simd-exit-error"
   "aegishv:type1:vm-instruction-error=0x"
 )
 vmx_diagnostic_prefixes=(
@@ -140,8 +146,8 @@ usage() {
 usage: scripts/inspect-type1-kernel.sh [KERNEL_ELF]
 
 Checks the minimal type-1 kernel ELF artifact for the expected entry address
-and Limine request section when llvm-readobj is available. It always checks
-the serial marker bytes.
+and Limine request section when llvm-readobj is available. It requires an
+llvm-objdump host-text check and always checks the serial marker bytes.
 USAGE
 }
 
@@ -163,6 +169,7 @@ load_segment_page_alignment="skipped"
 load_segment_permissions="skipped"
 static_elf_check="skipped"
 symbol_table_check="skipped"
+host_fpu_simd_text_check="skipped"
 if command -v llvm-readobj >/dev/null 2>&1; then
   file_headers="$(llvm-readobj --file-headers "$kernel_elf")"
   entry_value="$(printf '%s\n' "$file_headers" | awk '/Entry:/ {print $2; exit}')"
@@ -286,6 +293,14 @@ if command -v llvm-readobj >/dev/null 2>&1; then
   done
 fi
 
+if ! command -v llvm-objdump >/dev/null 2>&1; then
+  echo "type1 kernel inspect: llvm-objdump is required for the host FPU/SIMD text check" >&2
+  exit 69
+fi
+text_disassembly="$(llvm-objdump --disassemble --section=.text --no-show-raw-insn "$kernel_elf")"
+printf '%s\n' "$text_disassembly" | bash scripts/check-type1-host-text.sh
+host_fpu_simd_text_check="passed"
+
 if ! grep -Fqa "$expected_serial" "$kernel_elf"; then
   echo "type1 kernel inspect: serial marker was not found: $expected_serial" >&2
   exit 70
@@ -378,6 +393,7 @@ load_segment_page_alignment=$load_segment_page_alignment
 load_segment_permissions=$load_segment_permissions
 static_elf_check=$static_elf_check
 symbol_table_check=$symbol_table_check
+host_fpu_simd_text_check=$host_fpu_simd_text_check
 layout_section_count=${#required_layout_sections[@]}
 serial_marker=$expected_serial
 serial_marker_present=true

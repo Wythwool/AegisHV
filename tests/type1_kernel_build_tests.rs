@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::Path;
+use std::process::Command;
 
 fn read_repo_file(rel: &str) -> String {
     fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(rel))
@@ -265,6 +266,9 @@ fn final_vmx_path_switches_to_owned_paging_after_hhdm_materialization() {
     let paging_prepare = guest_path
         .find("prepare_owned_host_page_tables")
         .expect("owned host page-table preparation");
+    let pat_gate = guest_path
+        .find("validate_owned_host_mappings")
+        .expect("owned host PAT0 write-back gate");
     let paging_activate = guest_path
         .find("activate_owned_host_paging")
         .expect("owned host CR3 activation");
@@ -274,7 +278,8 @@ fn final_vmx_path_switches_to_owned_paging_after_hhdm_materialization() {
     let vmx_launch = guest_path.find("aegishv_vmx_launch").expect("VMX launch");
 
     assert!(guest_materialization < paging_prepare);
-    assert!(paging_prepare < paging_activate);
+    assert!(paging_prepare < pat_gate);
+    assert!(pat_gate < paging_activate);
     assert!(paging_activate < host_capture);
     assert!(host_capture < vmx_launch);
     let after_activation = &guest_path[paging_activate..];
@@ -337,11 +342,15 @@ fn kernel_build_script_and_ci_keep_boot_evidence_boundary() {
             "runtime_vmxon_markers=aegishv:type1:vmxon-cycle-ok,aegishv:type1:vmxon-cycle-error,aegishv:type1:vmxon-cycle-skipped",
             "runtime_vmcs_load=smoke-cycle",
             "runtime_vmcs_load_markers=aegishv:type1:vmcs-load-ok,aegishv:type1:vmcs-load-error,aegishv:type1:vmcs-load-skipped",
-            "runtime_vmx_guest=bounded-io-a-io-b-cpuid-rdmsr-hlt",
+            "runtime_vmx_guest=bounded-io-a-io-b-cpuid-rdmsr-pat-nm-x87-nm-simd-hlt",
             "aegishv:type1:guest-preempt-exit-ok",
             "aegishv:type1:guest-io-exit-ok",
             "aegishv:type1:guest-io-b-exit-ok",
             "aegishv:type1:guest-rdmsr-exit-ok",
+            "aegishv:type1:guest-pat-state-ok",
+            "aegishv:type1:guest-nm-x87-exit-ok",
+            "aegishv:type1:guest-nm-simd-exit-ok",
+            "runtime_host_fpu_simd=guarded-probes-no-host-state-use",
             "runtime_vmx_diagnostics=cpu-signature,timer-rate,timer-reload,timer-effective",
             "runtime_vmx_diagnostic_prefixes=aegishv:type1:vmx-cpu-signature=0x,aegishv:type1:vmx-timer-rate=0x,aegishv:type1:vmx-timer-reload=0x,aegishv:type1:vmx-timer-effective=0x",
             "bootable_image=false",
@@ -381,6 +390,12 @@ fn kernel_build_script_and_ci_keep_boot_evidence_boundary() {
             "aegishv:type1:guest-io-exit-ok",
             "aegishv:type1:guest-io-b-exit-ok",
             "aegishv:type1:guest-rdmsr-exit-ok",
+            "aegishv:type1:guest-pat-state-ok",
+            "aegishv:type1:guest-nm-x87-exit-ok",
+            "aegishv:type1:guest-nm-simd-exit-ok",
+            "aegishv:type1:guest-pat-state-error",
+            "aegishv:type1:guest-nm-x87-exit-error",
+            "aegishv:type1:guest-nm-simd-exit-error",
             "aegishv:type1:guest-timeout",
             "aegishv:type1:vmx-cpu-signature=0x",
             "aegishv:type1:vmx-timer-rate=0x",
@@ -424,6 +439,9 @@ fn kernel_build_script_and_ci_keep_boot_evidence_boundary() {
             "static kernel contains relocations",
             "symbol_table_check=\"passed\"",
             "diagnostic symbol was not retained",
+            "llvm-objdump --disassemble --section=.text --no-show-raw-insn",
+            "check-type1-host-text.sh",
+            "host_fpu_simd_text_check=\"passed\"",
         ],
     );
     assert_contains_all(
@@ -436,6 +454,77 @@ fn kernel_build_script_and_ci_keep_boot_evidence_boundary() {
     );
     assert!(testing.contains("scripts/build-type1-kernel.sh"));
     assert!(testing.contains("not a bootable ISO"));
+}
+
+#[test]
+fn host_text_gate_rejects_fpu_simd_and_extended_state_instructions() {
+    let directory = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("target/tmp")
+        .join(format!("type1-host-text-{}", std::process::id()));
+    let fixture = directory.join("disassembly.txt");
+    let _ = fs::remove_dir_all(&directory);
+    fs::create_dir_all(&directory).expect("create host-text fixture directory");
+
+    fs::write(
+        &fixture,
+        "ffffffff80200000: 48 89 c3\tmovq %rax, %rbx\nffffffff80200003: e8 00 00 00 00\tcallq 0 <xmm0>\nffffffff80200008: f4\thlt\n",
+    )
+    .expect("write safe disassembly");
+    let safe = Command::new("bash")
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .arg("scripts/check-type1-host-text.sh")
+        .arg(&fixture)
+        .output()
+        .expect("run host-text check");
+    assert!(
+        safe.status.success(),
+        "safe disassembly was rejected: {}",
+        String::from_utf8_lossy(&safe.stderr)
+    );
+
+    for (case, instruction) in [
+        ("x87", "fnop"),
+        ("XMM", "movdqa %xmm0, %xmm0"),
+        ("MMX", "emms"),
+        ("AVX", "vzeroupper"),
+        ("AVX MXCSR", "vldmxcsr (%rax)"),
+        ("AVX MXCSR store", "vstmxcsr (%rax)"),
+        ("XSAVE", "xsave64 (%rax)"),
+        ("XCR read", "xgetbv"),
+        ("XCR", "xsetbv"),
+        ("PKRU read", "rdpkru"),
+        ("PKRU", "wrpkru"),
+        ("MPX", "bndmov %bnd0, %bnd1"),
+        ("AMX", "tilezero %tmm0"),
+        ("AMX config", "ldtilecfg (%rax)"),
+    ] {
+        fs::write(&fixture, format!("ffffffff80200000: 90\t{instruction}\n"))
+            .expect("write forbidden disassembly");
+        let output = Command::new("bash")
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .arg("scripts/check-type1-host-text.sh")
+            .arg(&fixture)
+            .output()
+            .expect("run host-text refusal check");
+        assert_eq!(output.status.code(), Some(70), "case: {case}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("FPU/SIMD state instruction found"),
+            "unexpected stderr for {case}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    fs::write(&fixture, "Disassembly of section .text:\n").expect("write empty disassembly");
+    let empty = Command::new("bash")
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .arg("scripts/check-type1-host-text.sh")
+        .arg(&fixture)
+        .output()
+        .expect("run empty host-text refusal check");
+    assert_eq!(empty.status.code(), Some(70));
+    assert!(String::from_utf8_lossy(&empty.stderr).contains("contains no instructions"));
+
+    fs::remove_dir_all(directory).expect("remove host-text fixture directory");
 }
 
 #[test]

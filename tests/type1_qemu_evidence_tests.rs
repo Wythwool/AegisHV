@@ -190,8 +190,15 @@ aegishv:type1:guest-io-exit-ok\n\
 aegishv:type1:guest-io-b-exit-ok\n\
 aegishv:type1:guest-cpuid-exit-ok\n\
 aegishv:type1:guest-rdmsr-exit-ok\n\
+aegishv:type1:guest-pat-state-ok\n\
+aegishv:type1:guest-nm-x87-exit-ok\n\
+aegishv:type1:guest-nm-simd-exit-ok\n\
 aegishv:type1:guest-hlt-exit-ok\n\
 aegishv:type1:guest-run-ok\n"
+}
+
+fn default_vmx_marker_csv() -> &'static str {
+    "aegishv:type1:host-tables-ok,aegishv:type1:backend-vmx,aegishv:type1:vmxon-cycle-ok,aegishv:type1:vmcs-load-ok,aegishv:type1:host-paging-ok,aegishv:type1:guest-config-ok,aegishv:type1:guest-preempt-exit-ok,aegishv:type1:guest-io-exit-ok,aegishv:type1:guest-io-b-exit-ok,aegishv:type1:guest-cpuid-exit-ok,aegishv:type1:guest-rdmsr-exit-ok,aegishv:type1:guest-pat-state-ok,aegishv:type1:guest-nm-x87-exit-ok,aegishv:type1:guest-nm-simd-exit-ok,aegishv:type1:guest-hlt-exit-ok,aegishv:type1:guest-run-ok"
 }
 
 #[test]
@@ -216,6 +223,9 @@ aegishv:type1:guest-io-b-exit-ok\n\
 aegishv:type1:guest-preempt-exit-ok\n\
 aegishv:type1:guest-cpuid-exit-ok\n\
 aegishv:type1:guest-rdmsr-exit-ok\n\
+aegishv:type1:guest-pat-state-ok\n\
+aegishv:type1:guest-nm-x87-exit-ok\n\
+aegishv:type1:guest-nm-simd-exit-ok\n\
 aegishv:type1:guest-hlt-exit-ok\n\
 aegishv:type1:guest-run-ok\n",
         &[],
@@ -235,7 +245,7 @@ aegishv:type1:guest-run-ok\n",
     assert_eq!(missing_io.status.code(), Some(70));
     assert!(
         String::from_utf8_lossy(&missing_io.stderr)
-            .contains("required order: aegishv:type1:guest-io-exit-ok"),
+            .contains("must appear exactly once: aegishv:type1:guest-io-exit-ok"),
         "unexpected stderr: {}",
         String::from_utf8_lossy(&missing_io.stderr)
     );
@@ -247,7 +257,7 @@ aegishv:type1:guest-run-ok\n",
     assert_eq!(missing_io_b.status.code(), Some(70));
     assert!(
         String::from_utf8_lossy(&missing_io_b.stderr)
-            .contains("required order: aegishv:type1:guest-io-b-exit-ok"),
+            .contains("must appear exactly once: aegishv:type1:guest-io-b-exit-ok"),
         "unexpected stderr: {}",
         String::from_utf8_lossy(&missing_io_b.stderr)
     );
@@ -259,7 +269,7 @@ aegishv:type1:guest-run-ok\n",
     assert_eq!(missing_rdmsr.status.code(), Some(70));
     assert!(
         String::from_utf8_lossy(&missing_rdmsr.stderr)
-            .contains("required order: aegishv:type1:guest-rdmsr-exit-ok"),
+            .contains("must appear exactly once: aegishv:type1:guest-rdmsr-exit-ok"),
         "unexpected stderr: {}",
         String::from_utf8_lossy(&missing_rdmsr.stderr)
     );
@@ -294,6 +304,12 @@ fn qemu_smoke_accepts_repeated_marker_arguments() {
             "--expect-marker",
             "aegishv:type1:guest-rdmsr-exit-ok",
             "--expect-marker",
+            "aegishv:type1:guest-pat-state-ok",
+            "--expect-marker",
+            "aegishv:type1:guest-nm-x87-exit-ok",
+            "--expect-marker",
+            "aegishv:type1:guest-nm-simd-exit-ok",
+            "--expect-marker",
             "aegishv:type1:guest-hlt-exit-ok",
             "--expect-marker",
             "aegishv:type1:guest-run-ok",
@@ -303,6 +319,37 @@ fn qemu_smoke_accepts_repeated_marker_arguments() {
     assert!(
         output.status.success(),
         "repeated marker smoke failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn qemu_smoke_rejects_the_old_thirteen_marker_contract() {
+    let lab = FakeQemuLab::new();
+    let old_contract = "aegishv:type1:host-tables-ok,aegishv:type1:backend-vmx,aegishv:type1:vmxon-cycle-ok,aegishv:type1:vmcs-load-ok,aegishv:type1:host-paging-ok,aegishv:type1:guest-config-ok,aegishv:type1:guest-preempt-exit-ok,aegishv:type1:guest-io-exit-ok,aegishv:type1:guest-io-b-exit-ok,aegishv:type1:guest-cpuid-exit-ok,aegishv:type1:guest-rdmsr-exit-ok,aegishv:type1:guest-hlt-exit-ok,aegishv:type1:guest-run-ok";
+    let output = lab.smoke(default_vmx_markers(), &["--expect-markers", old_contract]);
+
+    assert_eq!(output.status.code(), Some(64));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("PAT, x87/SIMD #NM"),
+        "unexpected stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn qemu_smoke_rejects_duplicate_marker_configuration() {
+    let lab = FakeQemuLab::new();
+    let contract = format!("{},aegishv:type1:guest-run-ok", default_vmx_marker_csv());
+    let output = lab.smoke(
+        default_vmx_markers(),
+        &["--expect-markers", contract.as_str()],
+    );
+
+    assert_eq!(output.status.code(), Some(64));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("contains a duplicate"),
+        "unexpected stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
 }
@@ -386,6 +433,44 @@ fn qemu_smoke_rejects_failure_marker_after_success_chain() {
 }
 
 #[test]
+fn qemu_smoke_rejects_pat_and_nm_errors_after_success_chain() {
+    for marker in [
+        "aegishv:type1:guest-pat-state-error",
+        "aegishv:type1:guest-nm-x87-exit-error",
+        "aegishv:type1:guest-nm-simd-exit-error",
+    ] {
+        let lab = FakeQemuLab::new();
+        let output = lab.smoke(&format!("{}{marker}\n", default_vmx_markers()), &[]);
+
+        assert_eq!(output.status.code(), Some(70), "marker: {marker}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(marker),
+            "unexpected stderr for {marker}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
+fn qemu_smoke_rejects_duplicate_success_marker_output() {
+    let lab = FakeQemuLab::new();
+    let output = lab.smoke(
+        &format!(
+            "{}aegishv:type1:guest-pat-state-ok\n",
+            default_vmx_markers()
+        ),
+        &[],
+    );
+
+    assert_eq!(output.status.code(), Some(70));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("must appear exactly once"),
+        "unexpected stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn qemu_smoke_rejects_host_paging_failure_after_success_chain() {
     let lab = FakeQemuLab::new();
     let output = lab.smoke(
@@ -460,10 +545,10 @@ fn evidence_manifest_accepts_the_ordered_vmx_chain() {
         "boot_image_digest_valid=true",
         "boot_image_digest_match=true",
         "qemu_command=",
-        "expected_serial_marker_count=13",
-        "expected_serial_markers=aegishv:type1:host-tables-ok,aegishv:type1:backend-vmx,aegishv:type1:vmxon-cycle-ok,aegishv:type1:vmcs-load-ok,aegishv:type1:host-paging-ok,aegishv:type1:guest-config-ok,aegishv:type1:guest-preempt-exit-ok,aegishv:type1:guest-io-exit-ok,aegishv:type1:guest-io-b-exit-ok,aegishv:type1:guest-cpuid-exit-ok,aegishv:type1:guest-rdmsr-exit-ok,aegishv:type1:guest-hlt-exit-ok,aegishv:type1:guest-run-ok",
+        "expected_serial_marker_count=16",
         "serial_markers_present=true",
         "serial_markers_in_order=true",
+        "serial_markers_exactly_once=true",
         "vmx_cpu_signature_valid=true",
         "vmx_cpu_signature=0x000906ed",
         "vmx_timer_rate_valid=true",
@@ -480,6 +565,36 @@ fn evidence_manifest_accepts_the_ordered_vmx_chain() {
         "qemu_smoke_exit_status=0",
         "qemu_evidence_exit_status=0",
         "qemu_evidence=true",
+    ] {
+        assert!(
+            manifest_text.contains(expected),
+            "manifest is missing: {expected}"
+        );
+    }
+    assert!(manifest_text.contains(&format!(
+        "expected_serial_markers={}",
+        default_vmx_marker_csv()
+    )));
+}
+
+#[test]
+fn evidence_manifest_rejects_duplicate_success_markers() {
+    let lab = FakeQemuLab::new();
+    let manifest = lab.directory.join("evidence.txt");
+    let serial = format!(
+        "{}aegishv:type1:guest-nm-x87-exit-ok\n",
+        default_vmx_markers()
+    );
+    let output = lab.evidence(&serial, &manifest);
+    let manifest_text =
+        fs::read_to_string(repo_root().join(manifest)).expect("read QEMU evidence manifest");
+
+    assert_eq!(output.status.code(), Some(70));
+    for expected in [
+        "serial_markers_present=true",
+        "serial_markers_in_order=true",
+        "serial_markers_exactly_once=false",
+        "qemu_evidence=false",
     ] {
         assert!(
             manifest_text.contains(expected),
@@ -725,10 +840,10 @@ fn evidence_manifest_records_order_and_backend_none_refusal() {
     let manifest_text =
         fs::read_to_string(repo_root().join(manifest)).expect("read QEMU evidence manifest");
     for expected in [
-        "expected_serial_marker_count=13",
-        "expected_serial_markers=aegishv:type1:host-tables-ok,aegishv:type1:backend-vmx,aegishv:type1:vmxon-cycle-ok,aegishv:type1:vmcs-load-ok,aegishv:type1:host-paging-ok,aegishv:type1:guest-config-ok,aegishv:type1:guest-preempt-exit-ok,aegishv:type1:guest-io-exit-ok,aegishv:type1:guest-io-b-exit-ok,aegishv:type1:guest-cpuid-exit-ok,aegishv:type1:guest-rdmsr-exit-ok,aegishv:type1:guest-hlt-exit-ok,aegishv:type1:guest-run-ok",
+        "expected_serial_marker_count=16",
         "serial_markers_present=true",
         "serial_markers_in_order=true",
+        "serial_markers_exactly_once=true",
         "forbidden_backend_none_observed=true",
         "forbidden_marker_observed=true",
         "forbidden_marker=aegishv:type1:backend-none",
@@ -740,6 +855,10 @@ fn evidence_manifest_records_order_and_backend_none_refusal() {
             "manifest is missing: {expected}"
         );
     }
+    assert!(manifest_text.contains(&format!(
+        "expected_serial_markers={}",
+        default_vmx_marker_csv()
+    )));
 }
 
 #[test]

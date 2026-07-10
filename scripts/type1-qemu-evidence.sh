@@ -7,7 +7,7 @@ out_dir="${AEGISHV_TYPE1_OUT:-target/type1}"
 boot_image="${AEGISHV_TYPE1_BOOT_IMAGE:-}"
 manifest="${AEGISHV_TYPE1_QEMU_MANIFEST:-$out_dir/aegishv-type1-qemu-evidence.txt}"
 serial_log="${AEGISHV_QEMU_SERIAL_LOG:-$out_dir/aegishv-type1-serial.log}"
-default_expected_markers="aegishv:type1:host-tables-ok,aegishv:type1:backend-vmx,aegishv:type1:vmxon-cycle-ok,aegishv:type1:vmcs-load-ok,aegishv:type1:host-paging-ok,aegishv:type1:guest-config-ok,aegishv:type1:guest-preempt-exit-ok,aegishv:type1:guest-io-exit-ok,aegishv:type1:guest-io-b-exit-ok,aegishv:type1:guest-cpuid-exit-ok,aegishv:type1:guest-rdmsr-exit-ok,aegishv:type1:guest-hlt-exit-ok,aegishv:type1:guest-run-ok"
+default_expected_markers="aegishv:type1:host-tables-ok,aegishv:type1:backend-vmx,aegishv:type1:vmxon-cycle-ok,aegishv:type1:vmcs-load-ok,aegishv:type1:host-paging-ok,aegishv:type1:guest-config-ok,aegishv:type1:guest-preempt-exit-ok,aegishv:type1:guest-io-exit-ok,aegishv:type1:guest-io-b-exit-ok,aegishv:type1:guest-cpuid-exit-ok,aegishv:type1:guest-rdmsr-exit-ok,aegishv:type1:guest-pat-state-ok,aegishv:type1:guest-nm-x87-exit-ok,aegishv:type1:guest-nm-simd-exit-ok,aegishv:type1:guest-hlt-exit-ok,aegishv:type1:guest-run-ok"
 expected_marker_csv="${AEGISHV_TYPE1_EXPECTED_MARKERS:-${AEGISHV_TYPE1_EXPECTED_SERIAL:-$default_expected_markers}}"
 expected_markers=()
 marker_option_mode=""
@@ -114,6 +114,14 @@ for marker in "${expected_markers[@]}"; do
   esac
 done
 
+for ((marker_index = 0; marker_index < ${#expected_markers[@]}; marker_index++)); do
+  for ((other_index = marker_index + 1; other_index < ${#expected_markers[@]}; other_index++)); do
+    if [ "${expected_markers[$marker_index]}" = "${expected_markers[$other_index]}" ]; then
+      fail_usage "expected serial marker list contains a duplicate: ${expected_markers[$marker_index]}"
+    fi
+  done
+done
+
 required_vmx_markers=(
   "aegishv:type1:host-tables-ok"
   "aegishv:type1:backend-vmx"
@@ -126,6 +134,9 @@ required_vmx_markers=(
   "aegishv:type1:guest-io-b-exit-ok"
   "aegishv:type1:guest-cpuid-exit-ok"
   "aegishv:type1:guest-rdmsr-exit-ok"
+  "aegishv:type1:guest-pat-state-ok"
+  "aegishv:type1:guest-nm-x87-exit-ok"
+  "aegishv:type1:guest-nm-simd-exit-ok"
   "aegishv:type1:guest-hlt-exit-ok"
   "aegishv:type1:guest-run-ok"
 )
@@ -139,7 +150,7 @@ for marker in "${expected_markers[@]}"; do
   fi
 done
 if [ "$required_marker_index" -ne "${#required_vmx_markers[@]}" ]; then
-  fail_usage "expected serial marker list must include the complete host-table, VMX backend/VMXON/VMCS-load, owned-paging, guest-configuration, preemption, both I/O bitmaps, CPUID, RDMSR, HLT, and completion proof chain in order"
+  fail_usage "expected serial marker list must include the complete host-table, VMX backend/VMXON/VMCS-load, owned-paging, guest-configuration, preemption, both I/O bitmaps, CPUID, RDMSR, PAT, x87/SIMD #NM, HLT, and completion proof chain in order"
 fi
 
 expected_marker_csv="$(IFS=','; printf '%s' "${expected_markers[*]}")"
@@ -297,6 +308,7 @@ boot_image_sha256="$boot_image_sha256_after"
 serial_log_present=false
 serial_markers_present=false
 serial_markers_in_order=false
+serial_markers_exactly_once=false
 forbidden_backend_none_observed=false
 forbidden_marker_observed=false
 forbidden_marker=""
@@ -323,6 +335,20 @@ serial_has_marker() {
     fi
   done < "$log_path"
   return 1
+}
+
+serial_marker_count() {
+  local log_path="$1"
+  local expected="$2"
+  local line
+  local count=0
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line%$'\r'}"
+    if [ "$line" = "$expected" ]; then
+      count=$((count + 1))
+    fi
+  done < "$log_path"
+  printf '%d\n' "$count"
 }
 
 capture_serial_hex_value() {
@@ -429,15 +455,21 @@ if [ -f "$serial_log" ]; then
   fi
 
   all_markers_present=true
+  all_markers_exactly_once=true
   for marker in "${expected_markers[@]}"; do
-    if serial_has_marker "$serial_log" "$marker"; then
+    marker_count="$(serial_marker_count "$serial_log" "$marker")"
+    if [ "$marker_count" -gt 0 ]; then
       marker_observed+=(true)
     else
       marker_observed+=(false)
       all_markers_present=false
     fi
+    if [ "$marker_count" -ne 1 ]; then
+      all_markers_exactly_once=false
+    fi
   done
   serial_markers_present="$all_markers_present"
+  serial_markers_exactly_once="$all_markers_exactly_once"
 
   next_marker=0
   while IFS= read -r line || [ -n "$line" ]; do
@@ -471,6 +503,9 @@ if [ -f "$serial_log" ]; then
     "aegishv:type1:guest-entry-error"
     "aegishv:type1:guest-exit-error"
     "aegishv:type1:guest-resume-error"
+    "aegishv:type1:guest-pat-state-error"
+    "aegishv:type1:guest-nm-x87-exit-error"
+    "aegishv:type1:guest-nm-simd-exit-error"
     "aegishv:type1:panic"
   )
   for candidate in "${forbidden_markers[@]}"; do
@@ -496,6 +531,7 @@ if [ "$smoke_status" -eq 0 ] \
   && [ "$boot_image_digest_match" = true ] \
   && [ "$serial_markers_present" = true ] \
   && [ "$serial_markers_in_order" = true ] \
+  && [ "$serial_markers_exactly_once" = true ] \
   && [ "$vmx_diagnostics_valid" = true ] \
   && [ "$forbidden_marker_observed" = false ]; then
   qemu_evidence=true
@@ -536,6 +572,7 @@ expected_serial_markers=$expected_marker_csv
 serial_marker_observed=$serial_markers_in_order
 serial_markers_present=$serial_markers_present
 serial_markers_in_order=$serial_markers_in_order
+serial_markers_exactly_once=$serial_markers_exactly_once
 vmx_cpu_signature_valid=$vmx_cpu_signature_valid
 vmx_cpu_signature=$vmx_cpu_signature
 vmx_timer_rate_valid=$vmx_timer_rate_valid
@@ -562,7 +599,7 @@ qemu_smoke_exit_status=$smoke_status
 qemu_evidence_exit_status=$evidence_status
 qemu_evidence=$qemu_evidence
 
-This manifest records a local QEMU smoke attempt. A true qemu_evidence value requires a valid SHA-256 digest of the boot image before and after the run with both digests equal, every expected marker in order, exactly one well-formed CPU/timer diagnostic set whose timer values are internally consistent and within the fixed budget, and no contradictory backend, failure, skipped, or panic markers. With the default contract it proves only the fixed toy guest's VMLAUNCH, forced preemption, trapped port-I/O, CPUID exit, VMRESUME, HLT exit, and VMXOFF sequence on the recorded host; it is not general-runtime or production evidence.
+This manifest records a local QEMU smoke attempt. A true qemu_evidence value requires a valid SHA-256 digest of the boot image before and after the run with both digests equal, every expected marker exactly once and in order, exactly one well-formed CPU/timer diagnostic set whose timer values are internally consistent and within the fixed budget, and no contradictory backend, failure, skipped, or panic markers. With the default contract it proves only the fixed toy guest's VMLAUNCH, forced preemption, trapped port-I/O, CPUID and selected MSR behavior, fixed PAT round trip, exact x87/SIMD #NM probes, VMRESUME, HLT exit, and VMXOFF sequence on the recorded host; it is not general-runtime or production evidence.
 PLAN
 } > "$manifest"
 

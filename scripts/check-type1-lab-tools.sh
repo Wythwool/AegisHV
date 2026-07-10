@@ -68,6 +68,7 @@ first_line_or_unavailable() {
 }
 
 rustup_path="$(command_path rustup)"
+llvm_objdump_path="$(command_path llvm-objdump)"
 qemu_path="$(command_path "${AEGISHV_QEMU:-qemu-system-x86_64}")"
 requested_timeout="${AEGISHV_TIMEOUT:-}"
 timeout_command=""
@@ -97,6 +98,7 @@ if [ -n "$rustup_path" ] && rustup target list --installed | grep -Fxq x86_64-un
 fi
 
 qemu_available="$(bool_for_path "$qemu_path")"
+llvm_objdump_available="$(bool_for_path "$llvm_objdump_path")"
 timeout_compatible="$(bool_for_path "$timeout_path")"
 xorriso_available="$(bool_for_path "$xorriso_path")"
 limine_command_available="$(bool_for_path "$limine_path")"
@@ -127,6 +129,7 @@ add_missing() {
 }
 
 [ "$rust_target_installed" = true ] || add_missing rust_target_x86_64_unknown_none
+[ "$llvm_objdump_available" = true ] || add_missing llvm_objdump
 [ "$qemu_available" = true ] || add_missing qemu_system_x86_64
 [ "$timeout_compatible" = true ] || add_missing timeout_command
 [ "$xorriso_available" = true ] || add_missing xorriso
@@ -147,6 +150,8 @@ aegishv type-1 lab tools
 
 rustup_present=$(bool_for_path "$rustup_path")
 rust_target_x86_64_unknown_none=$rust_target_installed
+llvm_objdump_available=$llvm_objdump_available
+llvm_objdump_path=$llvm_objdump_path
 qemu_available=$qemu_available
 qemu_path=$qemu_path
 qemu_version=$qemu_version

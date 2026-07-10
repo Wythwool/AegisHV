@@ -106,6 +106,7 @@ set -e
 qemu_evidence=unknown
 expected_serial_markers=unknown
 serial_markers_in_order=unknown
+serial_markers_exactly_once=unknown
 forbidden_backend_none_observed=unknown
 forbidden_marker_observed=unknown
 forbidden_marker=unknown
@@ -130,6 +131,10 @@ if [ -f "$evidence_manifest" ]; then
   if [ -z "$serial_markers_in_order" ]; then
     serial_markers_in_order=unknown
   fi
+  serial_markers_exactly_once="$(manifest_value serial_markers_exactly_once)"
+  if [ -z "$serial_markers_exactly_once" ]; then
+    serial_markers_exactly_once=unknown
+  fi
   forbidden_backend_none_observed="$(manifest_value forbidden_backend_none_observed)"
   if [ -z "$forbidden_backend_none_observed" ]; then
     forbidden_backend_none_observed=unknown
@@ -152,6 +157,7 @@ lab_complete=false
 if [ "$qemu_status" -eq 0 ] \
   && [ "$qemu_evidence" = true ] \
   && [ "$serial_markers_in_order" = true ] \
+  && [ "$serial_markers_exactly_once" = true ] \
   && [ "$forbidden_marker_observed" = false ]; then
   lab_complete=true
 fi
@@ -166,6 +172,7 @@ qemu_evidence_manifest=$evidence_manifest
 qemu_exit_status=$qemu_status
 expected_serial_markers=$expected_serial_markers
 serial_markers_in_order=$serial_markers_in_order
+serial_markers_exactly_once=$serial_markers_exactly_once
 forbidden_backend_none_observed=$forbidden_backend_none_observed
 forbidden_marker_observed=$forbidden_marker_observed
 forbidden_marker=$forbidden_marker
@@ -176,7 +183,7 @@ qemu_command=$qemu_command
 qemu_evidence=$qemu_evidence
 lab_complete=$lab_complete
 
-This summary records one local opt-in lab chain. It is only successful when the full fixed-guest marker sequence appears in order and no contradictory marker is present. Success proves that toy VMLAUNCH/CPUID-exit/VMRESUME/HLT-exit/VMXOFF sequence only on the recorded host; it is not general-runtime or production evidence.
+This summary records one local opt-in lab chain. It is only successful when the full fixed-guest marker sequence appears exactly once and in order and no contradictory marker is present. Success proves only the bounded VMX timer, bitmap, PAT, fixed #NM probe, VMLAUNCH/VMRESUME/HLT/VMXOFF sequence on the recorded host; it is not general-runtime or production evidence.
 PLAN
 
 echo "$summary"

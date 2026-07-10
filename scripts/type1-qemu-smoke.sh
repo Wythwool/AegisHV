@@ -14,7 +14,7 @@ USAGE
 
 print_command=false
 image="${AEGISHV_TYPE1_BOOT_IMAGE:-}"
-default_expected_markers="aegishv:type1:host-tables-ok,aegishv:type1:backend-vmx,aegishv:type1:vmxon-cycle-ok,aegishv:type1:vmcs-load-ok,aegishv:type1:host-paging-ok,aegishv:type1:guest-config-ok,aegishv:type1:guest-preempt-exit-ok,aegishv:type1:guest-io-exit-ok,aegishv:type1:guest-io-b-exit-ok,aegishv:type1:guest-cpuid-exit-ok,aegishv:type1:guest-rdmsr-exit-ok,aegishv:type1:guest-hlt-exit-ok,aegishv:type1:guest-run-ok"
+default_expected_markers="aegishv:type1:host-tables-ok,aegishv:type1:backend-vmx,aegishv:type1:vmxon-cycle-ok,aegishv:type1:vmcs-load-ok,aegishv:type1:host-paging-ok,aegishv:type1:guest-config-ok,aegishv:type1:guest-preempt-exit-ok,aegishv:type1:guest-io-exit-ok,aegishv:type1:guest-io-b-exit-ok,aegishv:type1:guest-cpuid-exit-ok,aegishv:type1:guest-rdmsr-exit-ok,aegishv:type1:guest-pat-state-ok,aegishv:type1:guest-nm-x87-exit-ok,aegishv:type1:guest-nm-simd-exit-ok,aegishv:type1:guest-hlt-exit-ok,aegishv:type1:guest-run-ok"
 expected_marker_csv="${AEGISHV_TYPE1_EXPECTED_MARKERS:-${AEGISHV_TYPE1_EXPECTED_SERIAL:-$default_expected_markers}}"
 expected_markers=()
 marker_option_mode=""
@@ -92,6 +92,14 @@ for marker in "${expected_markers[@]}"; do
   esac
 done
 
+for ((marker_index = 0; marker_index < ${#expected_markers[@]}; marker_index++)); do
+  for ((other_index = marker_index + 1; other_index < ${#expected_markers[@]}; other_index++)); do
+    if [ "${expected_markers[$marker_index]}" = "${expected_markers[$other_index]}" ]; then
+      fail_usage "expected serial marker list contains a duplicate: ${expected_markers[$marker_index]}"
+    fi
+  done
+done
+
 required_vmx_markers=(
   "aegishv:type1:host-tables-ok"
   "aegishv:type1:backend-vmx"
@@ -104,6 +112,9 @@ required_vmx_markers=(
   "aegishv:type1:guest-io-b-exit-ok"
   "aegishv:type1:guest-cpuid-exit-ok"
   "aegishv:type1:guest-rdmsr-exit-ok"
+  "aegishv:type1:guest-pat-state-ok"
+  "aegishv:type1:guest-nm-x87-exit-ok"
+  "aegishv:type1:guest-nm-simd-exit-ok"
   "aegishv:type1:guest-hlt-exit-ok"
   "aegishv:type1:guest-run-ok"
 )
@@ -117,7 +128,7 @@ for marker in "${expected_markers[@]}"; do
   fi
 done
 if [ "$required_marker_index" -ne "${#required_vmx_markers[@]}" ]; then
-  fail_usage "expected serial marker list must include the complete host-table, VMX backend/VMXON/VMCS-load, owned-paging, guest-configuration, preemption, both I/O bitmaps, CPUID, RDMSR, HLT, and completion proof chain in order"
+  fail_usage "expected serial marker list must include the complete host-table, VMX backend/VMXON/VMCS-load, owned-paging, guest-configuration, preemption, both I/O bitmaps, CPUID, RDMSR, PAT, x87/SIMD #NM, HLT, and completion proof chain in order"
 fi
 
 if [ -z "$image" ]; then
@@ -205,6 +216,20 @@ serial_has_marker() {
   return 1
 }
 
+serial_marker_count() {
+  local log_path="$1"
+  local expected="$2"
+  local line
+  local count=0
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line%$'\r'}"
+    if [ "$line" = "$expected" ]; then
+      count=$((count + 1))
+    fi
+  done < "$log_path"
+  printf '%d\n' "$count"
+}
+
 forbidden_markers=(
   "aegishv:type1:backend-none"
   "aegishv:type1:backend-svm"
@@ -225,11 +250,22 @@ forbidden_markers=(
   "aegishv:type1:guest-entry-error"
   "aegishv:type1:guest-exit-error"
   "aegishv:type1:guest-resume-error"
+  "aegishv:type1:guest-pat-state-error"
+  "aegishv:type1:guest-nm-x87-exit-error"
+  "aegishv:type1:guest-nm-simd-exit-error"
   "aegishv:type1:panic"
 )
 for forbidden_marker in "${forbidden_markers[@]}"; do
   if serial_has_marker "$serial_log" "$forbidden_marker"; then
     echo "type1 qemu smoke: forbidden serial marker was observed: $forbidden_marker" >&2
+    exit 70
+  fi
+done
+
+for expected_marker in "${expected_markers[@]}"; do
+  observed_count="$(serial_marker_count "$serial_log" "$expected_marker")"
+  if [ "$observed_count" -ne 1 ]; then
+    echo "type1 qemu smoke: expected serial marker must appear exactly once: $expected_marker (observed $observed_count)" >&2
     exit 70
   fi
 done
