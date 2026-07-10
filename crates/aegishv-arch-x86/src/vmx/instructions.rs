@@ -138,16 +138,34 @@ const fn unsupported<T>(instruction: VmxInstruction) -> Result<T, VmxError> {
 pub mod tests_support {
     use super::*;
 
-    #[derive(Default)]
     pub struct MockVmxInstructions {
         pub vmxon_region: Option<HostPhysical>,
         pub current_vmcs: Option<HostPhysical>,
         pub cleared_vmcs: Option<HostPhysical>,
         pub last_write: Option<(u64, u64)>,
+        pub writes: [Option<(u64, u64)>; 128],
+        pub write_count: usize,
         pub launch_count: u64,
         pub resume_count: u64,
         pub next_failure: Option<VmxInstruction>,
         pub read_value: u64,
+    }
+
+    impl Default for MockVmxInstructions {
+        fn default() -> Self {
+            Self {
+                vmxon_region: None,
+                current_vmcs: None,
+                cleared_vmcs: None,
+                last_write: None,
+                writes: [None; 128],
+                write_count: 0,
+                launch_count: 0,
+                resume_count: 0,
+                next_failure: None,
+                read_value: 0,
+            }
+        }
     }
 
     impl MockVmxInstructions {
@@ -212,7 +230,15 @@ pub mod tests_support {
 
         unsafe fn vmwrite(&mut self, field: u64, value: u64) -> Result<(), VmxError> {
             self.maybe_fail(VmxInstruction::Vmwrite)?;
+            if self.write_count >= self.writes.len() {
+                return Err(VmxError::new(
+                    VmxErrorKind::InvalidVmcsState,
+                    "mock VMCS write log is full",
+                ));
+            }
             self.last_write = Some((field, value));
+            self.writes[self.write_count] = Some((field, value));
+            self.write_count += 1;
             Ok(())
         }
     }

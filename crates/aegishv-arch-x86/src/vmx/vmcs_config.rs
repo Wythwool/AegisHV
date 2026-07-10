@@ -1,0 +1,789 @@
+use aegishv_hypervisor_core::ids::{GuestPhysical, GuestVirtual, HostPhysical};
+
+use super::controls::{
+    VmxControlFields, ENTRY_IA32E_MODE_GUEST, ENTRY_LOAD_IA32_EFER, EXIT_HOST_ADDRESS_SPACE_SIZE,
+    EXIT_LOAD_IA32_EFER, EXIT_SAVE_IA32_EFER, PIN_BASED_NMI_EXITING,
+    PRIMARY_ACTIVATE_SECONDARY_CONTROLS, PRIMARY_HLT_EXITING, SECONDARY_ENABLE_EPT,
+    SECONDARY_ENABLE_VPID,
+};
+use super::ept::EptPointer;
+use super::features::{is_canonical_u64, VmxError, VmxErrorKind};
+use super::instructions::VmxInstructionExecutor;
+use super::vmcs::VmcsField;
+
+pub const VMX_CR0_PROTECTED_MODE_ENABLE: u64 = 1 << 0;
+pub const VMX_CR0_PAGING: u64 = 1 << 31;
+pub const VMX_CR4_PAE: u64 = 1 << 5;
+pub const VMX_CR4_VMXE: u64 = 1 << 13;
+pub const VMX_EFER_LME: u64 = 1 << 8;
+pub const VMX_EFER_LMA: u64 = 1 << 10;
+
+const SEGMENT_ACCESS_RIGHTS_RESERVED: u32 = 0xfffe_0f00;
+const SEGMENT_ACCESS_RIGHTS_PRESENT: u32 = 1 << 7;
+const SEGMENT_ACCESS_RIGHTS_LONG_MODE: u32 = 1 << 13;
+const SEGMENT_ACCESS_RIGHTS_DEFAULT_BIG: u32 = 1 << 14;
+const SEGMENT_ACCESS_RIGHTS_UNUSABLE: u32 = 1 << 16;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct VmcsSegmentState {
+    pub selector: u16,
+    pub base: u64,
+    pub limit: u32,
+    pub access_rights: u32,
+}
+
+impl VmcsSegmentState {
+    pub const fn new(selector: u16, base: u64, limit: u32, access_rights: u32) -> Self {
+        Self {
+            selector,
+            base,
+            limit,
+            access_rights,
+        }
+    }
+
+    pub const fn unusable() -> Self {
+        Self::new(0, 0, 0, SEGMENT_ACCESS_RIGHTS_UNUSABLE)
+    }
+
+    pub const fn toy_code64() -> Self {
+        Self::new(0x08, 0, u32::MAX, 0xa09b)
+    }
+
+    pub const fn toy_data64() -> Self {
+        Self::new(0x10, 0, u32::MAX, 0xc093)
+    }
+
+    pub const fn toy_busy_tss64() -> Self {
+        Self::new(0x18, 0, 0x67, 0x008b)
+    }
+
+    pub fn validate(self) -> Result<Self, VmxError> {
+        if self.access_rights & SEGMENT_ACCESS_RIGHTS_RESERVED != 0 {
+            return Err(VmxError::new(
+                VmxErrorKind::InvalidGuestState,
+                "VMCS segment access rights set a reserved bit",
+            ));
+        }
+        if self.access_rights & SEGMENT_ACCESS_RIGHTS_UNUSABLE != 0 {
+            if self.selector != 0 {
+                return Err(VmxError::new(
+                    VmxErrorKind::InvalidGuestState,
+                    "an unusable VMCS segment must use a null selector",
+                ));
+            }
+            return Ok(self);
+        }
+        if self.access_rights & SEGMENT_ACCESS_RIGHTS_PRESENT == 0 {
+            return Err(VmxError::new(
+                VmxErrorKind::InvalidGuestState,
+                "a usable VMCS segment must be present",
+            ));
+        }
+        if !is_canonical_u64(self.base) {
+            return Err(VmxError::new(
+                VmxErrorKind::InvalidGuestState,
+                "VMCS segment base must be canonical",
+            ));
+        }
+        Ok(self)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct VmcsDescriptorTableState {
+    pub base: u64,
+    pub limit: u32,
+}
+
+impl VmcsDescriptorTableState {
+    pub const fn new(base: u64, limit: u32) -> Self {
+        Self { base, limit }
+    }
+
+    pub fn validate(self) -> Result<Self, VmxError> {
+        if !is_canonical_u64(self.base) {
+            return Err(VmxError::new(
+                VmxErrorKind::InvalidGuestState,
+                "VMCS descriptor-table base must be canonical",
+            ));
+        }
+        Ok(self)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct VmcsHostSelectors {
+    pub es: u16,
+    pub cs: u16,
+    pub ss: u16,
+    pub ds: u16,
+    pub fs: u16,
+    pub gs: u16,
+    pub tr: u16,
+}
+
+impl VmcsHostSelectors {
+    pub fn validate(self) -> Result<Self, VmxError> {
+        if self.cs == 0 || self.tr == 0 {
+            return Err(VmxError::new(
+                VmxErrorKind::InvalidGuestState,
+                "VMCS host CS and TR selectors must be non-null",
+            ));
+        }
+        if self.es & 7 != 0
+            || self.cs & 7 != 0
+            || self.ss & 7 != 0
+            || self.ds & 7 != 0
+            || self.fs & 7 != 0
+            || self.gs & 7 != 0
+            || self.tr & 7 != 0
+        {
+            return Err(VmxError::new(
+                VmxErrorKind::InvalidGuestState,
+                "VMCS host selectors must use GDT entries at privilege level zero",
+            ));
+        }
+        Ok(self)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct VmcsHostState64 {
+    pub cr0: u64,
+    pub cr3: HostPhysical,
+    pub cr4: u64,
+    pub selectors: VmcsHostSelectors,
+    pub fs_base: u64,
+    pub gs_base: u64,
+    pub tr_base: u64,
+    pub gdtr_base: u64,
+    pub idtr_base: u64,
+    pub sysenter_cs: u32,
+    pub sysenter_esp: u64,
+    pub sysenter_eip: u64,
+    pub efer: u64,
+    pub rsp: u64,
+    pub rip: u64,
+}
+
+impl VmcsHostState64 {
+    pub fn validate(self) -> Result<Self, VmxError> {
+        self.selectors.validate()?;
+        if self.cr0 & (VMX_CR0_PROTECTED_MODE_ENABLE | VMX_CR0_PAGING)
+            != (VMX_CR0_PROTECTED_MODE_ENABLE | VMX_CR0_PAGING)
+            || self.cr4 & (VMX_CR4_PAE | VMX_CR4_VMXE) != (VMX_CR4_PAE | VMX_CR4_VMXE)
+        {
+            return Err(VmxError::new(
+                VmxErrorKind::InvalidGuestState,
+                "VMCS host control registers do not describe 64-bit paging",
+            ));
+        }
+        if self.efer & VMX_EFER_LMA == 0 {
+            return Err(VmxError::new(
+                VmxErrorKind::InvalidGuestState,
+                "VMCS host EFER must have long mode active",
+            ));
+        }
+        if !is_canonical_u64(self.fs_base)
+            || !is_canonical_u64(self.gs_base)
+            || !is_canonical_u64(self.tr_base)
+            || !is_canonical_u64(self.gdtr_base)
+            || !is_canonical_u64(self.idtr_base)
+            || !is_canonical_u64(self.sysenter_esp)
+            || !is_canonical_u64(self.sysenter_eip)
+            || !is_canonical_u64(self.rsp)
+            || !is_canonical_u64(self.rip)
+        {
+            return Err(VmxError::new(
+                VmxErrorKind::InvalidGuestState,
+                "VMCS host base, stack, and instruction pointers must be canonical",
+            ));
+        }
+        Ok(self)
+    }
+
+    /// # Safety
+    ///
+    /// The caller must own the loaded current VMCS on this CPU. Every value
+    /// must have been captured after the final host control-state changes.
+    pub unsafe fn write_to<E: VmxInstructionExecutor>(
+        self,
+        executor: &mut E,
+    ) -> Result<(), VmxError> {
+        self.validate()?;
+        // SAFETY: the caller guarantees a current, exclusively owned VMCS and
+        // validation above establishes the architectural host-state shape.
+        unsafe {
+            executor.vmwrite(VmcsField::HOST_ES_SELECTOR.raw(), self.selectors.es.into())?;
+            executor.vmwrite(VmcsField::HOST_CS_SELECTOR.raw(), self.selectors.cs.into())?;
+            executor.vmwrite(VmcsField::HOST_SS_SELECTOR.raw(), self.selectors.ss.into())?;
+            executor.vmwrite(VmcsField::HOST_DS_SELECTOR.raw(), self.selectors.ds.into())?;
+            executor.vmwrite(VmcsField::HOST_FS_SELECTOR.raw(), self.selectors.fs.into())?;
+            executor.vmwrite(VmcsField::HOST_GS_SELECTOR.raw(), self.selectors.gs.into())?;
+            executor.vmwrite(VmcsField::HOST_TR_SELECTOR.raw(), self.selectors.tr.into())?;
+            executor.vmwrite(VmcsField::HOST_CR0.raw(), self.cr0)?;
+            executor.vmwrite(VmcsField::HOST_CR3.raw(), self.cr3.get())?;
+            executor.vmwrite(VmcsField::HOST_CR4.raw(), self.cr4)?;
+            executor.vmwrite(VmcsField::HOST_FS_BASE.raw(), self.fs_base)?;
+            executor.vmwrite(VmcsField::HOST_GS_BASE.raw(), self.gs_base)?;
+            executor.vmwrite(VmcsField::HOST_TR_BASE.raw(), self.tr_base)?;
+            executor.vmwrite(VmcsField::HOST_GDTR_BASE.raw(), self.gdtr_base)?;
+            executor.vmwrite(VmcsField::HOST_IDTR_BASE.raw(), self.idtr_base)?;
+            executor.vmwrite(
+                VmcsField::HOST_IA32_SYSENTER_CS.raw(),
+                self.sysenter_cs.into(),
+            )?;
+            executor.vmwrite(VmcsField::HOST_IA32_SYSENTER_ESP.raw(), self.sysenter_esp)?;
+            executor.vmwrite(VmcsField::HOST_IA32_SYSENTER_EIP.raw(), self.sysenter_eip)?;
+            executor.vmwrite(VmcsField::HOST_IA32_EFER.raw(), self.efer)?;
+            executor.vmwrite(VmcsField::HOST_RSP.raw(), self.rsp)?;
+            executor.vmwrite(VmcsField::HOST_RIP.raw(), self.rip)?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct VmcsGuestSegments {
+    pub es: VmcsSegmentState,
+    pub cs: VmcsSegmentState,
+    pub ss: VmcsSegmentState,
+    pub ds: VmcsSegmentState,
+    pub fs: VmcsSegmentState,
+    pub gs: VmcsSegmentState,
+    pub ldtr: VmcsSegmentState,
+    pub tr: VmcsSegmentState,
+}
+
+impl VmcsGuestSegments {
+    pub const fn toy_long_mode() -> Self {
+        Self {
+            es: VmcsSegmentState::toy_data64(),
+            cs: VmcsSegmentState::toy_code64(),
+            ss: VmcsSegmentState::toy_data64(),
+            ds: VmcsSegmentState::toy_data64(),
+            fs: VmcsSegmentState::toy_data64(),
+            gs: VmcsSegmentState::toy_data64(),
+            ldtr: VmcsSegmentState::unusable(),
+            tr: VmcsSegmentState::toy_busy_tss64(),
+        }
+    }
+
+    pub fn validate(self) -> Result<Self, VmxError> {
+        self.es.validate()?;
+        self.cs.validate()?;
+        self.ss.validate()?;
+        self.ds.validate()?;
+        self.fs.validate()?;
+        self.gs.validate()?;
+        self.ldtr.validate()?;
+        self.tr.validate()?;
+        if self.cs.access_rights & SEGMENT_ACCESS_RIGHTS_LONG_MODE == 0
+            || self.cs.access_rights & SEGMENT_ACCESS_RIGHTS_DEFAULT_BIG != 0
+        {
+            return Err(VmxError::new(
+                VmxErrorKind::InvalidGuestState,
+                "64-bit guest CS must set L and clear D/B",
+            ));
+        }
+        Ok(self)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct VmcsGuestState64 {
+    pub cr0: u64,
+    pub cr3: GuestPhysical,
+    pub cr4: u64,
+    pub segments: VmcsGuestSegments,
+    pub gdtr: VmcsDescriptorTableState,
+    pub idtr: VmcsDescriptorTableState,
+    pub dr7: u64,
+    pub rsp: u64,
+    pub rip: GuestVirtual,
+    pub rflags: u64,
+    pub pending_debug_exceptions: u64,
+    pub interruptibility: u32,
+    pub activity_state: u32,
+    pub smbase: u32,
+    pub sysenter_cs: u32,
+    pub sysenter_esp: u64,
+    pub sysenter_eip: u64,
+    pub efer: u64,
+}
+
+impl VmcsGuestState64 {
+    pub fn toy_long_mode(
+        cr0: u64,
+        cr3: GuestPhysical,
+        cr4: u64,
+        rsp: u64,
+        rip: GuestVirtual,
+    ) -> Result<Self, VmxError> {
+        let state = Self {
+            cr0,
+            cr3,
+            cr4,
+            segments: VmcsGuestSegments::toy_long_mode(),
+            gdtr: VmcsDescriptorTableState::new(0, 0),
+            idtr: VmcsDescriptorTableState::new(0, 0),
+            dr7: 0x400,
+            rsp,
+            rip,
+            rflags: 0x2,
+            pending_debug_exceptions: 0,
+            interruptibility: 0,
+            activity_state: 0,
+            smbase: 0,
+            sysenter_cs: 0,
+            sysenter_esp: 0,
+            sysenter_eip: 0,
+            efer: VMX_EFER_LME | VMX_EFER_LMA,
+        };
+        state.validate()
+    }
+
+    pub fn validate(self) -> Result<Self, VmxError> {
+        if self.cr0 & (VMX_CR0_PROTECTED_MODE_ENABLE | VMX_CR0_PAGING)
+            != (VMX_CR0_PROTECTED_MODE_ENABLE | VMX_CR0_PAGING)
+            || self.cr4 & VMX_CR4_PAE == 0
+            || self.cr4 & VMX_CR4_VMXE != 0
+        {
+            return Err(VmxError::new(
+                VmxErrorKind::InvalidGuestState,
+                "VMCS guest control registers do not describe 64-bit paging",
+            ));
+        }
+        if self.cr3.get() == 0 || self.cr3.get() % 4096 != 0 {
+            return Err(VmxError::new(
+                VmxErrorKind::InvalidGuestState,
+                "VMCS guest CR3 must name a nonzero aligned PML4 GPA",
+            ));
+        }
+        if self.efer & (VMX_EFER_LME | VMX_EFER_LMA) != (VMX_EFER_LME | VMX_EFER_LMA) {
+            return Err(VmxError::new(
+                VmxErrorKind::InvalidGuestState,
+                "VMCS guest EFER must enable and activate long mode",
+            ));
+        }
+        if !is_canonical_u64(self.rsp)
+            || !is_canonical_u64(self.rip.get())
+            || !is_canonical_u64(self.sysenter_esp)
+            || !is_canonical_u64(self.sysenter_eip)
+        {
+            return Err(VmxError::new(
+                VmxErrorKind::InvalidGuestState,
+                "VMCS guest stack, instruction, and SYSENTER pointers must be canonical",
+            ));
+        }
+        if self.rflags & 0x2 == 0 || self.activity_state != 0 || self.interruptibility != 0 {
+            return Err(VmxError::new(
+                VmxErrorKind::InvalidGuestState,
+                "toy guest must start active, unblocked, and with reserved RFLAGS bit 1 set",
+            ));
+        }
+        self.segments.validate()?;
+        self.gdtr.validate()?;
+        self.idtr.validate()?;
+        Ok(self)
+    }
+
+    /// # Safety
+    ///
+    /// The caller must own the loaded current VMCS and must keep the guest page
+    /// tables and EPT mappings backing this state alive until VMXOFF.
+    pub unsafe fn write_to<E: VmxInstructionExecutor>(
+        self,
+        executor: &mut E,
+    ) -> Result<(), VmxError> {
+        self.validate()?;
+        // SAFETY: the current VMCS is exclusively owned by the caller and the
+        // complete validated guest state is written before any VM entry.
+        unsafe {
+            write_segment(
+                executor,
+                self.segments.es,
+                VmcsField::GUEST_ES_SELECTOR,
+                VmcsField::GUEST_ES_BASE,
+                VmcsField::GUEST_ES_LIMIT,
+                VmcsField::GUEST_ES_ACCESS_RIGHTS,
+            )?;
+            write_segment(
+                executor,
+                self.segments.cs,
+                VmcsField::GUEST_CS_SELECTOR,
+                VmcsField::GUEST_CS_BASE,
+                VmcsField::GUEST_CS_LIMIT,
+                VmcsField::GUEST_CS_ACCESS_RIGHTS,
+            )?;
+            write_segment(
+                executor,
+                self.segments.ss,
+                VmcsField::GUEST_SS_SELECTOR,
+                VmcsField::GUEST_SS_BASE,
+                VmcsField::GUEST_SS_LIMIT,
+                VmcsField::GUEST_SS_ACCESS_RIGHTS,
+            )?;
+            write_segment(
+                executor,
+                self.segments.ds,
+                VmcsField::GUEST_DS_SELECTOR,
+                VmcsField::GUEST_DS_BASE,
+                VmcsField::GUEST_DS_LIMIT,
+                VmcsField::GUEST_DS_ACCESS_RIGHTS,
+            )?;
+            write_segment(
+                executor,
+                self.segments.fs,
+                VmcsField::GUEST_FS_SELECTOR,
+                VmcsField::GUEST_FS_BASE,
+                VmcsField::GUEST_FS_LIMIT,
+                VmcsField::GUEST_FS_ACCESS_RIGHTS,
+            )?;
+            write_segment(
+                executor,
+                self.segments.gs,
+                VmcsField::GUEST_GS_SELECTOR,
+                VmcsField::GUEST_GS_BASE,
+                VmcsField::GUEST_GS_LIMIT,
+                VmcsField::GUEST_GS_ACCESS_RIGHTS,
+            )?;
+            write_segment(
+                executor,
+                self.segments.ldtr,
+                VmcsField::GUEST_LDTR_SELECTOR,
+                VmcsField::GUEST_LDTR_BASE,
+                VmcsField::GUEST_LDTR_LIMIT,
+                VmcsField::GUEST_LDTR_ACCESS_RIGHTS,
+            )?;
+            write_segment(
+                executor,
+                self.segments.tr,
+                VmcsField::GUEST_TR_SELECTOR,
+                VmcsField::GUEST_TR_BASE,
+                VmcsField::GUEST_TR_LIMIT,
+                VmcsField::GUEST_TR_ACCESS_RIGHTS,
+            )?;
+            executor.vmwrite(VmcsField::GUEST_GDTR_BASE.raw(), self.gdtr.base)?;
+            executor.vmwrite(VmcsField::GUEST_GDTR_LIMIT.raw(), self.gdtr.limit.into())?;
+            executor.vmwrite(VmcsField::GUEST_IDTR_BASE.raw(), self.idtr.base)?;
+            executor.vmwrite(VmcsField::GUEST_IDTR_LIMIT.raw(), self.idtr.limit.into())?;
+            executor.vmwrite(VmcsField::GUEST_CR0.raw(), self.cr0)?;
+            executor.vmwrite(VmcsField::GUEST_CR3.raw(), self.cr3.get())?;
+            executor.vmwrite(VmcsField::GUEST_CR4.raw(), self.cr4)?;
+            executor.vmwrite(VmcsField::GUEST_DR7.raw(), self.dr7)?;
+            executor.vmwrite(VmcsField::GUEST_RSP.raw(), self.rsp)?;
+            executor.vmwrite(VmcsField::GUEST_RIP.raw(), self.rip.get())?;
+            executor.vmwrite(VmcsField::GUEST_RFLAGS.raw(), self.rflags)?;
+            executor.vmwrite(
+                VmcsField::GUEST_PENDING_DEBUG_EXCEPTIONS.raw(),
+                self.pending_debug_exceptions,
+            )?;
+            executor.vmwrite(
+                VmcsField::GUEST_INTERRUPTIBILITY.raw(),
+                self.interruptibility.into(),
+            )?;
+            executor.vmwrite(
+                VmcsField::GUEST_ACTIVITY_STATE.raw(),
+                self.activity_state.into(),
+            )?;
+            executor.vmwrite(VmcsField::GUEST_SMBASE.raw(), self.smbase.into())?;
+            executor.vmwrite(
+                VmcsField::GUEST_IA32_SYSENTER_CS.raw(),
+                self.sysenter_cs.into(),
+            )?;
+            executor.vmwrite(VmcsField::GUEST_IA32_SYSENTER_ESP.raw(), self.sysenter_esp)?;
+            executor.vmwrite(VmcsField::GUEST_IA32_SYSENTER_EIP.raw(), self.sysenter_eip)?;
+            executor.vmwrite(VmcsField::GUEST_IA32_EFER.raw(), self.efer)?;
+            executor.vmwrite(VmcsField::VMCS_LINK_POINTER.raw(), u64::MAX)?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct VmcsExecutionState {
+    pub controls: VmxControlFields,
+    pub ept_pointer: EptPointer,
+}
+
+impl VmcsExecutionState {
+    pub fn validate(self) -> Result<Self, VmxError> {
+        if self.controls.pin_based & PIN_BASED_NMI_EXITING == 0
+            || self.controls.primary & PRIMARY_HLT_EXITING == 0
+            || self.controls.primary & PRIMARY_ACTIVATE_SECONDARY_CONTROLS == 0
+            || self.controls.secondary & SECONDARY_ENABLE_EPT == 0
+            || self.controls.secondary & SECONDARY_ENABLE_VPID != 0
+            || self.controls.exit & EXIT_HOST_ADDRESS_SPACE_SIZE == 0
+            || self.controls.exit & EXIT_SAVE_IA32_EFER == 0
+            || self.controls.exit & EXIT_LOAD_IA32_EFER == 0
+            || self.controls.entry & ENTRY_IA32E_MODE_GUEST == 0
+            || self.controls.entry & ENTRY_LOAD_IA32_EFER == 0
+            || self.ept_pointer.root().get() == 0
+        {
+            return Err(VmxError::new(
+                VmxErrorKind::InvalidControlBits,
+                "VMCS execution controls do not satisfy the isolated toy guest contract",
+            ));
+        }
+        Ok(self)
+    }
+
+    /// # Safety
+    ///
+    /// The caller must own a loaded current VMCS and keep the EPT hierarchy
+    /// rooted at `ept_pointer` allocated and unchanged while the guest runs.
+    pub unsafe fn write_to<E: VmxInstructionExecutor>(
+        self,
+        guest: VmcsGuestState64,
+        executor: &mut E,
+    ) -> Result<(), VmxError> {
+        self.validate()?;
+        // SAFETY: the caller guarantees a current VMCS and the validated EPT
+        // root and control dependencies remain live through VMX operation.
+        unsafe {
+            executor.vmwrite(
+                VmcsField::PIN_BASED_CONTROLS.raw(),
+                self.controls.pin_based.into(),
+            )?;
+            executor.vmwrite(
+                VmcsField::PRIMARY_PROCESSOR_CONTROLS.raw(),
+                self.controls.primary.into(),
+            )?;
+            executor.vmwrite(
+                VmcsField::SECONDARY_PROCESSOR_CONTROLS.raw(),
+                self.controls.secondary.into(),
+            )?;
+            executor.vmwrite(VmcsField::EXIT_CONTROLS.raw(), self.controls.exit.into())?;
+            executor.vmwrite(VmcsField::ENTRY_CONTROLS.raw(), self.controls.entry.into())?;
+            executor.vmwrite(VmcsField::VIRTUAL_PROCESSOR_ID.raw(), 0)?;
+            executor.vmwrite(VmcsField::TSC_OFFSET.raw(), 0)?;
+            executor.vmwrite(VmcsField::EPT_POINTER.raw(), self.ept_pointer.raw())?;
+            executor.vmwrite(VmcsField::EXCEPTION_BITMAP.raw(), u32::MAX.into())?;
+            executor.vmwrite(VmcsField::PAGE_FAULT_ERROR_CODE_MASK.raw(), 0)?;
+            executor.vmwrite(VmcsField::PAGE_FAULT_ERROR_CODE_MATCH.raw(), 0)?;
+            executor.vmwrite(VmcsField::CR3_TARGET_COUNT.raw(), 0)?;
+            executor.vmwrite(VmcsField::VM_EXIT_MSR_STORE_COUNT.raw(), 0)?;
+            executor.vmwrite(VmcsField::VM_EXIT_MSR_LOAD_COUNT.raw(), 0)?;
+            executor.vmwrite(VmcsField::VM_ENTRY_MSR_LOAD_COUNT.raw(), 0)?;
+            executor.vmwrite(VmcsField::VM_ENTRY_INTERRUPTION_INFO.raw(), 0)?;
+            executor.vmwrite(VmcsField::VM_ENTRY_EXCEPTION_ERROR_CODE.raw(), 0)?;
+            executor.vmwrite(VmcsField::VM_ENTRY_INSTRUCTION_LENGTH.raw(), 0)?;
+            executor.vmwrite(VmcsField::CR0_GUEST_HOST_MASK.raw(), 0)?;
+            executor.vmwrite(VmcsField::CR4_GUEST_HOST_MASK.raw(), 0)?;
+            executor.vmwrite(VmcsField::CR0_READ_SHADOW.raw(), guest.cr0)?;
+            executor.vmwrite(VmcsField::CR4_READ_SHADOW.raw(), guest.cr4)?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MinimalVmcsConfiguration {
+    pub execution: VmcsExecutionState,
+    pub host: VmcsHostState64,
+    pub guest: VmcsGuestState64,
+}
+
+impl MinimalVmcsConfiguration {
+    pub fn validate(self) -> Result<Self, VmxError> {
+        self.execution.validate()?;
+        self.host.validate()?;
+        self.guest.validate()?;
+        Ok(self)
+    }
+
+    /// # Safety
+    ///
+    /// The caller must own the loaded VMCS on the current CPU and guarantee
+    /// that every referenced host, guest, and EPT page remains live. No VM entry
+    /// may occur until this method succeeds completely.
+    pub unsafe fn write_to<E: VmxInstructionExecutor>(
+        self,
+        executor: &mut E,
+    ) -> Result<(), VmxError> {
+        self.validate()?;
+        // SAFETY: one validated configuration is written to the caller-owned
+        // current VMCS before it is made eligible for VMLAUNCH.
+        unsafe {
+            self.execution.write_to(self.guest, executor)?;
+            self.guest.write_to(executor)?;
+            self.host.write_to(executor)?;
+        }
+        Ok(())
+    }
+}
+
+unsafe fn write_segment<E: VmxInstructionExecutor>(
+    executor: &mut E,
+    segment: VmcsSegmentState,
+    selector: VmcsField,
+    base: VmcsField,
+    limit: VmcsField,
+    access_rights: VmcsField,
+) -> Result<(), VmxError> {
+    // SAFETY: the caller owns the current VMCS and supplies the exact four
+    // encodings belonging to this already validated segment cache.
+    unsafe {
+        executor.vmwrite(selector.raw(), segment.selector.into())?;
+        executor.vmwrite(base.raw(), segment.base)?;
+        executor.vmwrite(limit.raw(), segment.limit.into())?;
+        executor.vmwrite(access_rights.raw(), segment.access_rights.into())?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::vmx::controls::{VmxControlMsr, VmxControlMsrs, VmxControlRequest};
+    use crate::vmx::ept::{
+        EptCapabilities, EPT_VPID_CAP_MEMORY_TYPE_WB, EPT_VPID_CAP_PAGE_WALK_LENGTH_4,
+    };
+    use crate::vmx::instructions::tests_support::MockVmxInstructions;
+
+    fn controls() -> VmxControlFields {
+        VmxControlMsrs {
+            pin_based: VmxControlMsr::new(
+                super::super::controls::VmxControlGroup::PinBased,
+                0,
+                u32::MAX,
+            ),
+            primary: VmxControlMsr::new(
+                super::super::controls::VmxControlGroup::PrimaryProcessor,
+                0,
+                u32::MAX,
+            ),
+            secondary: VmxControlMsr::new(
+                super::super::controls::VmxControlGroup::SecondaryProcessor,
+                0,
+                u32::MAX,
+            ),
+            exit: VmxControlMsr::new(super::super::controls::VmxControlGroup::Exit, 0, u32::MAX),
+            entry: VmxControlMsr::new(super::super::controls::VmxControlGroup::Entry, 0, u32::MAX),
+        }
+        .build(VmxControlRequest::toy_hlt_guest())
+        .unwrap()
+    }
+
+    fn host() -> VmcsHostState64 {
+        VmcsHostState64 {
+            cr0: VMX_CR0_PROTECTED_MODE_ENABLE | VMX_CR0_PAGING,
+            cr3: HostPhysical::new(0x9000).unwrap(),
+            cr4: VMX_CR4_PAE | VMX_CR4_VMXE,
+            selectors: VmcsHostSelectors {
+                es: 0,
+                cs: 0x08,
+                ss: 0x10,
+                ds: 0,
+                fs: 0,
+                gs: 0,
+                tr: 0x18,
+            },
+            fs_base: 0,
+            gs_base: 0,
+            tr_base: 0xffff_8000_0000_1000,
+            gdtr_base: 0xffff_8000_0000_2000,
+            idtr_base: 0xffff_8000_0000_3000,
+            sysenter_cs: 0,
+            sysenter_esp: 0,
+            sysenter_eip: 0,
+            efer: VMX_EFER_LME | VMX_EFER_LMA,
+            rsp: 0xffff_8000_0000_4000,
+            rip: 0xffff_8000_0000_5000,
+        }
+    }
+
+    fn guest() -> VmcsGuestState64 {
+        VmcsGuestState64::toy_long_mode(
+            VMX_CR0_PROTECTED_MODE_ENABLE | VMX_CR0_PAGING,
+            GuestPhysical::new(0x2000).unwrap(),
+            VMX_CR4_PAE,
+            0x1ff0,
+            GuestVirtual::new(0x1000),
+        )
+        .unwrap()
+    }
+
+    fn configuration() -> MinimalVmcsConfiguration {
+        let capabilities =
+            EptCapabilities::new(EPT_VPID_CAP_PAGE_WALK_LENGTH_4 | EPT_VPID_CAP_MEMORY_TYPE_WB);
+        MinimalVmcsConfiguration {
+            execution: VmcsExecutionState {
+                controls: controls(),
+                ept_pointer: EptPointer::new(HostPhysical::new(0x8000).unwrap(), capabilities)
+                    .unwrap(),
+            },
+            host: host(),
+            guest: guest(),
+        }
+    }
+
+    fn recorded(executor: &MockVmxInstructions, field: VmcsField) -> Option<u64> {
+        executor.writes[..executor.write_count]
+            .iter()
+            .flatten()
+            .find_map(|&(candidate, value)| (candidate == field.raw()).then_some(value))
+    }
+
+    #[test]
+    fn toy_long_mode_guest_uses_checked_segment_state() {
+        let guest = guest();
+
+        assert_eq!(guest.segments.cs.access_rights, 0xa09b);
+        assert_eq!(guest.segments.ss.access_rights, 0xc093);
+        assert_eq!(guest.segments.ldtr.access_rights, 0x10000);
+        assert_eq!(guest.segments.tr.access_rights, 0x008b);
+        assert!(guest.validate().is_ok());
+    }
+
+    #[test]
+    fn host_state_rejects_selector_with_rpl_or_ldt_bits() {
+        let mut state = host();
+        state.selectors.tr = 0x1b;
+
+        assert_eq!(
+            state.validate().unwrap_err().kind,
+            VmxErrorKind::InvalidGuestState
+        );
+    }
+
+    #[test]
+    fn complete_configuration_writes_ept_and_required_state_once() {
+        let mut executor = MockVmxInstructions::default();
+
+        unsafe { configuration().write_to(&mut executor) }.unwrap();
+
+        assert_eq!(recorded(&executor, VmcsField::EPT_POINTER), Some(0x801e));
+        assert_eq!(
+            recorded(&executor, VmcsField::VIRTUAL_PROCESSOR_ID),
+            Some(0)
+        );
+        assert_eq!(
+            recorded(&executor, VmcsField::VMCS_LINK_POINTER),
+            Some(u64::MAX)
+        );
+        assert_eq!(
+            recorded(&executor, VmcsField::GUEST_CS_ACCESS_RIGHTS),
+            Some(0xa09b)
+        );
+        assert_eq!(
+            recorded(&executor, VmcsField::GUEST_IA32_EFER),
+            Some(VMX_EFER_LME | VMX_EFER_LMA)
+        );
+        assert_eq!(recorded(&executor, VmcsField::HOST_RIP), Some(host().rip));
+        assert!(executor.write_count > 70);
+    }
+
+    #[test]
+    fn configuration_rejects_vpid_dependency_without_a_vpid() {
+        let mut config = configuration();
+        config.execution.controls.secondary |= SECONDARY_ENABLE_VPID;
+
+        assert_eq!(
+            config.validate().unwrap_err().kind,
+            VmxErrorKind::InvalidControlBits
+        );
+    }
+}

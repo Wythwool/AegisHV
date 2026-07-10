@@ -10,24 +10,115 @@ use super::region::{VmxRegion, VmxRevisionId};
 pub struct VmcsField(u64);
 
 impl VmcsField {
+    pub const VIRTUAL_PROCESSOR_ID: Self = Self(0x0000);
+
+    pub const GUEST_ES_SELECTOR: Self = Self(0x0800);
+    pub const GUEST_CS_SELECTOR: Self = Self(0x0802);
+    pub const GUEST_SS_SELECTOR: Self = Self(0x0804);
+    pub const GUEST_DS_SELECTOR: Self = Self(0x0806);
+    pub const GUEST_FS_SELECTOR: Self = Self(0x0808);
+    pub const GUEST_GS_SELECTOR: Self = Self(0x080a);
+    pub const GUEST_LDTR_SELECTOR: Self = Self(0x080c);
+    pub const GUEST_TR_SELECTOR: Self = Self(0x080e);
+
+    pub const HOST_ES_SELECTOR: Self = Self(0x0c00);
+    pub const HOST_CS_SELECTOR: Self = Self(0x0c02);
+    pub const HOST_SS_SELECTOR: Self = Self(0x0c04);
+    pub const HOST_DS_SELECTOR: Self = Self(0x0c06);
+    pub const HOST_FS_SELECTOR: Self = Self(0x0c08);
+    pub const HOST_GS_SELECTOR: Self = Self(0x0c0a);
+    pub const HOST_TR_SELECTOR: Self = Self(0x0c0c);
+
+    pub const TSC_OFFSET: Self = Self(0x2010);
+    pub const EPT_POINTER: Self = Self(0x201a);
+    pub const VMCS_LINK_POINTER: Self = Self(0x2800);
+    pub const GUEST_IA32_EFER: Self = Self(0x2806);
+    pub const HOST_IA32_EFER: Self = Self(0x2c02);
+
     pub const HOST_CR0: Self = Self(0x6c00);
     pub const HOST_CR3: Self = Self(0x6c02);
     pub const HOST_CR4: Self = Self(0x6c04);
+    pub const HOST_FS_BASE: Self = Self(0x6c06);
+    pub const HOST_GS_BASE: Self = Self(0x6c08);
+    pub const HOST_TR_BASE: Self = Self(0x6c0a);
+    pub const HOST_GDTR_BASE: Self = Self(0x6c0c);
+    pub const HOST_IDTR_BASE: Self = Self(0x6c0e);
+    pub const HOST_IA32_SYSENTER_ESP: Self = Self(0x6c10);
+    pub const HOST_IA32_SYSENTER_EIP: Self = Self(0x6c12);
     pub const HOST_RSP: Self = Self(0x6c14);
     pub const HOST_RIP: Self = Self(0x6c16);
 
     pub const GUEST_CR0: Self = Self(0x6800);
     pub const GUEST_CR3: Self = Self(0x6802);
     pub const GUEST_CR4: Self = Self(0x6804);
+    pub const GUEST_ES_BASE: Self = Self(0x6806);
+    pub const GUEST_CS_BASE: Self = Self(0x6808);
+    pub const GUEST_SS_BASE: Self = Self(0x680a);
+    pub const GUEST_DS_BASE: Self = Self(0x680c);
+    pub const GUEST_FS_BASE: Self = Self(0x680e);
+    pub const GUEST_GS_BASE: Self = Self(0x6810);
+    pub const GUEST_LDTR_BASE: Self = Self(0x6812);
+    pub const GUEST_TR_BASE: Self = Self(0x6814);
+    pub const GUEST_GDTR_BASE: Self = Self(0x6816);
+    pub const GUEST_IDTR_BASE: Self = Self(0x6818);
+    pub const GUEST_DR7: Self = Self(0x681a);
     pub const GUEST_RSP: Self = Self(0x681c);
     pub const GUEST_RIP: Self = Self(0x681e);
     pub const GUEST_RFLAGS: Self = Self(0x6820);
+    pub const GUEST_PENDING_DEBUG_EXCEPTIONS: Self = Self(0x6822);
+    pub const GUEST_IA32_SYSENTER_ESP: Self = Self(0x6824);
+    pub const GUEST_IA32_SYSENTER_EIP: Self = Self(0x6826);
 
     pub const PIN_BASED_CONTROLS: Self = Self(0x4000);
     pub const PRIMARY_PROCESSOR_CONTROLS: Self = Self(0x4002);
+    pub const EXCEPTION_BITMAP: Self = Self(0x4004);
+    pub const PAGE_FAULT_ERROR_CODE_MASK: Self = Self(0x4006);
+    pub const PAGE_FAULT_ERROR_CODE_MATCH: Self = Self(0x4008);
+    pub const CR3_TARGET_COUNT: Self = Self(0x400a);
     pub const EXIT_CONTROLS: Self = Self(0x400c);
+    pub const VM_EXIT_MSR_STORE_COUNT: Self = Self(0x400e);
+    pub const VM_EXIT_MSR_LOAD_COUNT: Self = Self(0x4010);
     pub const ENTRY_CONTROLS: Self = Self(0x4012);
+    pub const VM_ENTRY_MSR_LOAD_COUNT: Self = Self(0x4014);
+    pub const VM_ENTRY_INTERRUPTION_INFO: Self = Self(0x4016);
+    pub const VM_ENTRY_EXCEPTION_ERROR_CODE: Self = Self(0x4018);
+    pub const VM_ENTRY_INSTRUCTION_LENGTH: Self = Self(0x401a);
     pub const SECONDARY_PROCESSOR_CONTROLS: Self = Self(0x401e);
+
+    pub const VM_INSTRUCTION_ERROR: Self = Self(0x4400);
+    pub const VM_EXIT_REASON: Self = Self(0x4402);
+    pub const VM_EXIT_INTERRUPTION_INFO: Self = Self(0x4404);
+    pub const VM_EXIT_INSTRUCTION_LENGTH: Self = Self(0x440c);
+
+    pub const GUEST_ES_LIMIT: Self = Self(0x4800);
+    pub const GUEST_CS_LIMIT: Self = Self(0x4802);
+    pub const GUEST_SS_LIMIT: Self = Self(0x4804);
+    pub const GUEST_DS_LIMIT: Self = Self(0x4806);
+    pub const GUEST_FS_LIMIT: Self = Self(0x4808);
+    pub const GUEST_GS_LIMIT: Self = Self(0x480a);
+    pub const GUEST_LDTR_LIMIT: Self = Self(0x480c);
+    pub const GUEST_TR_LIMIT: Self = Self(0x480e);
+    pub const GUEST_GDTR_LIMIT: Self = Self(0x4810);
+    pub const GUEST_IDTR_LIMIT: Self = Self(0x4812);
+    pub const GUEST_ES_ACCESS_RIGHTS: Self = Self(0x4814);
+    pub const GUEST_CS_ACCESS_RIGHTS: Self = Self(0x4816);
+    pub const GUEST_SS_ACCESS_RIGHTS: Self = Self(0x4818);
+    pub const GUEST_DS_ACCESS_RIGHTS: Self = Self(0x481a);
+    pub const GUEST_FS_ACCESS_RIGHTS: Self = Self(0x481c);
+    pub const GUEST_GS_ACCESS_RIGHTS: Self = Self(0x481e);
+    pub const GUEST_LDTR_ACCESS_RIGHTS: Self = Self(0x4820);
+    pub const GUEST_TR_ACCESS_RIGHTS: Self = Self(0x4822);
+    pub const GUEST_INTERRUPTIBILITY: Self = Self(0x4824);
+    pub const GUEST_ACTIVITY_STATE: Self = Self(0x4826);
+    pub const GUEST_SMBASE: Self = Self(0x4828);
+    pub const GUEST_IA32_SYSENTER_CS: Self = Self(0x482a);
+    pub const HOST_IA32_SYSENTER_CS: Self = Self(0x4c00);
+
+    pub const CR0_GUEST_HOST_MASK: Self = Self(0x6000);
+    pub const CR4_GUEST_HOST_MASK: Self = Self(0x6002);
+    pub const CR0_READ_SHADOW: Self = Self(0x6004);
+    pub const CR4_READ_SHADOW: Self = Self(0x6006);
+    pub const EXIT_QUALIFICATION: Self = Self(0x6400);
 
     pub const fn raw(self) -> u64 {
         self.0

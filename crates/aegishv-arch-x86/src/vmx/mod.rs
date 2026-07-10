@@ -9,5 +9,6 @@ pub mod region;
 pub mod runtime;
 pub mod traps;
 pub mod vmcs;
+pub mod vmcs_config;
 
 pub use features::{VmxError, VmxErrorKind};
