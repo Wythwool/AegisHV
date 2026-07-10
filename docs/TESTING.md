@@ -304,7 +304,7 @@ The helper supports `x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu`. 
 
 ## Container Metadata Checks
 
-Normal PR tests do not publish or sign container images. The Docker build smoke in CI only verifies that the Dockerfile still builds.
+Normal PR tests do not publish or sign container images. The Docker build smoke in CI only verifies that the Dockerfile still builds. It makes at most three attempts with bounded backoff so a transient registry error does not fail the commit immediately; the final failed attempt still fails the job.
 
 Container metadata tests inspect the Dockerfile, `.dockerignore`, release docs, and workflow files for:
 
