@@ -7,11 +7,14 @@ use super::controls::{
     SECONDARY_ENABLE_VPID,
 };
 use super::ept::EptPointer;
-use super::features::{is_canonical_u64, VmxError, VmxErrorKind};
+use super::features::{
+    is_canonical_u64, validate_control_register, CrFixedBits, VmxError, VmxErrorKind,
+};
 use super::instructions::VmxInstructionExecutor;
 use super::vmcs::VmcsField;
 
 pub const VMX_CR0_PROTECTED_MODE_ENABLE: u64 = 1 << 0;
+pub const VMX_CR0_NUMERIC_ERROR: u64 = 1 << 5;
 pub const VMX_CR0_PAGING: u64 = 1 << 31;
 pub const VMX_CR4_PAE: u64 = 1 << 5;
 pub const VMX_CR4_VMXE: u64 = 1 << 13;
@@ -315,12 +318,25 @@ pub struct VmcsGuestState64 {
 
 impl VmcsGuestState64 {
     pub fn toy_long_mode(
-        cr0: u64,
+        cr0_fixed: CrFixedBits,
         cr3: GuestPhysical,
-        cr4: u64,
+        cr4_fixed: CrFixedBits,
         rsp: u64,
         rip: GuestVirtual,
     ) -> Result<Self, VmxError> {
+        let cr0 = validate_control_register(
+            VMX_CR0_PROTECTED_MODE_ENABLE
+                | VMX_CR0_NUMERIC_ERROR
+                | VMX_CR0_PAGING
+                | cr0_fixed.fixed0,
+            cr0_fixed,
+            "toy guest CR0 cannot satisfy the CPU's VMX fixed bits",
+        )?;
+        let cr4 = validate_control_register(
+            VMX_CR4_PAE | VMX_CR4_VMXE | cr4_fixed.fixed0,
+            cr4_fixed,
+            "toy guest CR4 cannot satisfy the CPU's VMX fixed bits",
+        )?;
         let state = Self {
             cr0,
             cr3,
@@ -347,8 +363,8 @@ impl VmcsGuestState64 {
     pub fn validate(self) -> Result<Self, VmxError> {
         if self.cr0 & (VMX_CR0_PROTECTED_MODE_ENABLE | VMX_CR0_PAGING)
             != (VMX_CR0_PROTECTED_MODE_ENABLE | VMX_CR0_PAGING)
-            || self.cr4 & VMX_CR4_PAE == 0
-            || self.cr4 & VMX_CR4_VMXE != 0
+            || self.cr0 & VMX_CR0_NUMERIC_ERROR == 0
+            || self.cr4 & (VMX_CR4_PAE | VMX_CR4_VMXE) != (VMX_CR4_PAE | VMX_CR4_VMXE)
         {
             return Err(VmxError::new(
                 VmxErrorKind::InvalidGuestState,
@@ -506,10 +522,36 @@ impl VmcsGuestState64 {
 pub struct VmcsExecutionState {
     pub controls: VmxControlFields,
     pub ept_pointer: EptPointer,
+    pub cr0_guest_host_mask: u64,
+    pub cr4_guest_host_mask: u64,
+    pub cr0_read_shadow: u64,
+    pub cr4_read_shadow: u64,
 }
 
 impl VmcsExecutionState {
-    pub fn validate(self) -> Result<Self, VmxError> {
+    pub fn toy_isolated(
+        controls: VmxControlFields,
+        ept_pointer: EptPointer,
+        guest: VmcsGuestState64,
+        cr0_fixed: CrFixedBits,
+        cr4_fixed: CrFixedBits,
+    ) -> Result<Self, VmxError> {
+        let state = Self {
+            controls,
+            ept_pointer,
+            cr0_guest_host_mask: cr0_fixed.fixed0
+                | !cr0_fixed.fixed1
+                | VMX_CR0_PROTECTED_MODE_ENABLE
+                | VMX_CR0_NUMERIC_ERROR
+                | VMX_CR0_PAGING,
+            cr4_guest_host_mask: cr4_fixed.fixed0 | !cr4_fixed.fixed1 | VMX_CR4_PAE | VMX_CR4_VMXE,
+            cr0_read_shadow: guest.cr0,
+            cr4_read_shadow: guest.cr4 & !VMX_CR4_VMXE,
+        };
+        state.validate(guest)
+    }
+
+    pub fn validate(self, guest: VmcsGuestState64) -> Result<Self, VmxError> {
         if self.controls.pin_based & PIN_BASED_NMI_EXITING == 0
             || self.controls.primary & PRIMARY_HLT_EXITING == 0
             || self.controls.primary & PRIMARY_ACTIVATE_SECONDARY_CONTROLS == 0
@@ -527,6 +569,19 @@ impl VmcsExecutionState {
                 "VMCS execution controls do not satisfy the isolated toy guest contract",
             ));
         }
+        if self.cr0_guest_host_mask
+            & (VMX_CR0_PROTECTED_MODE_ENABLE | VMX_CR0_NUMERIC_ERROR | VMX_CR0_PAGING)
+            != (VMX_CR0_PROTECTED_MODE_ENABLE | VMX_CR0_NUMERIC_ERROR | VMX_CR0_PAGING)
+            || self.cr4_guest_host_mask & (VMX_CR4_PAE | VMX_CR4_VMXE)
+                != (VMX_CR4_PAE | VMX_CR4_VMXE)
+            || self.cr0_read_shadow != guest.cr0
+            || self.cr4_read_shadow != guest.cr4 & !VMX_CR4_VMXE
+        {
+            return Err(VmxError::new(
+                VmxErrorKind::InvalidControlBits,
+                "VMCS CR masks do not isolate the toy guest control-register state",
+            ));
+        }
         Ok(self)
     }
 
@@ -539,7 +594,7 @@ impl VmcsExecutionState {
         guest: VmcsGuestState64,
         executor: &mut E,
     ) -> Result<(), VmxError> {
-        self.validate()?;
+        self.validate(guest)?;
         // SAFETY: the caller guarantees a current VMCS and the validated EPT
         // root and control dependencies remain live through VMX operation.
         unsafe {
@@ -570,10 +625,16 @@ impl VmcsExecutionState {
             executor.vmwrite(VmcsField::VM_ENTRY_INTERRUPTION_INFO.raw(), 0)?;
             executor.vmwrite(VmcsField::VM_ENTRY_EXCEPTION_ERROR_CODE.raw(), 0)?;
             executor.vmwrite(VmcsField::VM_ENTRY_INSTRUCTION_LENGTH.raw(), 0)?;
-            executor.vmwrite(VmcsField::CR0_GUEST_HOST_MASK.raw(), 0)?;
-            executor.vmwrite(VmcsField::CR4_GUEST_HOST_MASK.raw(), 0)?;
-            executor.vmwrite(VmcsField::CR0_READ_SHADOW.raw(), guest.cr0)?;
-            executor.vmwrite(VmcsField::CR4_READ_SHADOW.raw(), guest.cr4)?;
+            executor.vmwrite(
+                VmcsField::CR0_GUEST_HOST_MASK.raw(),
+                self.cr0_guest_host_mask,
+            )?;
+            executor.vmwrite(
+                VmcsField::CR4_GUEST_HOST_MASK.raw(),
+                self.cr4_guest_host_mask,
+            )?;
+            executor.vmwrite(VmcsField::CR0_READ_SHADOW.raw(), self.cr0_read_shadow)?;
+            executor.vmwrite(VmcsField::CR4_READ_SHADOW.raw(), self.cr4_read_shadow)?;
         }
         Ok(())
     }
@@ -588,9 +649,9 @@ pub struct MinimalVmcsConfiguration {
 
 impl MinimalVmcsConfiguration {
     pub fn validate(self) -> Result<Self, VmxError> {
-        self.execution.validate()?;
         self.host.validate()?;
         self.guest.validate()?;
+        self.execution.validate(self.guest)?;
         Ok(self)
     }
 
@@ -697,9 +758,12 @@ mod tests {
 
     fn guest() -> VmcsGuestState64 {
         VmcsGuestState64::toy_long_mode(
-            VMX_CR0_PROTECTED_MODE_ENABLE | VMX_CR0_PAGING,
+            CrFixedBits::new(
+                VMX_CR0_PROTECTED_MODE_ENABLE | VMX_CR0_NUMERIC_ERROR | VMX_CR0_PAGING,
+                u64::MAX,
+            ),
             GuestPhysical::new(0x2000).unwrap(),
-            VMX_CR4_PAE,
+            CrFixedBits::new(VMX_CR4_PAE | VMX_CR4_VMXE, u64::MAX),
             0x1ff0,
             GuestVirtual::new(0x1000),
         )
@@ -709,14 +773,21 @@ mod tests {
     fn configuration() -> MinimalVmcsConfiguration {
         let capabilities =
             EptCapabilities::new(EPT_VPID_CAP_PAGE_WALK_LENGTH_4 | EPT_VPID_CAP_MEMORY_TYPE_WB);
+        let guest = guest();
         MinimalVmcsConfiguration {
-            execution: VmcsExecutionState {
-                controls: controls(),
-                ept_pointer: EptPointer::new(HostPhysical::new(0x8000).unwrap(), capabilities)
-                    .unwrap(),
-            },
+            execution: VmcsExecutionState::toy_isolated(
+                controls(),
+                EptPointer::new(HostPhysical::new(0x8000).unwrap(), capabilities).unwrap(),
+                guest,
+                CrFixedBits::new(
+                    VMX_CR0_PROTECTED_MODE_ENABLE | VMX_CR0_NUMERIC_ERROR | VMX_CR0_PAGING,
+                    u64::MAX,
+                ),
+                CrFixedBits::new(VMX_CR4_PAE | VMX_CR4_VMXE, u64::MAX),
+            )
+            .unwrap(),
             host: host(),
-            guest: guest(),
+            guest,
         }
     }
 
@@ -771,6 +842,14 @@ mod tests {
         assert_eq!(
             recorded(&executor, VmcsField::GUEST_IA32_EFER),
             Some(VMX_EFER_LME | VMX_EFER_LMA)
+        );
+        assert_eq!(
+            recorded(&executor, VmcsField::CR4_GUEST_HOST_MASK),
+            Some(VMX_CR4_PAE | VMX_CR4_VMXE)
+        );
+        assert_eq!(
+            recorded(&executor, VmcsField::CR4_READ_SHADOW),
+            Some(VMX_CR4_PAE)
         );
         assert_eq!(recorded(&executor, VmcsField::HOST_RIP), Some(host().rip));
         assert!(executor.write_count > 70);

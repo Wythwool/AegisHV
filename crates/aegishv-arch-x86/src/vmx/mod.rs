@@ -1,3 +1,4 @@
+pub mod capabilities;
 pub mod controls;
 pub mod ept;
 pub mod exits;
