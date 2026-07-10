@@ -1,10 +1,18 @@
 #![no_std]
 
 pub mod early_memory;
+pub mod toy_guest;
 
 pub use early_memory::{
     allocate_type1_runtime_memory, Type1EarlyMemoryError, Type1RuntimeMemoryAllocation,
-    TYPE1_MAX_MEMORY_MAP_ENTRIES, TYPE1_RUNTIME_MAX_PHYSICAL_EXCLUSIVE, TYPE1_RUNTIME_MIN_PHYSICAL,
+    Type1ToyGuestHostPages, TYPE1_MAX_MEMORY_MAP_ENTRIES, TYPE1_RUNTIME_MAX_PHYSICAL_EXCLUSIVE,
+    TYPE1_RUNTIME_MIN_PHYSICAL,
+};
+pub use toy_guest::{
+    materialize_type1_toy_guest, Type1PageTableWrite, Type1PhysicalPageWriter,
+    Type1ToyGuestBuildPlan, Type1ToyGuestError, TYPE1_TOY_CODE, TYPE1_TOY_CODE_GPA,
+    TYPE1_TOY_CPUID_RIP, TYPE1_TOY_GUEST_PML4_GPA, TYPE1_TOY_GUEST_RIP, TYPE1_TOY_GUEST_RSP,
+    TYPE1_TOY_HLT_RIP, TYPE1_TOY_STACK_GPA,
 };
 
 use aegishv_arch_x86::svm::features::EferValue;
