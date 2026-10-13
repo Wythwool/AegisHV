@@ -149,7 +149,31 @@ python3 scripts/test-type1-boot.py el2 target/type1/aegishv-el2.elf --guest retu
 Use `x86_64` and `scripts/build-type1-limine-iso.sh --build-kernel` for SVM.
 An unset variable builds the instruction probes. The external examples cover
 a computed result, an IRQ-masked loop, code writes, data execution and out-of-range
-reads. `boot.yml` runs all six cases per backend and retains their logs and images.
+reads. `boot.yml` runs all seven cases per backend and retains their logs and images.
 EL1 guests return in x0 with `HVC #1`; SVM guests return in RAX with HLT. The
-examples have no OS runtime or devices. Serial JSON reports the terminal result
-or denied access; it is a separate format from the Linux trace sensor's events.
+examples have no OS runtime or devices. The `syscall` case also checks rejection
+of LSTAR/VBAR targets in a writable page. ARM checks VBAR on each exit; it does
+not trap the VBAR write itself on Cortex-A57. A transient change between exits
+can escape that check. SVM intercepts LSTAR writes before applying them.
+
+Linux boot CI uses Ubuntu 26.04. QEMU 8.2 drops PIC delivery after the inherited
+LAPIC is disabled with LINT0 masked, so the IRQ-masked SVM loop hangs there.
+Do not remove the timer probe to make that version pass.
+
+## Serial collection
+
+`tools/type1_events.py` runs outside the guest and needs only Python 3.10 or newer.
+It filters boot messages, validates kernel JSON, tracks missing sequence numbers
+and serves `/metrics`, `/healthz` and `/readyz` on the requested address.
+Sequence 1 begins a new boot. RIP and guest addresses are kept in JSON and never
+used as metric labels. The HTTP listener stays up at EOF; `stream_up` becomes 0.
+
+```sh
+python3 tools/type1_events.py --input target/type1/el2-serial.log \
+  --jsonl kernel-events.jsonl --metrics-file kernel.prom
+cat /dev/ttyUSB0 | python3 tools/type1_events.py --listen 127.0.0.1:9465
+```
+
+PMU cycle counters are present only when the kernel supplies a sample. No
+counter is manufactured for an unsupported backend. Serial JSON is a separate
+format from the Linux trace sensor's events.

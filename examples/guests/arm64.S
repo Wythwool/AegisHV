@@ -15,6 +15,11 @@ _start:
 .elseif CASE == 4
     mov x0, #0x80000000
     ldr x0, [x0]
+.elseif CASE == 5
+    mov x0, #0x40000000
+    add x0, x0, #0x1000
+    msr vbar_el1, x0
+    hvc #0
 .else
     adrp x4, scratch
     add x4, x4, :lo12:scratch

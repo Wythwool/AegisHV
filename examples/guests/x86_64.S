@@ -13,6 +13,11 @@ _start:
 .elseif CASE == 4
     mov eax, 0x40000000
     mov rax, [rax]
+.elseif CASE == 5
+    mov ecx, 0xc0000082
+    mov eax, 0x2000
+    xor edx, edx
+    wrmsr
 .else
     cmp qword ptr [rip + scratch], 0
     jne failed

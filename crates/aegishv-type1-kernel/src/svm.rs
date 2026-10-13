@@ -303,7 +303,7 @@ pub unsafe fn run(handoff: LimineMinimalHandoff) -> ! {
                     let allowed = flags.get((target >> 12) as usize) == Some(&5);
                     events.syscall(regs.rip, LSTAR, target, allowed).unwrap();
                     if !allowed {
-                        fail("aegishv:svm:syscall-target-denied", target);
+                        finish(0x12);
                     }
                     syscall_entry = target;
                     guest.state.set_lstar(target);

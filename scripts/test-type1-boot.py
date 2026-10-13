@@ -25,6 +25,9 @@ def check_events(output, backend, guest):
             assert event["kind"] == "vcpu_budget" and event["result"] == 20, event
         elif guest == "isolation" and backend == "svm":
             assert event["kind"] == "guest_exception" and event["vector"] == 14 and event["address"] == 0x40000000, event
+        elif guest == "syscall":
+            assert event["kind"] == "syscall_entry" and event["action"] == "deny", event
+            assert event["target"] == (0x2000 if backend == "svm" else 0x40001000), event
         else:
             base = 0x1000 if backend == "svm" else 0x40000000
             address = {"write": base, "execute": base + 0x1008, "isolation": 0x80000000}[guest]
@@ -50,7 +53,7 @@ def main():
     parser.add_argument("--qemu")
     parser.add_argument("--log", type=Path)
     parser.add_argument("--timeout", type=int, default=30)
-    parser.add_argument("--guest", choices=["builtin", "return", "spin", "write", "execute", "isolation"], default="builtin")
+    parser.add_argument("--guest", choices=["builtin", "return", "spin", "write", "execute", "isolation", "syscall"], default="builtin")
     args = parser.parse_args()
     digest = hashlib.sha256(args.image.read_bytes()).hexdigest()
     command = [args.qemu or ("qemu-system-x86_64" if args.backend == "svm" else "qemu-system-aarch64")]
@@ -66,6 +69,7 @@ def main():
         output = run.stdout
     except subprocess.TimeoutExpired as error:
         log.write_bytes(error.stdout or b"")
+        print((error.stdout or b"").decode("utf-8", errors="replace"), end="")
         raise SystemExit(f"QEMU timed out; serial log: {log}") from error
     log.write_bytes(output)
     text = output.decode("utf-8", errors="strict")

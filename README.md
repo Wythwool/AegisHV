@@ -14,6 +14,7 @@ an EL1 guest with Stage-2 protection and PMU cycle sampling. Both emit JSONL
 events over serial. Intel VMX has a separate entry path that still needs a
 hardware run. SVM and EL2 load static ELF64 guests and enforce a timer budget,
 including when the guest masks interrupts. These kernels are separate from the Linux sensor.
+`tools/type1_events.py` collects their serial JSON and exports Prometheus metrics.
 
 ## Build and replay
 

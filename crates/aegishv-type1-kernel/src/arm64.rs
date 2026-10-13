@@ -25,6 +25,7 @@ mod kernel {
     static mut TICKS: u64 = 0;
     static mut EXITS: u64 = 0;
     static mut PAGE_FLAGS: [u8; 32] = [0; 32];
+    static mut LAST_VBAR: u64 = 0;
     use aegishv_type1_kernel::GUEST_IMAGE as IMAGE;
     const BASE: u64 = 0x4000_0000;
 
@@ -211,6 +212,21 @@ mod kernel {
     #[no_mangle]
     pub unsafe extern "C" fn aegishv_el2_exit(frame: &mut Frame, vector: u64) {
         let events = unsafe { &mut *addr_of_mut!(EVENTS) };
+        if vector == 8 || vector == 9 {
+            let vbar: u64;
+            unsafe { asm!("mrs {}, vbar_el1", out(reg) vbar, options(nomem, nostack)) };
+            if vbar != unsafe { LAST_VBAR } {
+                let page = vbar.wrapping_sub(BASE) >> 12;
+                let allowed = vbar & 2047 == 0
+                    && unsafe { (*addr_of!(PAGE_FLAGS)).get(page as usize) } == Some(&5);
+                events.syscall(frame.pc, 0xc600, vbar, allowed).unwrap();
+                if !allowed {
+                    sample_pmu(events);
+                    stop(3);
+                }
+                unsafe { LAST_VBAR = vbar };
+            }
+        }
         unsafe { EXITS += 1 };
         if unsafe { EXITS } >= 4096 {
             events.stopped(frame.pc, unsafe { EXITS }, true).unwrap();
@@ -268,7 +284,6 @@ mod kernel {
                 let page = vbar.wrapping_sub(BASE) >> 12;
                 let allowed = vbar & 2047 == 0
                     && unsafe { (*addr_of!(PAGE_FLAGS)).get(page as usize) } == Some(&5);
-                events.syscall(frame.pc, 0xc600, vbar, allowed).unwrap();
                 if !allowed {
                     stop(1);
                 }

@@ -9,7 +9,7 @@ on:
 jobs:
   guest:
     name: ${{ matrix.backend }} guest exits
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -27,7 +27,11 @@ jobs:
           cargo clippy --locked -p aegishv-type1-kernel --bin aegishv-type1-kernel --target x86_64-unknown-none -- -D warnings
           cargo clippy --locked -p aegishv-type1-kernel --bin aegishv-el2 --target aarch64-unknown-none -- -D warnings
       - name: QEMU and ISO tools
-        run: sudo apt-get update && sudo apt-get install -y qemu-system-x86 qemu-system-arm xorriso
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86 qemu-system-arm xorriso
+          qemu-system-x86_64 --version
+          qemu-system-aarch64 --version
       - name: Build SVM image
         if: matrix.backend == 'svm'
         run: |
@@ -54,7 +58,7 @@ jobs:
         run: |
           export PATH="$PWD/target/limine:$PATH"
           export AEGISHV_LIMINE_DIR="$PWD/target/limine"
-          for guest in return spin write execute isolation; do
+          for guest in return spin write execute isolation syscall; do
             if [ "$BACKEND" = svm ]; then arch=x86_64; else arch=arm64; fi
             python3 scripts/build-type1-guest.py "$arch" "$guest"
             export AEGISHV_GUEST_ELF="$PWD/target/type1/guest-$arch-$guest.elf"
@@ -69,6 +73,12 @@ jobs:
             fi
             python3 scripts/test-type1-boot.py "$BACKEND" "$image" --guest "$guest" --log "target/type1/$BACKEND-$guest-serial.log"
           done
+      - name: Export kernel events
+        run: |
+          python3 -m unittest discover -s tests -p test_type1_events.py
+          for log in target/type1/*serial.log; do
+            python3 tools/type1_events.py --input "$log" --metrics-file "${log%.log}.prom"
+          done
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -77,3 +87,4 @@ jobs:
             target/type1/*serial*
             target/type1/*.elf
             target/type1/*.iso
+            target/type1/*.prom
