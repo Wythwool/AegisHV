@@ -1,0 +1,7 @@
+artifacts/
+coverage/
+target/
+corpus/*/crash-*
+corpus/*/timeout-*
+corpus/*/oom-*
+

@@ -1,0 +1,2 @@
+qemu-system-x86-222 [003] d..2 1.0: kvm_exit: reason EPT_VIOLATION vcpu 1 rip 0x4000 gpa 0x401001 error_code 0x2 cr3 0xbeef
+qemu-system-x86-222 [004] d..2 1.1: kvm_exit: reason EPT_VIOLATION vcpu 1 rip 0x4010 gpa 0x401abc error_code 0x4 cr3 0xbeef

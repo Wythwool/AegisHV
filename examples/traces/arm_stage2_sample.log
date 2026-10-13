@@ -1,0 +1,2 @@
+qemu-system-aarch64-5678 [002] d..2 124.000: kvm_exit: reason STAGE2_ABORT pc 0xffff00001234 far 0x2000 esr 0x90000000
+qemu-system-aarch64-5678 [002] d..2 124.010: kvm_exit: reason STAGE2_ABORT pc 0xffff00001238 far 0x2004 esr 0x94000040

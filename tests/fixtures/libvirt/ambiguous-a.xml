@@ -1,0 +1,9 @@
+<domain type="kvm">
+  <name>ambiguous-a</name>
+  <uuid>aaaaaaaa-1111-2222-3333-444444444444</uuid>
+  <metadata>
+    <aegishv:qemu xmlns:aegishv="https://github.com/Nullbit1/AegisHV"
+                  pid="6262"
+                  qmp_socket="/run/libvirt/qemu/ambiguous-a.monitor"/>
+  </metadata>
+</domain>

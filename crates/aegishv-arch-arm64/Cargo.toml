@@ -1,0 +1,14 @@
+[package]
+name = "aegishv-arch-arm64"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.81"
+license = "MIT"
+description = "ARM64 EL2, Stage-2 and interrupt models"
+
+[features]
+default = []
+std = ["aegishv-hypervisor-core/std"]
+
+[dependencies]
+aegishv-hypervisor-core = { path = "../aegishv-hypervisor-core" }

@@ -1,0 +1,145 @@
+version = 1
+
+[general]
+# Write -> exec window on one VM/address space/page; no permission changes.
+wx_window_ms = 5000
+# Alert cooldown, separate from policy cooldown.
+wx_cooldown_ms = 30000
+wx_max_pages = 200000
+page_size = 4096
+flush_every = 64
+quiet = false
+
+[allow]
+ignore_vm = ["builder", "ci-runner"]
+
+[pmu]
+# Thread heartbeats only. Unavailable hardware counters stay null.
+enable = false
+sample_ms = 1000
+# Rediscovery interval: 1000..=3600000 ms.
+rediscover_ms = 30000
+qemu_pid = 0
+vm_regex = ""
+
+[metrics]
+# Allow startup without metrics if the configured listener cannot bind.
+allow_bind_failure = false
+
+[detectors]
+# Library settings; the daemon does not run this scheduler.
+enable = false
+default_budget_ms = 50
+default_max_findings = 128
+state_file = "/var/lib/aegishv/detectors.state"
+
+[[detectors.rules]]
+id = "kernel_text_tamper"
+enabled = true
+budget_ms = 50
+max_findings = 64
+
+[[detectors.rules]]
+id = "syscall_hook"
+enabled = true
+budget_ms = 50
+max_findings = 64
+
+[[detectors.rules]]
+id = "hidden_process"
+enabled = true
+budget_ms = 100
+max_findings = 256
+
+[[detectors.rules]]
+id = "executable_anonymous_memory"
+enabled = true
+budget_ms = 100
+max_findings = 256
+
+[trap]
+# In-memory trap model. No live EPT/NPT/Stage-2 writes.
+enable = false
+backend = "synthetic"
+storm_window_ms = 1000
+storm_max_hits = 256
+storm_mode = "fail_closed"
+jit_window_ms = 5
+jit_max_pages = 2
+
+[spool]
+# Spool primary JSONL write failures. Disabled means fail-fast output.
+enable = false
+dir = "/var/lib/aegishv/spool"
+max_bytes = 67108864
+segment_bytes = 4194304
+# none: v1 plaintext; rle: compressed v2 segments.
+compression = "none"
+
+[syslog]
+# UDP mirror; numeric ip:port required.
+enable = false
+address = "127.0.0.1:514"
+facility = "local0"
+max_message_bytes = 8192
+
+[journald]
+# Linux journald mirror. Enabling this on another OS fails startup.
+enable = false
+socket = "/run/systemd/journal/socket"
+identifier = "aegishv"
+max_message_bytes = 8192
+
+[identity]
+# Identity from /proc and optional XML files. XML start-time ticks avoid PID reuse.
+enable = true
+cache_ms = 5000
+# Require a stable actions.qmp.vm_id match.
+require_stable_qmp_match = true
+# medium or high, plus verified PID/TID start times.
+min_action_confidence = "high"
+qmp_socket_dirs = ["/run/libvirt/qemu", "/var/run/libvirt/qemu", "/run/qemu"]
+# Domain XML snapshots with host pid/tid metadata; see docs/DEPLOYMENT.md.
+libvirt_xml_dir = ""
+
+[actions]
+timeout_ms = 2000
+retries = 1
+# New dump files only, below this root, with no symlink components.
+dump_root = "/var/lib/aegishv/dumps"
+
+[[actions.qmp]]
+# vm fallback requires identity.require_stable_qmp_match=false.
+vm_id = "libvirt:11111111-2222-3333-4444-555555555555"
+vm = "win11|prod-linux"
+socket = "/run/libvirt/qemu/win11.monitor"
+
+[[wx_allow.entries]]
+vm = "chrome|java|node"
+gpa_prefix = "0x7f"
+
+[[policy.rules]]
+name = "dry-run-pause-on-critical-wx"
+id = "policy-001"
+priority = 200
+mode = "dry_run"
+cooldown_ms = 15000
+action = { kind = "pause_vm" }
+match = { category = "wx", severity_at_least = "critical" }
+
+[[policy.rules]]
+name = "manual-approval-for-guest-dump"
+id = "policy-002"
+priority = 150
+mode = "enforce"
+cooldown_ms = 60000
+action = { kind = "manual_approval" }
+match = { category = "exit", severity_at_least = "high", reason_regex = "VIOLATION|NPF|STAGE2" }
+
+[[policy.rules]]
+name = "suppress-known-ci-noise"
+id = "policy-003"
+priority = 50
+mode = "suppress"
+cooldown_ms = 10000
+match = { vm_regex = "ci-runner" }

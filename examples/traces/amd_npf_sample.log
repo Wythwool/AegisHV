@@ -1,0 +1,2 @@
+qemu-system-x86_64-4321 [003] d..2 223.456: kvm_exit: reason NPF rip 0xffff888000001000 gpa 0x2000 info 0x10
+qemu-system-x86_64-4321 [003] d..2 223.466: kvm_exit: reason NPF rip 0xffff888000001000 gpa 0x2000 info 0x2

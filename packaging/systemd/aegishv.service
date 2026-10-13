@@ -1,0 +1,35 @@
+[Unit]
+Description=AegisHV host-side KVM telemetry sensor
+Documentation=file:/usr/share/doc/aegishv/DEPLOYMENT.md
+After=network-online.target libvirtd.service virtqemud.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=aegishv
+Group=aegishv
+# Adjust these groups to match the host. tracefs often still needs root-side ACL setup.
+SupplementaryGroups=kvm libvirt libvirt-qemu
+ExecStart=/usr/local/bin/aegishv run --tracefs /sys/kernel/tracing --config /etc/aegishv/config.toml --jsonl /var/log/aegishv/events.jsonl --listen 127.0.0.1:9108 --quiet
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=/sys/kernel/tracing /sys/kernel/debug/tracing /run/libvirt /var/run/libvirt
+ReadWritePaths=/var/log/aegishv /run/aegishv
+RuntimeDirectory=aegishv
+StateDirectory=aegishv
+LogsDirectory=aegishv
+AmbientCapabilities=
+CapabilityBoundingSet=
+LockPersonality=yes
+MemoryDenyWriteExecute=no
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

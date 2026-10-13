@@ -1,0 +1,7 @@
+aegishv-vmi-fixture-v1
+id=x86_64-unmapped
+name=x86_64 unmapped
+arch=x86_64
+memory=memory/snapshot.map
+registers=registers/x86_64_basic.regs
+profile=none

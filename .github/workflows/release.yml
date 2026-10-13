@@ -1,0 +1,76 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+  artifact-metadata: write
+
+jobs:
+  release:
+    name: release ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    env:
+      SYFT_VERSION: v1.18.1
+      COSIGN_VERSION: v3.0.5
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-unknown-linux-gnu
+          - x86_64-unknown-linux-musl
+          - aarch64-unknown-linux-gnu
+          - aarch64-unknown-linux-musl
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@cross
+      - name: Locked dependency graph
+        run: cargo metadata --locked --format-version 1 >/dev/null
+      - name: Build locked release
+        run: cross build --locked --release --target ${{ matrix.target }}
+      - name: Package
+        run: bash ./scripts/package-release.sh ${{ matrix.target }}
+      - name: Install Syft
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          curl -sSfL "https://raw.githubusercontent.com/anchore/syft/${SYFT_VERSION}/install.sh" | sh -s -- -b "$HOME/.local/bin" "$SYFT_VERSION"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Syft version
+        run: syft version
+      - name: Generate SBOM
+        run: bash ./scripts/generate-sbom.sh ${{ matrix.target }}
+      - name: Checksums
+        run: |
+          find dist -maxdepth 1 -type f \( -name "aegishv-*-${{ matrix.target }}.tar.gz" -o -name "aegishv-*-${{ matrix.target }}.sbom.cdx.json" \) -print0 \
+            | sort -z \
+            | xargs -0 sha256sum > dist/SHA256SUMS-${{ matrix.target }}.txt
+      - name: Generate SLSA provenance
+        id: provenance
+        uses: actions/attest@v4.1.0
+        with:
+          subject-checksums: dist/SHA256SUMS-${{ matrix.target }}.txt
+      - name: Collect SLSA provenance bundle
+        run: bash ./scripts/collect-provenance-bundle.sh ${{ matrix.target }} "${{ steps.provenance.outputs.bundle-path }}"
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v4.1.0
+        with:
+          cosign-release: ${{ env.COSIGN_VERSION }}
+      - name: Cosign version
+        run: cosign version
+      - name: Sign release artifacts
+        run: bash ./scripts/sign-release-artifacts.sh ${{ matrix.target }}
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.tar.gz
+            dist/*.sbom.cdx.json
+            dist/SHA256SUMS-*.txt
+            dist/*.tar.gz.sigstore.json
+            dist/*.sbom.cdx.json.sigstore.json
+            dist/SHA256SUMS-*.txt.sigstore.json
+            dist/*.slsa-provenance.sigstore.json

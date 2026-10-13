@@ -1,0 +1,33 @@
+interface(`aegishv_read_config',`
+    gen_require(`
+        type aegishv_etc_t;
+    ')
+
+    read_files_pattern($1, aegishv_etc_t, aegishv_etc_t)
+    read_lnk_files_pattern($1, aegishv_etc_t, aegishv_etc_t)
+')
+
+interface(`aegishv_read_shared_files',`
+    gen_require(`
+        type aegishv_share_t;
+        type aegishv_doc_t;
+    ')
+
+    read_files_pattern($1, aegishv_share_t, aegishv_share_t)
+    read_files_pattern($1, aegishv_doc_t, aegishv_doc_t)
+')
+
+interface(`aegishv_manage_state',`
+    gen_require(`
+        type aegishv_log_t;
+        type aegishv_var_lib_t;
+        type aegishv_runtime_t;
+    ')
+
+    manage_dirs_pattern($1, aegishv_log_t, aegishv_log_t)
+    manage_files_pattern($1, aegishv_log_t, aegishv_log_t)
+    manage_dirs_pattern($1, aegishv_var_lib_t, aegishv_var_lib_t)
+    manage_files_pattern($1, aegishv_var_lib_t, aegishv_var_lib_t)
+    manage_dirs_pattern($1, aegishv_runtime_t, aegishv_runtime_t)
+    manage_files_pattern($1, aegishv_runtime_t, aegishv_runtime_t)
+')

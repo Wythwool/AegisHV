@@ -1,0 +1,2 @@
+qemu-system-x86-111 [000] d..2 1.0: kvm_exit: reason EPT_VIOLATION vcpu 0 rip 0x1000 gpa 0x7f000 error_code 0x2 cr3 0xaaa
+qemu-system-x86-111 [001] d..2 1.1: kvm_exit: reason EPT_VIOLATION vcpu 0 rip 0x1010 gpa 0x7f000 error_code 0x4 cr3 0xaaa

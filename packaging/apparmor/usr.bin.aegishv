@@ -1,0 +1,73 @@
+# Optional AppArmor profile for AegisHV.
+# Install and enforce only after local review with the deployment's tracefs,
+# QMP socket, spool, dump, syslog, journald, and snapshot paths.
+
+profile aegishv /usr/bin/aegishv flags=(attach_disconnected,mediate_deleted) {
+  /usr/bin/aegishv mr,
+  /usr/local/bin/aegishv mr,
+
+  /etc/ld.so.cache r,
+  /etc/nsswitch.conf r,
+  /etc/hosts r,
+  /etc/resolv.conf r,
+  /lib/ r,
+  /lib/** r,
+  /lib64/ r,
+  /lib64/** r,
+  /usr/lib/ r,
+  /usr/lib/** r,
+  /usr/lib64/ r,
+  /usr/lib64/** r,
+
+  /etc/aegishv/ r,
+  /etc/aegishv/** r,
+  /usr/share/aegishv/ r,
+  /usr/share/aegishv/** r,
+  /usr/share/doc/aegishv/ r,
+  /usr/share/doc/aegishv/** r,
+
+  /sys/kernel/tracing/ r,
+  /sys/kernel/tracing/** r,
+  /sys/kernel/debug/tracing/ r,
+  /sys/kernel/debug/tracing/** r,
+
+  /proc/ r,
+  /proc/sys/kernel/random/boot_id r,
+  /proc/[0-9]*/stat r,
+  /proc/[0-9]*/cmdline r,
+  /proc/[0-9]*/cgroup r,
+  /proc/[0-9]*/comm r,
+  /proc/[0-9]*/task/ r,
+  /proc/[0-9]*/task/[0-9]*/stat r,
+  /proc/[0-9]*/task/[0-9]*/comm r,
+
+  /var/log/aegishv/ rw,
+  /var/log/aegishv/** rwk,
+  /var/lib/aegishv/ rw,
+  /var/lib/aegishv/** rwk,
+  /run/aegishv/ rw,
+  /run/aegishv/** rwk,
+
+  /run/libvirt/qemu/ r,
+  /run/libvirt/qemu/** rw,
+  /var/run/libvirt/qemu/ r,
+  /var/run/libvirt/qemu/** rw,
+
+  /run/systemd/journal/socket w,
+  /run/systemd/journal/dev-log w,
+  /dev/log w,
+
+  network inet stream,
+  network inet6 stream,
+  network inet dgram,
+  network inet6 dgram,
+  unix (create, connect, send, receive, getattr, getopt, setopt) type=stream,
+  unix (create, connect, send, receive, getattr, getopt, setopt) type=dgram,
+
+  signal (receive),
+
+  deny /etc/shadow r,
+  deny /root/** rwklx,
+  deny /home/** w,
+  deny /tmp/** x,
+}

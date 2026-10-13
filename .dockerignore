@@ -1,0 +1,14 @@
+target
+.git
+dist
+.pytest_cache
+__pycache__
+node_modules
+.cache
+*.zip
+*.7z
+*.tar
+*.tar.gz
+*.tgz
+*.rpm
+*.deb

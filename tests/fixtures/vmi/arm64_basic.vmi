@@ -1,0 +1,9 @@
+aegishv-vmi-fixture-v1
+id=arm64-basic
+name=arm64 offline fixture
+arch=arm64
+memory=memory/arm64_translate.map
+registers=registers/arm64_translate.regs
+profile=none
+translation=name=zero gva=0x0 gpa=0x0 page_size=0x1000 mode=arm64-stage1-4k readable=true writable=true executable=true user=true
+translation=name=upper-page gva=0xffff000000004000 gpa=0x4000 page_size=0x4000 mode=arm64-stage1-16k readable=true writable=false executable=true user=false

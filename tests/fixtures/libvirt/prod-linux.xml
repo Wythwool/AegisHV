@@ -1,0 +1,11 @@
+<domain type="kvm">
+  <name>prod-linux</name>
+  <uuid>aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee</uuid>
+  <metadata>
+    <aegishv:qemu xmlns:aegishv="https://github.com/Nullbit1/AegisHV"
+                  pid="5252"
+                  qmp_socket="/run/libvirt/qemu/prod-linux.monitor">
+      <aegishv:thread tid="5253"/>
+    </aegishv:qemu>
+  </metadata>
+</domain>

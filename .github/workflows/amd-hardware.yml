@@ -1,0 +1,61 @@
+name: opt-in AMD SVM checks
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner_label:
+        description: "Self-hosted AMD Linux runner label with reviewed KVM permissions"
+        required: true
+        default: "aegishv-hardware-amd"
+        type: string
+      run_svm_host_check:
+        description: "Run AMD SVM host prerequisite check"
+        required: true
+        default: true
+        type: boolean
+      log_retention_days:
+        description: "Retention days for AMD lab logs"
+        required: true
+        default: "7"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  amd-host:
+    name: manual AMD SVM host checks
+    runs-on: ${{ inputs.runner_label }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Prepare log directory
+        run: |
+          mkdir -p /tmp/aegishv-amd-lab
+          uname -a | tee /tmp/aegishv-amd-lab/uname.txt
+          id | tee /tmp/aegishv-amd-lab/id.txt
+          test -e /dev/kvm && ls -l /dev/kvm | tee /tmp/aegishv-amd-lab/kvm.txt || true
+          grep -m1 -E '^(vendor_id|flags|Features)' /proc/cpuinfo | tee /tmp/aegishv-amd-lab/cpuinfo.txt || true
+
+      - name: Locked AMD SVM model tests
+        run: |
+          cargo test --locked -p aegishv-arch-x86 --all-features svm::
+
+      - name: AMD SVM host prerequisite check
+        if: ${{ inputs.run_svm_host_check }}
+        run: |
+          scripts/svm-amd-lab-smoke.sh --check-host --log-dir /tmp/aegishv-amd-lab
+
+      - name: Upload AMD lab logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: aegishv-amd-lab-logs
+          path: /tmp/aegishv-amd-lab
+          if-no-files-found: warn
+          retention-days: ${{ fromJSON(inputs.log_retention_days) }}

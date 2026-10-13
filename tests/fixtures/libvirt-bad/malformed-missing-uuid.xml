@@ -1,0 +1,8 @@
+<domain type="kvm">
+  <name>missing-uuid</name>
+  <metadata>
+    <aegishv:qemu xmlns:aegishv="https://github.com/Nullbit1/AegisHV"
+                  pid="7272"
+                  qmp_socket="/run/libvirt/qemu/missing-uuid.monitor"/>
+  </metadata>
+</domain>

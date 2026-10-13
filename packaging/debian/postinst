@@ -1,0 +1,32 @@
+#!/bin/sh
+set -e
+
+if ! getent group aegishv >/dev/null; then
+    addgroup --system aegishv
+fi
+
+if ! getent passwd aegishv >/dev/null; then
+    adduser --system \
+        --ingroup aegishv \
+        --home /var/lib/aegishv \
+        --no-create-home \
+        --disabled-login \
+        --gecos "AegisHV sensor" \
+        aegishv
+fi
+
+install -d -o aegishv -g aegishv -m 0750 /var/lib/aegishv
+install -d -o aegishv -g aegishv -m 0750 /var/lib/aegishv/dumps
+install -d -o aegishv -g aegishv -m 0750 /var/lib/aegishv/spool
+install -d -o aegishv -g aegishv -m 0750 /var/log/aegishv
+install -d -o aegishv -g aegishv -m 0750 /run/aegishv
+
+if command -v systemd-tmpfiles >/dev/null 2>&1; then
+    systemd-tmpfiles --create /usr/lib/tmpfiles.d/aegishv.conf || true
+fi
+
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl daemon-reload || true
+fi
+
+exit 0

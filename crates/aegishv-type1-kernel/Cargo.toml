@@ -1,0 +1,12 @@
+[package]
+name = "aegishv-type1-kernel"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.81"
+license = "MIT"
+description = "Experimental x86_64 kernel"
+
+[dependencies]
+aegishv-arch-x86 = { path = "../aegishv-arch-x86" }
+aegishv-hypervisor-core = { path = "../aegishv-hypervisor-core" }
+aegishv-type1-boot = { path = "../aegishv-type1-boot" }

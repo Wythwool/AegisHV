@@ -1,0 +1,15 @@
+aegishv-windows-symbol-cache-v1
+profile_version=aegishv-windows-profile-v1
+pdb_file=ntkrnlmp.pdb
+pdb_guid=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+pdb_age=2
+source=synthetic fixture symbols
+symbol=ntoskrnl.exe,0x0,0x400000
+symbol=PsInitialSystemProcess,0x3000,0x8
+symbol=PsLoadedModuleList,0x4000,0x10
+symbol=aegishv_current_eprocess,0x5000,0x8
+symbol=KiSystemCall64,0x6000,0x80
+symbol=NtAcceptConnectPort,0x7000,0x40
+symbol=NtWriteFile,0x7100,0x40
+symbol=PspCreateProcessNotifyRoutine,0x8000,0x40
+symbol=KeServiceDescriptorTable,0x9000,0x20
