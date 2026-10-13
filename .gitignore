@@ -6,6 +6,7 @@
 *.jsonl
 *.bin
 *.sock
+__pycache__/
 
 !corpus/**/*.log
 !examples/events/**/*.jsonl

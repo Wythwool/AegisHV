@@ -167,6 +167,11 @@ def main():
     args = parser.parse_args()
     if not (args.jsonl or args.metrics_file or args.listen):
         parser.error("choose --jsonl, --metrics-file or --listen")
+    paths = [path for path in [Path(args.input) if args.input != "-" else None, args.jsonl, args.metrics_file] if path]
+    for index, path in enumerate(paths):
+        for previous in paths[:index]:
+            if path.resolve() == previous.resolve() or (path.exists() and previous.exists() and path.samefile(previous)):
+                parser.error("input, JSONL and metrics paths must refer to different files")
     metrics = Metrics()
     server = None
     if args.listen:

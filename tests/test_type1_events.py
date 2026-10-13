@@ -2,6 +2,9 @@ import importlib.util
 import io
 import json
 from pathlib import Path
+import subprocess
+import sys
+import tempfile
 import threading
 import unittest
 from urllib.request import urlopen
@@ -17,6 +20,21 @@ def event(sequence=1, **fields):
 
 
 class SerialEvents(unittest.TestCase):
+    def test_cli_rejects_input_as_output_without_changing_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "serial.jsonl"
+            data = json.dumps(event()) + "\n"
+            source.write_text(data, encoding="utf-8")
+            alias = source.with_name("alias.jsonl")
+            alias.hardlink_to(source)
+            for destination in (source, alias):
+                for option in ("--jsonl", "--metrics-file"):
+                    result = subprocess.run([sys.executable, str(spec.origin), "--input", str(source), option, str(destination)],
+                                            capture_output=True, timeout=5)
+                    self.assertEqual(result.returncode, 2)
+                    self.assertIn(b"must refer to different files", result.stderr)
+                    self.assertEqual(source.read_text(encoding="utf-8"), data)
+
     def test_counts_gaps_and_restarts_without_unbounded_labels(self):
         metrics = bridge.Metrics()
         output = io.StringIO()
