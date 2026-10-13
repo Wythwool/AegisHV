@@ -42,9 +42,12 @@ The VMI modules provide offline readers, translation, profiles, and inspection.
 They consume snapshots supplied by the caller. The sensor has no live guest
 memory or register reader.
 
-The kernel is a separate `no_std` binary. Limine provides the initial mappings,
-then the Intel path switches to its own page tables before guest entry.
-[Kernel notes](TYPE1_BOOT_BOUNDARY.md) describe the fixed guest and current limits.
+The kernels are separate `no_std` binaries. Limine boots the x86_64 VMX/SVM paths;
+the ARM64 image enters EL2 directly. Both install their own host page tables.
+SVM and EL2 load bounded static ELF guests, enforce page permissions and timer
+budgets, and emit serial JSON. `tools/type1_events.py` converts that stream to
+Prometheus metrics outside the guest. [Kernel notes](TYPE1_BOOT_BOUNDARY.md)
+describe the memory layouts, Intel's fixed guest and current limits.
 
 The core crate holds allocation, ownership, ring, VM, and scheduler models.
 The device crate holds virtio and device-state models. These are library code;

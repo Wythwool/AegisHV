@@ -42,7 +42,17 @@ xorriso. [Kernel notes](TYPE1_BOOT_BOUNDARY.md) cover the full boot command.
 Unit tests and compilation do not execute VMX, SVM, or EL2 instructions.
 `scripts/type1-qemu-smoke.sh` checks serial markers;
 `scripts/type1-qemu-evidence.sh` also records and validates the image digest and
-timer diagnostics. Real guest-entry testing needs nested VMX or bare metal.
+timer diagnostics for Intel. VMX execution needs nested VMX or bare metal.
+
+`boot.yml` builds and executes seven cases each for SVM and EL2 on Linux QEMU TCG.
+The cases check computed results, preemption with IRQs masked, code write denial,
+data execute denial, isolation and invalid syscall targets. The runner checks
+exit codes, serial events and image hashes. It also tests the serial collector
+and converts the actual boot logs to Prometheus output.
+
+`nested-kvm.yml` is a manual run with hardware acceleration. It selects the strict
+Intel test on a VMX host, or the seven SVM cases on an AMD host. The available
+AMD hosts have passed; Intel and physical Arm remain unverified.
 
 ## Host checks
 
