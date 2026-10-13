@@ -1,7 +1,10 @@
 #![no_std]
 
 pub mod early_memory;
+pub mod elf;
 pub mod events;
+
+pub static GUEST_IMAGE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/guest.elf"));
 pub mod host_paging;
 pub mod toy_guest;
 

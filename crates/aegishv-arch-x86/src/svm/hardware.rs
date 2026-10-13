@@ -26,15 +26,12 @@ impl SvmInstructionExecutor for HardwareSvmInstructions {
         Ok(enabled)
     }
 
-    unsafe fn vmrun(&mut self, vmcb: HostPhysical) -> Result<(), SvmError> {
-        unsafe {
-            asm!(
-                "vmrun",
-                in("rax") vmcb.get(),
-                options(nostack),
-            );
-        }
-        Ok(())
+    unsafe fn vmrun(&mut self, _vmcb: HostPhysical) -> Result<(), SvmError> {
+        // This interface has no GPR/FX state or host VMCB. The kernel owns entry.
+        Err(SvmError::new(
+            super::features::SvmErrorKind::UnsupportedCapability,
+            "VMRUN requires the kernel context switch gate",
+        ))
     }
 
     unsafe fn vmload(&mut self, vmcb: HostPhysical) -> Result<(), SvmError> {
@@ -124,8 +121,9 @@ mod tests {
     use crate::svm::features::EFER_SVME;
 
     #[test]
-    fn hardware_executor_can_be_constructed_without_host_access() {
-        let _executor = HardwareSvmInstructions::new();
+    fn contextless_vmrun_is_rejected_before_host_access() {
+        let mut executor = HardwareSvmInstructions::new();
+        assert!(unsafe { executor.vmrun(HostPhysical::new(0x4000).unwrap()) }.is_err());
     }
 
     #[test]

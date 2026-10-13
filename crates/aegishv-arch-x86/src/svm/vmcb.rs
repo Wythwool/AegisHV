@@ -102,6 +102,15 @@ impl VmcbControlArea {
         self.write_u32(0x008, mask);
     }
 
+    pub fn intercept_debug_registers(&mut self) {
+        self.write_u16(0x004, u16::MAX);
+        self.write_u16(0x006, u16::MAX);
+    }
+
+    pub fn mask_guest_interrupts(&mut self) {
+        self.write_u32(0x060, 1 << 24);
+    }
+
     pub fn next_rip(&self) -> u64 {
         self.read_u64(0x0c8)
     }

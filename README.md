@@ -12,7 +12,8 @@ with NPT, register/FPU switching, intercepted syscall MSRs, and read-only code
 plus non-executable data. The ARM64 kernel boots at EL2 on QEMU `virt` and runs
 an EL1 guest with Stage-2 protection and PMU cycle sampling. Both emit JSONL
 events over serial. Intel VMX has a separate entry path that still needs a
-hardware run. These kernels are separate from the Linux sensor.
+hardware run. SVM and EL2 load static ELF64 guests and enforce a timer budget,
+including when the guest masks interrupts. These kernels are separate from the Linux sensor.
 
 ## Build and replay
 
@@ -57,7 +58,7 @@ permissions. The VMI and detector libraries work with offline snapshots and
 fixtures. PMU collection currently emits thread heartbeats with unavailable
 counters set to `null`.
 
-The kernels currently run fixed guests on one CPU. General OS loading, SMP,
+The kernels currently run small freestanding guests on one CPU. General OS loading, SMP,
 device backends and IOMMU isolation are unfinished. QEMU TCG guest runs do not
 establish behavior on physical Intel, AMD or Arm systems.
 See [the kernel notes](docs/TYPE1_BOOT_BOUNDARY.md).

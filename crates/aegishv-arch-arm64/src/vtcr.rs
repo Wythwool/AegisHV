@@ -10,7 +10,6 @@ pub enum PhysicalAddressSize {
     Bits42,
     Bits44,
     Bits48,
-    Bits52,
 }
 
 impl PhysicalAddressSize {
@@ -22,7 +21,6 @@ impl PhysicalAddressSize {
             42 => Ok(Self::Bits42),
             44 => Ok(Self::Bits44),
             48 => Ok(Self::Bits48),
-            52 => Ok(Self::Bits52),
             _ => Err(Arm64Error::new(
                 Arm64ErrorKind::UnsupportedIpaSize,
                 "ARM64 VTCR IPA size is not supported by the model",
@@ -38,7 +36,6 @@ impl PhysicalAddressSize {
             Self::Bits42 => 3,
             Self::Bits44 => 4,
             Self::Bits48 => 5,
-            Self::Bits52 => 6,
         }
     }
 
@@ -50,7 +47,6 @@ impl PhysicalAddressSize {
             Self::Bits42 => 42,
             Self::Bits44 => 44,
             Self::Bits48 => 48,
-            Self::Bits52 => 52,
         }
     }
 }
@@ -84,7 +80,12 @@ impl VtcrConfig {
 
     pub const fn encode(self) -> u64 {
         let t0sz = 64 - self.ipa_size.bits() as u64;
-        let sl0 = 1u64 << 6;
+        // One root page: level 1 covers up to 39 IPA bits, level 0 up to 48.
+        let sl0 = if self.ipa_size.bits() <= 39 {
+            1u64 << 6
+        } else {
+            2u64 << 6
+        };
         let sh0_inner = if self.inner_shareable { 3u64 << 12 } else { 0 };
         let orgn0_wb = 1u64 << 10;
         let irgn0_wb = 1u64 << 8;
@@ -92,7 +93,14 @@ impl VtcrConfig {
             VmidBits::Bits8 => 0,
             VmidBits::Bits16 => 1u64 << 19,
         };
-        t0sz | sl0 | irgn0_wb | orgn0_wb | sh0_inner | (self.ipa_size.ps_field() << 16) | vs
+        (1 << 31)
+            | t0sz
+            | sl0
+            | irgn0_wb
+            | orgn0_wb
+            | sh0_inner
+            | (self.ipa_size.ps_field() << 16)
+            | vs
     }
 }
 
@@ -111,10 +119,10 @@ impl Vttbr {
                 "ARM64 VTTBR VMID is outside the supported VMID width",
             ));
         }
-        if root.get() % 4096 != 0 {
+        if root.get() % 4096 != 0 || root.get() >= 1 << 48 {
             return Err(Arm64Error::new(
                 Arm64ErrorKind::InvalidVttbr,
-                "ARM64 VTTBR root must be 4K-aligned",
+                "ARM64 VTTBR root must be 4K-aligned and below 2^48",
             ));
         }
         Ok(Self {
@@ -142,6 +150,18 @@ mod tests {
         assert_eq!(vtcr & 0x3f, 16);
         assert_ne!(vtcr & (1 << 19), 0);
         assert_eq!((vtcr >> 16) & 0x7, 5);
+        assert_eq!((vtcr >> 6) & 3, 2);
+        assert_ne!(vtcr & (1 << 31), 0);
+        assert_eq!(
+            (VtcrConfig::new(36, Granule::Size4K, VmidBits::Bits8)
+                .unwrap()
+                .encode()
+                >> 6)
+                & 3,
+            1
+        );
+        assert!(VtcrConfig::new(52, Granule::Size4K, VmidBits::Bits8).is_err());
+        assert!(Vttbr::new(1, HostPhysical::new(1 << 48).unwrap(), VmidBits::Bits8).is_err());
     }
 
     #[test]

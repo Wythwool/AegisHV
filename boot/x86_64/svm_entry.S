@@ -4,6 +4,7 @@
 // rdi = guest VMCB PA, rsi = host VMCB PA, rdx = GPRs,
 // rcx = host FXSAVE area, r8 = guest FXSAVE area. BSP only.
 aegishv_svm_enter:
+    clgi
     push rbp
     push rbx
     push r12
@@ -35,7 +36,9 @@ aegishv_svm_enter:
     mov r14, [rdx + 112]
     mov r15, [rdx + 120]
     mov rdx, [rdx + 24]
+    sti
     vmrun
+    cli
     // VMRUN restores RSP and RAX. Save guest GPRs before using scratch registers.
     push rdx
     mov rdx, [rsp + 24]
@@ -69,6 +72,7 @@ aegishv_svm_enter:
     pop r12
     pop rbx
     pop rbp
+    stgi
     ret
 .size aegishv_svm_enter, . - aegishv_svm_enter
 
@@ -76,10 +80,22 @@ aegishv_svm_enter:
 .global aegishv_svm_guest_start
 .global aegishv_svm_guest_end
 aegishv_svm_guest_start:
+    cli
+1:  jmp 1b
+.global aegishv_svm_guest_after_timer
+aegishv_svm_guest_after_timer:
     mov r12, 0x123456789abcdef0
     pcmpeqd xmm0, xmm0
     xor eax, eax
     cpuid
+    mov eax, 1
+    cpuid
+    test ecx, 0x14000000
+    jnz .Lguest_failed
+    mov eax, 0x80000001
+    cpuid
+    test ecx, 4
+    jnz .Lguest_failed
     // The register and SIMD values must survive a host exit.
     mov rax, 0x123456789abcdef0
     cmp r12, rax

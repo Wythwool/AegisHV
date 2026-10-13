@@ -20,8 +20,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.81.0
         with:
           targets: x86_64-unknown-none, aarch64-unknown-none
-          components: llvm-tools-preview
+          components: llvm-tools-preview, clippy
       - uses: Swatinem/rust-cache@v2
+      - name: Check freestanding code
+        run: |
+          cargo clippy --locked -p aegishv-type1-kernel --bin aegishv-type1-kernel --target x86_64-unknown-none -- -D warnings
+          cargo clippy --locked -p aegishv-type1-kernel --bin aegishv-el2 --target aarch64-unknown-none -- -D warnings
       - name: QEMU and ISO tools
         run: sudo apt-get update && sudo apt-get install -y qemu-system-x86 qemu-system-arm xorriso
       - name: Build SVM image
@@ -44,6 +48,27 @@ jobs:
       - name: Run EL1 guest
         if: matrix.backend == 'el2'
         run: python3 scripts/test-type1-boot.py el2 target/type1/aegishv-el2.elf
+      - name: Run ELF guests
+        env:
+          BACKEND: ${{ matrix.backend }}
+        run: |
+          export PATH="$PWD/target/limine:$PATH"
+          export AEGISHV_LIMINE_DIR="$PWD/target/limine"
+          for guest in return spin write execute isolation; do
+            if [ "$BACKEND" = svm ]; then arch=x86_64; else arch=arm64; fi
+            python3 scripts/build-type1-guest.py "$arch" "$guest"
+            export AEGISHV_GUEST_ELF="$PWD/target/type1/guest-$arch-$guest.elf"
+            if [ "$BACKEND" = svm ]; then
+              bash scripts/build-type1-limine-iso.sh --build-kernel
+              image=target/type1/svm-$guest.iso
+              cp target/type1/aegishv-type1.iso "$image"
+            else
+              bash scripts/build-type1-arm64.sh
+              image=target/type1/el2-$guest.elf
+              cp target/type1/aegishv-el2.elf "$image"
+            fi
+            python3 scripts/test-type1-boot.py "$BACKEND" "$image" --guest "$guest" --log "target/type1/$BACKEND-$guest-serial.log"
+          done
       - uses: actions/upload-artifact@v7
         if: always()
         with:

@@ -6,12 +6,33 @@ from pathlib import Path
 import subprocess
 
 
-def check_events(output, backend):
+def check_events(output, backend, guest):
     events = [json.loads(line) for line in output.splitlines() if line.startswith('{"source":"aegishv-type1"')]
     assert events, "no kernel events"
     for sequence, event in enumerate(events, 1):
         assert event["sequence"] == sequence, "event sequence gap"
         assert event["backend"] == backend and event["vcpu"] == 0
+    if backend == "el2":
+        samples = [event for event in events if event["kind"] == "pmu_sample"]
+        assert len(samples) == 1 and samples[0]["value"] > 0, samples
+    if guest != "builtin":
+        main = [event for event in events if event["kind"] != "pmu_sample"]
+        assert len(main) == 1, main
+        event = main[0]
+        if guest == "return":
+            assert event["kind"] == "guest_halt" and event["result"] == 55, event
+        elif guest == "spin":
+            assert event["kind"] == "vcpu_budget" and event["result"] == 20, event
+        elif guest == "isolation" and backend == "svm":
+            assert event["kind"] == "guest_exception" and event["vector"] == 14 and event["address"] == 0x40000000, event
+        else:
+            base = 0x1000 if backend == "svm" else 0x40000000
+            address = {"write": base, "execute": base + 0x1008, "isolation": 0x80000000}[guest]
+            access = "read" if guest == "isolation" else guest
+            assert event["kind"] == "page_access" and event["gpa"] == address and event["access"] == access and event["action"] == "deny", event
+        return events
+    assert output.count(f"aegishv:{backend}:preempt-exit") == 1, "guest was not preempted"
+    assert output.count(f"aegishv:{backend}:guest-run-ok") == 1, "guest did not complete"
     accesses = [event for event in events if event["kind"] == "page_access"]
     expected = [(0x1800, "write"), (0x3000, "execute")] if backend == "svm" else [(0x40000800, "write"), (0x40001000, "execute")]
     assert [(event["gpa"], event["access"]) for event in accesses] == expected, accesses
@@ -19,9 +40,6 @@ def check_events(output, backend):
     entries = [event for event in events if event["kind"] == "syscall_entry"]
     assert len(entries) == 1 and entries[0]["action"] == "allow", entries
     assert entries[0]["target"] == (0x1100 if backend == "svm" else 0x40000000)
-    if backend == "el2":
-        samples = [event for event in events if event["kind"] == "pmu_sample"]
-        assert len(samples) == 1 and samples[0]["value"] > 0, samples
     return events
 
 
@@ -32,6 +50,7 @@ def main():
     parser.add_argument("--qemu")
     parser.add_argument("--log", type=Path)
     parser.add_argument("--timeout", type=int, default=30)
+    parser.add_argument("--guest", choices=["builtin", "return", "spin", "write", "execute", "isolation"], default="builtin")
     args = parser.parse_args()
     digest = hashlib.sha256(args.image.read_bytes()).hexdigest()
     command = [args.qemu or ("qemu-system-x86_64" if args.backend == "svm" else "qemu-system-aarch64")]
@@ -39,7 +58,7 @@ def main():
         command += ["-machine", "q35,accel=tcg", "-cpu", "max", "-cdrom", str(args.image), "-device", "isa-debug-exit,iobase=0xf4,iosize=4"]
     else:
         command += ["-machine", "virt,virtualization=on,gic-version=2", "-cpu", "cortex-a57", "-accel", "tcg", "-kernel", str(args.image), "-semihosting-config", "enable=on,target=native"]
-    command += ["-m", "128M", "-smp", "1", "-display", "none", "-serial", "stdio", "-monitor", "none", "-no-reboot", "-no-shutdown"]
+    command += ["-m", "128M", "-smp", "1", "-display", "none", "-serial", "stdio", "-monitor", "none", "-no-reboot"]
     log = args.log or Path("target/type1") / (args.backend + "-serial.log")
     log.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -51,9 +70,10 @@ def main():
     log.write_bytes(output)
     text = output.decode("utf-8", errors="strict")
     print(text, end="")
-    assert run.returncode == (33 if args.backend == "svm" else 0), f"QEMU exited with {run.returncode}"
-    assert text.count(f"aegishv:{args.backend}:guest-run-ok") == 1, "guest did not complete"
-    events = check_events(text, args.backend)
+    code = 0 if args.guest in ("builtin", "return") else 2 if args.guest == "spin" else 3
+    expected = {0: 33, 2: 35, 3: 37}[code] if args.backend == "svm" else code
+    assert run.returncode == expected, f"QEMU exited with {run.returncode}, expected {expected}"
+    events = check_events(text, args.backend, args.guest)
     assert hashlib.sha256(args.image.read_bytes()).hexdigest() == digest, "image changed during execution"
     log.with_suffix(".json").write_text(json.dumps({"image_sha256": digest, "command": command, "events": events}, indent=2) + "\n", encoding="utf-8")
 

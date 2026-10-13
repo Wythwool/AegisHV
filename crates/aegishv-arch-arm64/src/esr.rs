@@ -80,6 +80,7 @@ pub struct Stage2Fault {
     pub far_valid: bool,
     pub far_el2: u64,
     pub hpfar_el2: u64,
+    /// None when HPFAR is not architecturally valid. Walk faults identify a page.
     pub ipa: Option<GuestPhysical>,
     pub stage1_page_table_walk: bool,
 }
@@ -106,8 +107,21 @@ impl Stage2Fault {
             ExceptionClass::DataAbortLowerEl => Stage2Access::Read,
             _ => Stage2Access::Read,
         };
-        let ipa = if far_valid {
-            let ipa = ((hpfar_el2 & 0x0fff_ffff) << 8) | (far_el2 & 0xfff);
+        let hpfar_valid = matches!(
+            status,
+            FaultStatusCode::Translation { .. }
+                | FaultStatusCode::AccessFlag { .. }
+                | FaultStatusCode::AddressSize { .. }
+        ) || (stage1_page_table_walk
+            && matches!(status, FaultStatusCode::Permission { .. }));
+        let ipa = if far_valid && hpfar_valid {
+            // FIPA[43:4] encodes IPA[51:12]. FAR's offset does not describe a PTE.
+            let offset = if stage1_page_table_walk {
+                0
+            } else {
+                far_el2 & 0xfff
+            };
+            let ipa = ((hpfar_el2 & 0x0fff_ffff_fff0) << 8) | offset;
             Some(GuestPhysical::new(ipa).map_err(|_| {
                 Arm64Error::new(
                     Arm64ErrorKind::InvalidEsr,
@@ -139,12 +153,25 @@ mod tests {
 
     #[test]
     fn data_abort_decode_uses_hpfar_and_far_page_offset_for_ipa() {
-        let esr = EsrEl2::new(EC_DABT_LOWER | (1 << 6) | 0b001101);
-        let fault = Stage2Fault::decode(esr, 0xabc, 0x12345).unwrap();
+        let esr = EsrEl2::new(EC_DABT_LOWER | (1 << 6) | 0b000101);
+        let fault = Stage2Fault::decode(esr, 0xabc, 0x1234_5678_9abf).unwrap();
 
         assert_eq!(fault.access, Stage2Access::Write);
-        assert_eq!(fault.ipa.unwrap().get(), (0x12345 << 8) | 0xabc);
-        assert_eq!(fault.status, FaultStatusCode::Permission { level: 1 });
+        assert_eq!(fault.ipa.unwrap().get(), 0x2_3456_789a_babc);
+        assert_eq!(fault.status, FaultStatusCode::Translation { level: 1 });
+    }
+
+    #[test]
+    fn permission_abort_does_not_use_stale_hpfar() {
+        let esr = EsrEl2::new(EC_DABT_LOWER | 0b001111);
+        assert_eq!(Stage2Fault::decode(esr, 0xabc, 0xffff).unwrap().ipa, None);
+        let walk = Stage2Fault::decode(
+            EsrEl2::new(EC_DABT_LOWER | (1 << 7) | 0b001111),
+            0xabc,
+            0x12340,
+        )
+        .unwrap();
+        assert_eq!(walk.ipa.unwrap().get(), 0x1234000);
     }
 
     #[test]

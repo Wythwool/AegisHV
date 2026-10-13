@@ -29,14 +29,18 @@ aegishv_el2_start:
 .balign 2048
 .global aegishv_el2_vectors
 aegishv_el2_vectors:
+.set vector, 0
 .rept 16
+    sub sp, sp, #816
+    stp x0, x1, [sp]
+    mov x0, #vector
+    str x0, [sp, #800]
     b aegishv_el2_exception
     .balign 128
+    .set vector, vector + 1
 .endr
 
 aegishv_el2_exception:
-    sub sp, sp, #800
-    stp x0, x1, [sp, #0]
     stp x2, x3, [sp, #16]
     stp x4, x5, [sp, #32]
     stp x6, x7, [sp, #48]
@@ -78,7 +82,9 @@ aegishv_el2_exception:
     stp q28, q29, [sp, #736]
     stp q30, q31, [sp, #768]
     mov x0, sp
+    ldr x1, [sp, #800]
     bl aegishv_el2_exit
+aegishv_el2_restore:
     ldp q0, q1, [sp, #288]
     ldp q2, q3, [sp, #320]
     ldp q4, q5, [sp, #352]
@@ -120,8 +126,19 @@ aegishv_el2_exception:
     ldp x26, x27, [sp, #208]
     ldp x28, x29, [sp, #224]
     ldr x30, [sp, #240]
-    add sp, sp, #800
+    add sp, sp, #816
     eret
+
+.global aegishv_el2_enter
+aegishv_el2_enter:
+    sub sp, sp, #816
+    mov x1, sp
+    mov x2, #50
+1:  ldp x3, x4, [x0], #16
+    stp x3, x4, [x1], #16
+    subs x2, x2, #1
+    b.ne 1b
+    b aegishv_el2_restore
 
 .section .rodata.el1_guest, "a"
 .balign 16
@@ -129,6 +146,10 @@ aegishv_el2_exception:
 .global aegishv_el1_end
 .global aegishv_el1_exec_probe
 aegishv_el1_start:
+    msr daifset, #15
+1:  b 1b
+.global aegishv_el1_after_timer
+aegishv_el1_after_timer:
     mov x19, #0xabcd
     movi v0.16b, #0x5a
     mov x0, #0x40000000

@@ -83,8 +83,8 @@ timer diagnostics fail validation even if some success markers appeared.
 
 ## Missing pieces
 
-The current guest is fixed. General loading, SMP/per-CPU state, APIC and guest
-timers, scheduler preemption, an independent watchdog, dynamic map/unmap with
+The Intel guest is fixed. General OS loading, SMP/per-CPU state, APIC and guest
+timers, an independent watchdog, dynamic map/unmap with
 TLB invalidation, device backends, and IOMMU isolation are unfinished.
 
 The Intel path has no XSAVE/FXSAVE context management or general MSR/WRMSR virtualization,
@@ -118,3 +118,38 @@ The `boot` workflow runs these guests under Linux QEMU TCG and keeps serial
 logs and image hashes. These are bounded one-vCPU execution tests, not full
 OS boots. Windows QEMU 10.1 truncates high segment bases in VMLOAD; the host
 state check rejects that build rather than continuing with a damaged TSS.
+
+## ELF guests
+
+SVM and EL2 accept a static ELF64 image through `AEGISHV_GUEST_ELF` at build time.
+PT_LOAD addresses must be identity linked, page aligned and non-overlapping.
+The loader rejects writable executable pages, dynamic linking, wrong machine
+types and entries outside file-backed executable code. It validates the whole
+image before changing RAM, copies data and clears BSS.
+
+The SVM allocation is 128 KiB. Image pages occupy GPA `0x1000..0x18000`, followed
+by a 16 KiB stack and four guest page-table pages. CR writes are intercepted;
+CR0.WP and read-only guest mappings protect the page tables while NPT permits
+hardware A/D updates. The EL2 image range is `0x40000000..0x4001c000`, followed
+by a 16 KiB stack. EL1 starts with its MMU disabled; TVM prevents the guest from
+changing that address space. Unused image pages and host memory remain unmapped.
+
+SVM uses the legacy PIC/PIT on the BSP, disables the inherited LAPIC and sets
+V_INTR_MASKING. EL2 uses CNTHP and GICv2 PPI 26 on QEMU `virt` without security
+extensions. Both stop after 20 timer ticks (about 200 ms), even with guest IRQs
+masked. A separate 4096-exit limit bounds exit storms. These are fixed run
+budgets; there is no multi-vCPU scheduler yet.
+
+```sh
+python3 scripts/build-type1-guest.py arm64 return
+AEGISHV_GUEST_ELF="$PWD/target/type1/guest-arm64-return.elf" bash scripts/build-type1-arm64.sh
+python3 scripts/test-type1-boot.py el2 target/type1/aegishv-el2.elf --guest return
+```
+
+Use `x86_64` and `scripts/build-type1-limine-iso.sh --build-kernel` for SVM.
+An unset variable builds the instruction probes. The external examples cover
+a computed result, an IRQ-masked loop, code writes, data execution and out-of-range
+reads. `boot.yml` runs all six cases per backend and retains their logs and images.
+EL1 guests return in x0 with `HVC #1`; SVM guests return in RAX with HLT. The
+examples have no OS runtime or devices. Serial JSON reports the terminal result
+or denied access; it is a separate format from the Linux trace sensor's events.

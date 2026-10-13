@@ -202,7 +202,11 @@ mod tests {
     fn write_trap_reports_wx_window_and_tlbi_rearm() {
         let mut trap = Arm64Stage2Trap::arm_write(mapping()).unwrap();
         let esr = EsrEl2::new((0x24 << 26) | (1 << 6) | 0b001101);
-        let fault = Stage2Fault::decode(esr, 0, 0x40).unwrap();
+        let mut fault = Stage2Fault::decode(esr, 0, 0x40).unwrap();
+        assert!(fault.ipa.is_none());
+        assert!(trap.record_fault(fault).is_err());
+        // The caller must resolve a permission fault through the guest's stage 1.
+        fault.ipa = Some(GuestPhysical::new(0x4000).unwrap());
         trap.record_fault(fault).unwrap();
         let event = trap.open_write_window().unwrap();
         let tlbi = trap
