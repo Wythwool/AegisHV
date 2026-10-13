@@ -50,9 +50,9 @@ checks RIP, stack, cookie, and delivery state. Any unexpected exit is terminal.
 
 ## Run evidence
 
-TCG has reached descriptor setup and preflight. It did not expose VMX, so there
-is no successful hardware guest run recorded here. Compilation and a bootable
-ISO alone do not establish guest execution.
+For Intel, TCG has reached descriptor setup and preflight. It did not expose VMX,
+and the available KVM hosts were AMD. VMX guest execution remains unverified.
+Compilation and a bootable ISO alone do not establish guest execution.
 
 A strict run needs matching valid SHA-256 image digests before and after QEMU,
 one valid CPU/timer diagnostic set, and these serial markers exactly once in
@@ -105,7 +105,10 @@ The ARM64 image loads at `0x40080000` on QEMU `virt`. It enters EL1 through
 ERET with Stage-2 enabled, saves GPR/FP/SIMD state on an EL2 exception, checks
 the guest vector address on HVC, and handles actual instruction/data aborts.
 Its PMU sample is elapsed cycle-counter ticks across the run, including the
-EL2 handlers. The host currently runs with its Stage-1 MMU disabled.
+EL2 handlers. EL2 installs its own Stage-1 tables with RX text, read-only constants,
+RW/NX data and an unmapped stack guard. Only the linked kernel, PL011 and the two
+GIC interfaces are mapped. Boot checks read/write translations with AT S1E2R/W
+before entering the guest.
 
 ```sh
 rustup target add aarch64-unknown-none
@@ -118,6 +121,13 @@ The `boot` workflow runs these guests under Linux QEMU TCG and keeps serial
 logs and image hashes. These are bounded one-vCPU execution tests, not full
 OS boots. Windows QEMU 10.1 truncates high segment bases in VMLOAD; the host
 state check rejects that build rather than continuing with a damaged TSS.
+
+The seven SVM cases also passed with nested KVM on AMD EPYC 7763, on both
+[Ubuntu 26.04](https://github.com/Wythwool/AegisHV/actions/runs/38478722179) and
+[Ubuntu 24.04](https://github.com/Wythwool/AegisHV/actions/runs/38478725524).
+These runs used hardware SVM through KVM, not a direct boot on a physical machine.
+The manual `nested KVM` workflow records the host CPU and selects SVM or VMX from
+its advertised features. A host without nested virtualization fails preflight.
 
 ## ELF guests
 

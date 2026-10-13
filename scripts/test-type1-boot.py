@@ -13,6 +13,7 @@ def check_events(output, backend, guest):
         assert event["sequence"] == sequence, "event sequence gap"
         assert event["backend"] == backend and event["vcpu"] == 0
     if backend == "el2":
+        assert output.count("aegishv:el2:host-paging-ok") == 1, "EL2 host paging was not verified"
         samples = [event for event in events if event["kind"] == "pmu_sample"]
         assert len(samples) == 1 and samples[0]["value"] > 0, samples
     if guest != "builtin":

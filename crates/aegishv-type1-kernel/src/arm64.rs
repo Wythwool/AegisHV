@@ -2,6 +2,9 @@
 #![cfg_attr(target_os = "none", no_main)]
 
 #[cfg(all(target_os = "none", target_arch = "aarch64"))]
+mod arm64_paging;
+
+#[cfg(all(target_os = "none", target_arch = "aarch64"))]
 mod kernel {
     use core::arch::{asm, global_asm};
     use core::fmt::{self, Write};
@@ -144,6 +147,9 @@ mod kernel {
             tables[2].0[index] =
                 addr_of!(ram[index]) as u64 | 3 | (15 << 2) | (3 << 8) | (1 << 10) | access;
         }
+
+        unsafe { crate::arm64_paging::enable() };
+        writeln!(Serial, "aegishv:el2:host-paging-ok").unwrap();
 
         let dfr: u64;
         unsafe { asm!("mrs {}, id_aa64dfr0_el1", out(reg) dfr, options(nomem, nostack)) };

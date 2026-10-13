@@ -60,8 +60,9 @@ fixtures. PMU collection currently emits thread heartbeats with unavailable
 counters set to `null`.
 
 The kernels currently run small freestanding guests on one CPU. General OS loading, SMP,
-device backends and IOMMU isolation are unfinished. QEMU TCG guest runs do not
-establish behavior on physical Intel, AMD or Arm systems.
+device backends and IOMMU isolation are unfinished. SVM has passed the guest suite
+with nested KVM on AMD EPYC 7763; EL2 has passed under QEMU TCG. Direct bare-metal
+runs and Intel VMX guest execution remain unverified.
 See [the kernel notes](docs/TYPE1_BOOT_BOUNDARY.md).
 
 ## Tests
