@@ -51,14 +51,17 @@ def main():
     parser.add_argument("backend", choices=["svm", "el2"])
     parser.add_argument("image", type=Path)
     parser.add_argument("--qemu")
+    parser.add_argument("--accel", choices=["tcg", "kvm"], default="tcg")
     parser.add_argument("--log", type=Path)
     parser.add_argument("--timeout", type=int, default=30)
     parser.add_argument("--guest", choices=["builtin", "return", "spin", "write", "execute", "isolation", "syscall"], default="builtin")
     args = parser.parse_args()
+    if args.backend == "el2" and args.accel != "tcg":
+        parser.error("EL2 runner currently requires TCG")
     digest = hashlib.sha256(args.image.read_bytes()).hexdigest()
     command = [args.qemu or ("qemu-system-x86_64" if args.backend == "svm" else "qemu-system-aarch64")]
     if args.backend == "svm":
-        command += ["-machine", "q35,accel=tcg", "-cpu", "max", "-cdrom", str(args.image), "-device", "isa-debug-exit,iobase=0xf4,iosize=4"]
+        command += ["-machine", f"q35,accel={args.accel}", "-cpu", "host" if args.accel == "kvm" else "max", "-cdrom", str(args.image), "-device", "isa-debug-exit,iobase=0xf4,iosize=4"]
     else:
         command += ["-machine", "virt,virtualization=on,gic-version=2", "-cpu", "cortex-a57", "-accel", "tcg", "-kernel", str(args.image), "-semihosting-config", "enable=on,target=native"]
     command += ["-m", "128M", "-smp", "1", "-display", "none", "-serial", "stdio", "-monitor", "none", "-no-reboot"]
