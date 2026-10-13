@@ -32,7 +32,12 @@ def check_events(output, backend, guest):
             base = 0x1000 if backend == "svm" else 0x40000000
             address = {"write": base, "execute": base + 0x1008, "isolation": 0x80000000}[guest]
             access = "read" if guest == "isolation" else guest
-            assert event["kind"] == "page_access" and event["gpa"] == address and event["access"] == access and event["action"] == "deny", event
+            assert event["kind"] == "page_access" and event["access"] == access and event["action"] == "deny", event
+            if guest == "execute":
+                # Instruction fetch may report the start of a cache line in EXITINFO2.
+                assert event["gpa"] >> 12 == address >> 12 and event["rip"] == address, event
+            else:
+                assert event["gpa"] == address, event
         return events
     assert output.count(f"aegishv:{backend}:preempt-exit") == 1, "guest was not preempted"
     assert output.count(f"aegishv:{backend}:guest-run-ok") == 1, "guest did not complete"

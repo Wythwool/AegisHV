@@ -1,78 +1,62 @@
-name: hardware
+name: opt-in hardware checks
 
 on:
   workflow_dispatch:
     inputs:
-      runner:
-        description: Linux runner with nested KVM
+      runner_label:
+        description: "Self-hosted Linux runner label with reviewed KVM/tracefs permissions"
         required: true
-        default: ubuntu-26.04
+        default: "aegishv-hardware-kvm"
         type: string
+      run_live_tracefs:
+        description: "Run live tracefs smoke; requires KVM activity and tracefs write permission"
+        required: true
+        default: false
+        type: boolean
+      run_snapshot:
+        description: "Run host snapshot command on the selected runner"
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
 
 jobs:
-  guest:
-    name: Nested KVM
-    runs-on: ${{ inputs.runner }}
-    timeout-minutes: 10
+  live-host:
+    name: manual live-host checks
+    runs-on: ${{ inputs.runner_label }}
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
-      - name: Check virtualization host
-        id: host
-        run: |
-          mkdir -p target/type1
-          lscpu > target/type1/host.txt
-          cat target/type1/host.txt
-          if [ ! -c /dev/kvm ]; then echo 'KVM device unavailable on this runner'; exit 1; fi
-          if grep -qw vmx /proc/cpuinfo; then
-            echo 'backend=vmx' >> "$GITHUB_OUTPUT"
-          elif grep -qw svm /proc/cpuinfo; then
-            echo 'backend=svm' >> "$GITHUB_OUTPUT"
-          else
-            echo 'Nested VMX/SVM unavailable'; exit 1
-          fi
-          sudo chmod 0666 /dev/kvm
-      - uses: dtolnay/rust-toolchain@1.81.0
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: x86_64-unknown-none
-          components: llvm-tools-preview
-      - name: Build image
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Document selected host
         run: |
-          sudo apt-get update
-          sudo apt-get install -y qemu-system-x86 xorriso
-          qemu-system-x86_64 --version
-          mkdir -p target/limine
-          curl -fL --retry 3 https://github.com/Limine-Bootloader/Limine/releases/download/v12.9.3/limine-binary.tar.xz -o target/limine.tar.xz
-          echo 'e02a473c6dc6df25159697f94930272397f21fd86e5d4eeee61bba72c95ec8d2  target/limine.tar.xz' | sha256sum -c -
-          tar -xf target/limine.tar.xz -C target/limine --strip-components=1
-          make -C target/limine
-          export PATH="$PWD/target/limine:$PATH"
-          export AEGISHV_LIMINE_DIR="$PWD/target/limine"
-          bash scripts/build-type1-limine-iso.sh --build-kernel
-      - name: Run VMX guest
-        if: steps.host.outputs.backend == 'vmx'
-        run: bash scripts/type1-qemu-evidence.sh --image target/type1/aegishv-type1.iso --timeout 20
-      - name: Run SVM guests
-        if: steps.host.outputs.backend == 'svm'
+          uname -a
+          id
+          test -e /dev/kvm && ls -l /dev/kvm || true
+          test -d /sys/kernel/tracing && echo "tracefs: /sys/kernel/tracing present" || true
+          test -d /sys/kernel/debug/tracing && echo "tracefs: /sys/kernel/debug/tracing present" || true
+
+      - name: Locked build and normal replay checks
         run: |
-          python3 scripts/test-type1-boot.py svm target/type1/aegishv-type1.iso --accel kvm
-          export PATH="$PWD/target/limine:$PATH"
-          export AEGISHV_LIMINE_DIR="$PWD/target/limine"
-          for guest in return spin write execute isolation syscall; do
-            python3 scripts/build-type1-guest.py x86_64 "$guest"
-            export AEGISHV_GUEST_ELF="$PWD/target/type1/guest-x86_64-$guest.elf"
-            bash scripts/build-type1-limine-iso.sh --build-kernel
-            cp target/type1/aegishv-type1.iso "target/type1/svm-$guest.iso"
-            python3 scripts/test-type1-boot.py svm "target/type1/svm-$guest.iso" --accel kvm --guest "$guest" --log "target/type1/svm-$guest-serial.log"
-          done
-      - name: Serial output
-        if: always()
-        run: cat target/type1/*serial.log || true
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: kvm-run
-          path: |
-            target/type1/*.txt
-            target/type1/*serial.log
-            target/type1/*.elf
-            target/type1/*.iso
+          cargo metadata --locked --format-version 1 >/tmp/aegishv.metadata.json
+          cargo build --locked
+          cargo run --locked -- validate-config --config config.example.toml
+          cargo run --locked -- run --replay ./examples/traces/kvm_exit_sample.log --listen '' --jsonl /tmp/aegishv-hardware-replay.jsonl --quiet
+          python3 scripts/validate-jsonl-schema.py --schema schema/event.schema.json --jsonl /tmp/aegishv-hardware-replay.jsonl
+
+      - name: Host snapshot
+        if: ${{ inputs.run_snapshot }}
+        run: |
+          cargo run --locked -- snapshot --tracefs /sys/kernel/tracing >/tmp/aegishv-hardware-snapshot.json
+          python3 scripts/validate-jsonl-schema.py --schema schema/snapshot.schema.json --json /tmp/aegishv-hardware-snapshot.json
+
+      - name: Live tracefs smoke
+        if: ${{ inputs.run_live_tracefs }}
+        run: |
+          ./scripts/live-tracefs-smoke.sh --timeout 30
