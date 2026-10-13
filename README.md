@@ -1,16 +1,18 @@
 # AegisHV
 
-KVM trace sensor and an experimental x86_64 kernel, written in Rust.
+AegisHV is a type-1 hypervisor project and a Linux KVM trace sensor, written in Rust.
 
 The `aegishv` binary runs on the Linux host. It reads `kvm_exit` events from
 tracefs, correlates writes followed by execution on the same guest page, and
 writes JSONL. It also has Prometheus metrics and policy actions over QEMU QMP.
 There is no guest component.
 
-The kernel in `crates/aegishv-type1-kernel` boots through Limine and contains a
-single-CPU Intel VMX test guest. It is separate from the sensor. VMX guest
-execution still needs a hardware run; the existing boot results stop at
-preflight under QEMU TCG.
+The x86_64 kernel boots through Limine. Its AMD SVM path runs a 64-bit guest
+with NPT, register/FPU switching, intercepted syscall MSRs, and read-only code
+plus non-executable data. The ARM64 kernel boots at EL2 on QEMU `virt` and runs
+an EL1 guest with Stage-2 protection and PMU cycle sampling. Both emit JSONL
+events over serial. Intel VMX has a separate entry path that still needs a
+hardware run. These kernels are separate from the Linux sensor.
 
 ## Build and replay
 
@@ -55,9 +57,10 @@ permissions. The VMI and detector libraries work with offline snapshots and
 fixtures. PMU collection currently emits thread heartbeats with unavailable
 counters set to `null`.
 
-The lab kernel has no general guest loader, SMP, device drivers, live AMD/ARM
-entry path, or FPU context switching. See [the kernel notes](docs/TYPE1_BOOT_BOUNDARY.md)
-before trying it.
+The kernels currently run fixed guests on one CPU. General OS loading, SMP,
+device backends and IOMMU isolation are unfinished. QEMU TCG guest runs do not
+establish behavior on physical Intel, AMD or Arm systems.
+See [the kernel notes](docs/TYPE1_BOOT_BOUNDARY.md).
 
 ## Tests
 

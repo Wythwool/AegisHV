@@ -1,4 +1,4 @@
-# x86_64 kernel
+# Kernels
 
 The kernel boots with Limine base revision 6. It installs GDT/TSS/IDT, fault
 stacks, a 256 KiB boot stack, and a VM-exit stack before entering Rust. The
@@ -87,8 +87,34 @@ The current guest is fixed. General loading, SMP/per-CPU state, APIC and guest
 timers, scheduler preemption, an independent watchdog, dynamic map/unmap with
 TLB invalidation, device backends, and IOMMU isolation are unfinished.
 
-There is no XSAVE/FXSAVE context management, general MSR/WRMSR virtualization,
+The Intel path has no XSAVE/FXSAVE context management or general MSR/WRMSR virtualization,
 MTRR/PAT/MMIO policy, or general exception delivery. The fixed #UD test does
 not cover error-code exceptions, nested faults, privilege/IST transitions, or
-external interrupts. AMD SVM and ARM64 entry are not wired. Hardware soak,
+external interrupts. Hardware soak,
 measured boot, and secure update support are also absent.
+
+## AMD and Arm
+
+The SVM path uses a separate guest VMCB, host-save page, host VMCB, NPT root,
+I/O/MSR permission maps and FXSAVE areas. Guest RAM is the only memory exposed
+through NPT. The host drops the bootloader mappings before VMRUN. A guest
+round trip checks GPR and SIMD state, LSTAR interception, code write denial,
+and data execute denial. Invalid or unexpected exits stop the guest.
+
+The ARM64 image loads at `0x40080000` on QEMU `virt`. It enters EL1 through
+ERET with Stage-2 enabled, saves GPR/FP/SIMD state on an EL2 exception, checks
+the guest vector address on HVC, and handles actual instruction/data aborts.
+Its PMU sample is elapsed cycle-counter ticks across the run, including the
+EL2 handlers. The host currently runs with its Stage-1 MMU disabled.
+
+```sh
+rustup target add aarch64-unknown-none
+bash scripts/build-type1-arm64.sh
+python3 scripts/test-type1-boot.py el2 target/type1/aegishv-el2.elf
+python3 scripts/test-type1-boot.py svm target/type1/aegishv-type1.iso
+```
+
+The `boot` workflow runs these guests under Linux QEMU TCG and keeps serial
+logs and image hashes. These are bounded one-vCPU execution tests, not full
+OS boots. Windows QEMU 10.1 truncates high segment bases in VMLOAD; the host
+state check rejects that build rather than continuing with a damaged TSS.

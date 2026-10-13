@@ -31,11 +31,15 @@ fi
 
 instructions="$({
   printf '%s\n' "$disassembly" | awk '
+    /^[[:xdigit:]]+ <[^>]+>:/ {
+      context_switch = ($0 ~ /<aegishv_svm_enter>:/)
+    }
     /^[[:space:]]*[[:xdigit:]]+:/ {
       sub(/^[[:space:]]*[^:]+:[[:space:]]*/, "")
       while ($0 ~ /^[[:xdigit:]][[:xdigit:]][[:space:]]+/) {
         sub(/^[[:xdigit:]][[:xdigit:]][[:space:]]+/, "")
       }
+      if (context_switch && $0 ~ /^fx(save|rstor)64[[:space:]]/) next
       print
     }
   '
@@ -45,9 +49,8 @@ if [ -z "$instructions" ]; then
   exit 70
 fi
 
-# The VM-exit path does not save or restore XSAVE state yet. Keep the host
-# image away from every register class and no-operand instruction that could
-# consume or mutate x87, vector, mask, or tile state.
+# Rust host code is integer-only. The SVM entry gate owns the four FXSAVE
+# transfers; no other function may touch the guest's extended state.
 forbidden='^[[:space:]]*f[[:alnum:]_.]*([[:space:]]|$)|^[[:space:]]*(wait|emms|vzero(all|upper)|xsave[a-z0-9]*|xrstor[a-z0-9]*|v?ldmxcsr|v?stmxcsr|xgetbv|xsetbv|rdpkru|wrpkru|ldtilecfg|sttilecfg|tilerelease)([[:space:]]|$)|%(st\([0-7]\)|(xmm|ymm|zmm|mm|tmm)[0-9]+|k[0-7]|bnd[0-3])([^[:alnum:]_]|$)'
 violations="$(printf '%s\n' "$instructions" | grep -Ei "$forbidden" || true)"
 if [ -n "$violations" ]; then

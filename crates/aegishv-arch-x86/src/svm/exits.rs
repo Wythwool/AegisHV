@@ -37,6 +37,7 @@ impl SvmExitCode {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(C)]
 pub struct GeneralRegisters {
     pub rax: u64,
     pub rbx: u64,

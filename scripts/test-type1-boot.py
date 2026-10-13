@@ -1,0 +1,62 @@
+#!/usr/bin/env python3
+import argparse
+import hashlib
+import json
+from pathlib import Path
+import subprocess
+
+
+def check_events(output, backend):
+    events = [json.loads(line) for line in output.splitlines() if line.startswith('{"source":"aegishv-type1"')]
+    assert events, "no kernel events"
+    for sequence, event in enumerate(events, 1):
+        assert event["sequence"] == sequence, "event sequence gap"
+        assert event["backend"] == backend and event["vcpu"] == 0
+    accesses = [event for event in events if event["kind"] == "page_access"]
+    expected = [(0x1800, "write"), (0x3000, "execute")] if backend == "svm" else [(0x40000800, "write"), (0x40001000, "execute")]
+    assert [(event["gpa"], event["access"]) for event in accesses] == expected, accesses
+    assert all(event["action"] == "deny" for event in accesses)
+    entries = [event for event in events if event["kind"] == "syscall_entry"]
+    assert len(entries) == 1 and entries[0]["action"] == "allow", entries
+    assert entries[0]["target"] == (0x1100 if backend == "svm" else 0x40000000)
+    if backend == "el2":
+        samples = [event for event in events if event["kind"] == "pmu_sample"]
+        assert len(samples) == 1 and samples[0]["value"] > 0, samples
+    return events
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Boot a kernel and check exits produced by its guest.")
+    parser.add_argument("backend", choices=["svm", "el2"])
+    parser.add_argument("image", type=Path)
+    parser.add_argument("--qemu")
+    parser.add_argument("--log", type=Path)
+    parser.add_argument("--timeout", type=int, default=30)
+    args = parser.parse_args()
+    digest = hashlib.sha256(args.image.read_bytes()).hexdigest()
+    command = [args.qemu or ("qemu-system-x86_64" if args.backend == "svm" else "qemu-system-aarch64")]
+    if args.backend == "svm":
+        command += ["-machine", "q35,accel=tcg", "-cpu", "max", "-cdrom", str(args.image), "-device", "isa-debug-exit,iobase=0xf4,iosize=4"]
+    else:
+        command += ["-machine", "virt,virtualization=on,gic-version=2", "-cpu", "cortex-a57", "-accel", "tcg", "-kernel", str(args.image), "-semihosting-config", "enable=on,target=native"]
+    command += ["-m", "128M", "-smp", "1", "-display", "none", "-serial", "stdio", "-monitor", "none", "-no-reboot", "-no-shutdown"]
+    log = args.log or Path("target/type1") / (args.backend + "-serial.log")
+    log.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        run = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=args.timeout)
+        output = run.stdout
+    except subprocess.TimeoutExpired as error:
+        log.write_bytes(error.stdout or b"")
+        raise SystemExit(f"QEMU timed out; serial log: {log}") from error
+    log.write_bytes(output)
+    text = output.decode("utf-8", errors="strict")
+    print(text, end="")
+    assert run.returncode == (33 if args.backend == "svm" else 0), f"QEMU exited with {run.returncode}"
+    assert text.count(f"aegishv:{args.backend}:guest-run-ok") == 1, "guest did not complete"
+    events = check_events(text, args.backend)
+    assert hashlib.sha256(args.image.read_bytes()).hexdigest() == digest, "image changed during execution"
+    log.with_suffix(".json").write_text(json.dumps({"image_sha256": digest, "command": command, "events": events}, indent=2) + "\n", encoding="utf-8")
+
+
+if __name__ == "__main__":
+    main()

@@ -6,6 +6,7 @@ use core::arch::asm;
 use super::features::{EferValue, SvmError};
 use super::instructions::SvmInstructionExecutor;
 
+#[cfg(target_arch = "x86_64")]
 const IA32_EFER: u32 = 0xc000_0080;
 
 #[derive(Default)]

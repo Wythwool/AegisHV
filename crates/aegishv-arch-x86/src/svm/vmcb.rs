@@ -23,12 +23,13 @@ pub const VMCB_NP_ENABLE_OFFSET: usize = 0x090;
 pub const VMCB_N_CR3_OFFSET: usize = 0x0b0;
 
 pub const VMCB_STATE_EFER_OFFSET: usize = 0x0d0;
-pub const VMCB_STATE_CR0_OFFSET: usize = 0x148;
-pub const VMCB_STATE_CR3_OFFSET: usize = 0x158;
-pub const VMCB_STATE_CR4_OFFSET: usize = 0x160;
+pub const VMCB_STATE_CR0_OFFSET: usize = 0x158;
+pub const VMCB_STATE_CR3_OFFSET: usize = 0x150;
+pub const VMCB_STATE_CR4_OFFSET: usize = 0x148;
 pub const VMCB_STATE_RSP_OFFSET: usize = 0x1d8;
-pub const VMCB_STATE_RIP_OFFSET: usize = 0x1f8;
-pub const VMCB_STATE_RFLAGS_OFFSET: usize = 0x200;
+pub const VMCB_STATE_RIP_OFFSET: usize = 0x178;
+pub const VMCB_STATE_RFLAGS_OFFSET: usize = 0x170;
+pub const VMCB_STATE_RAX_OFFSET: usize = 0x1f8;
 
 pub const INTERCEPT_CPUID: u64 = 1 << 18;
 pub const INTERCEPT_HLT: u64 = 1 << 24;
@@ -93,8 +94,16 @@ impl VmcbControlArea {
         self.read_u32(VMCB_ASID_OFFSET)
     }
 
-    pub fn set_tlb_control(&mut self, value: u32) {
-        self.write_u32(VMCB_TLB_CONTROL_OFFSET, value);
+    pub fn set_tlb_control(&mut self, value: u8) {
+        self.bytes[VMCB_TLB_CONTROL_OFFSET] = value;
+    }
+
+    pub fn set_exception_intercepts(&mut self, mask: u32) {
+        self.write_u32(0x008, mask);
+    }
+
+    pub fn next_rip(&self) -> u64 {
+        self.read_u64(0x0c8)
     }
 
     pub fn set_exit_code(&mut self, value: u64) {
@@ -190,6 +199,58 @@ impl VmcbStateSaveArea {
         self.write_u64(VMCB_STATE_EFER_OFFSET, value);
     }
 
+    pub fn bytes(&self) -> &[u8; VMCB_STATE_SIZE] {
+        &self.bytes
+    }
+
+    pub fn set_segment(
+        &mut self,
+        segment: Segment,
+        selector: u16,
+        attributes: u16,
+        limit: u32,
+        base: u64,
+    ) {
+        let offset = segment as usize * 16;
+        self.bytes[offset..offset + 2].copy_from_slice(&selector.to_le_bytes());
+        self.bytes[offset + 2..offset + 4].copy_from_slice(&attributes.to_le_bytes());
+        self.bytes[offset + 4..offset + 8].copy_from_slice(&limit.to_le_bytes());
+        self.write_u64(offset + 8, base);
+    }
+
+    pub fn set_rax(&mut self, value: u64) {
+        self.write_u64(VMCB_STATE_RAX_OFFSET, value);
+    }
+
+    pub fn segment_base(&self, segment: Segment) -> u64 {
+        self.read_u64(segment as usize * 16 + 8)
+    }
+
+    pub fn set_lstar(&mut self, value: u64) {
+        self.write_u64(0x208, value);
+    }
+
+    pub fn set_star(&mut self, value: u64) {
+        self.write_u64(0x200, value);
+    }
+
+    pub fn rax(&self) -> u64 {
+        self.read_u64(VMCB_STATE_RAX_OFFSET)
+    }
+
+    pub fn rsp(&self) -> u64 {
+        self.read_u64(VMCB_STATE_RSP_OFFSET)
+    }
+
+    pub fn set_debug_registers(&mut self, dr6: u64, dr7: u64) {
+        self.write_u64(0x160, dr7);
+        self.write_u64(0x168, dr6);
+    }
+
+    pub fn set_pat(&mut self, value: u64) {
+        self.write_u64(0x268, value);
+    }
+
     pub fn efer(&self) -> u64 {
         self.read_u64(VMCB_STATE_EFER_OFFSET)
     }
@@ -239,6 +300,21 @@ impl VmcbStateSaveArea {
     fn write_u64(&mut self, offset: usize, value: u64) {
         self.bytes[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
     }
+}
+
+#[derive(Clone, Copy)]
+#[repr(usize)]
+pub enum Segment {
+    Es,
+    Cs,
+    Ss,
+    Ds,
+    Fs,
+    Gs,
+    Gdtr,
+    Ldtr,
+    Idtr,
+    Tr,
 }
 
 #[repr(C, align(4096))]
@@ -297,6 +373,31 @@ mod tests {
         assert_eq!(align_of::<Vmcb>(), VMCB_ALIGNMENT as usize);
         assert_eq!(size_of::<VmcbControlArea>(), VMCB_CONTROL_SIZE);
         assert_eq!(size_of::<VmcbStateSaveArea>(), VMCB_STATE_SIZE);
+    }
+
+    #[test]
+    fn state_fields_match_the_amd_save_area() {
+        let mut state = VmcbStateSaveArea::zeroed();
+        state.set_cr0(0x8001_0033);
+        state.set_cr3(0x7000);
+        state.set_cr4(0x620);
+        state.set_rip(0x1000);
+        state.set_rflags(2);
+        state.set_rsp(0x8000);
+        state.set_rax(0x1234);
+        // AMD APM volume 2, appendix B. Offsets here are relative to byte 0x400.
+        for (offset, expected) in [
+            (0x148, 0x620u64),
+            (0x150, 0x7000),
+            (0x158, 0x8001_0033),
+            (0x170, 2),
+            (0x178, 0x1000),
+            (0x1d8, 0x8000),
+            (0x1f8, 0x1234),
+        ] {
+            assert_eq!(&state.bytes()[offset..offset + 8], &expected.to_le_bytes());
+        }
+        assert_eq!(&state.bytes()[0x200..0x208], &[0; 8]);
     }
 
     #[test]

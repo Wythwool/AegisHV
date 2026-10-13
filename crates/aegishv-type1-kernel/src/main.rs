@@ -2,6 +2,9 @@
 #![cfg_attr(target_os = "none", no_main)]
 
 #[cfg(all(target_os = "none", target_arch = "x86_64"))]
+mod svm;
+
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
 use core::arch::x86_64::__cpuid_count;
 #[cfg(target_os = "none")]
 use core::arch::{asm, global_asm};
@@ -312,6 +315,10 @@ pub extern "C" fn aegishv_type1_rust_entry() -> ! {
     let status = aegishv_type1_kernel::limine_minimal_handoff_status(handoff);
     if status.is_ready() {
         serial_write_line(status.serial_marker());
+        let ext_limit = unsafe { __cpuid_count(0x8000_0000, 0).eax };
+        if ext_limit >= 0x8000_000a && unsafe { __cpuid_count(0x8000_0001, 0).ecx } & 4 != 0 {
+            unsafe { svm::run(handoff) };
+        }
         let (
             (
                 backend_marker,
@@ -2130,6 +2137,19 @@ fn serial_write_line(text: &str) {
                 serial_write_byte(COM1, *byte);
             }
         }
+    }
+}
+
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+struct Serial;
+
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+impl core::fmt::Write for Serial {
+    fn write_str(&mut self, text: &str) -> core::fmt::Result {
+        for byte in text.bytes() {
+            unsafe { serial_write_byte(COM1, byte) };
+        }
+        Ok(())
     }
 }
 

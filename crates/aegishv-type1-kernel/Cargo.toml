@@ -10,3 +10,8 @@ description = "Experimental x86_64 kernel"
 aegishv-arch-x86 = { path = "../aegishv-arch-x86" }
 aegishv-hypervisor-core = { path = "../aegishv-hypervisor-core" }
 aegishv-type1-boot = { path = "../aegishv-type1-boot" }
+aegishv-arch-arm64 = { path = "../aegishv-arch-arm64" }
+
+[[bin]]
+name = "aegishv-el2"
+path = "src/arm64.rs"

@@ -1,6 +1,7 @@
 #![no_std]
 
 pub mod early_memory;
+pub mod events;
 pub mod host_paging;
 pub mod toy_guest;
 

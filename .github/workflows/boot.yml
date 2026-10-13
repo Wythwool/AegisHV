@@ -1,0 +1,54 @@
+name: boot
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  guest:
+    name: ${{ matrix.backend }} guest exits
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        backend: [svm, el2]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.81.0
+        with:
+          targets: x86_64-unknown-none, aarch64-unknown-none
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+      - name: QEMU and ISO tools
+        run: sudo apt-get update && sudo apt-get install -y qemu-system-x86 qemu-system-arm xorriso
+      - name: Build SVM image
+        if: matrix.backend == 'svm'
+        run: |
+          mkdir -p target/limine
+          curl -fL --retry 3 https://github.com/Limine-Bootloader/Limine/releases/download/v12.9.3/limine-binary.tar.xz -o target/limine.tar.xz
+          echo 'e02a473c6dc6df25159697f94930272397f21fd86e5d4eeee61bba72c95ec8d2  target/limine.tar.xz' | sha256sum -c -
+          tar -xf target/limine.tar.xz -C target/limine --strip-components=1
+          make -C target/limine
+          export PATH="$PWD/target/limine:$PATH"
+          export AEGISHV_LIMINE_DIR="$PWD/target/limine"
+          bash scripts/build-type1-limine-iso.sh --build-kernel
+      - name: Build EL2 image
+        if: matrix.backend == 'el2'
+        run: bash scripts/build-type1-arm64.sh
+      - name: Run SVM guest
+        if: matrix.backend == 'svm'
+        run: python3 scripts/test-type1-boot.py svm target/type1/aegishv-type1.iso
+      - name: Run EL1 guest
+        if: matrix.backend == 'el2'
+        run: python3 scripts/test-type1-boot.py el2 target/type1/aegishv-el2.elf
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: boot-${{ matrix.backend }}
+          path: |
+            target/type1/*serial*
+            target/type1/*.elf
+            target/type1/*.iso

@@ -4,9 +4,13 @@ use aegishv_hypervisor_core::ids::HostPhysical;
 use core::arch::asm;
 
 use super::features::{VmxError, VmxErrorKind};
-use super::instructions::{VmxInstruction, VmxInstructionExecutor};
+#[cfg(any(target_arch = "x86_64", test))]
+use super::instructions::VmxInstruction;
+use super::instructions::VmxInstructionExecutor;
 
+#[cfg(any(target_arch = "x86_64", test))]
 const RFLAGS_CF: u64 = 1 << 0;
+#[cfg(any(target_arch = "x86_64", test))]
 const RFLAGS_ZF: u64 = 1 << 6;
 
 #[derive(Default)]
@@ -182,6 +186,7 @@ impl VmxInstructionExecutor for HardwareVmxInstructions {
     }
 }
 
+#[cfg(any(target_arch = "x86_64", test))]
 const fn finish_instruction_status(
     instruction: VmxInstruction,
     flags: u64,
@@ -201,6 +206,7 @@ const fn finish_instruction_status(
     Ok(())
 }
 
+#[cfg(any(target_arch = "x86_64", test))]
 const fn instruction_fail_invalid_message(instruction: VmxInstruction) -> &'static str {
     match instruction {
         VmxInstruction::Vmxon => "VMXON failed with VMfailInvalid",
@@ -214,6 +220,7 @@ const fn instruction_fail_invalid_message(instruction: VmxInstruction) -> &'stat
     }
 }
 
+#[cfg(any(target_arch = "x86_64", test))]
 const fn instruction_fail_valid_message(instruction: VmxInstruction) -> &'static str {
     match instruction {
         VmxInstruction::Vmxon => "VMXON failed with VMfailValid",
