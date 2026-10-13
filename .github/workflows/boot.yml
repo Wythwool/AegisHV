@@ -48,10 +48,14 @@ jobs:
         run: bash scripts/build-type1-arm64.sh
       - name: Run SVM guest
         if: matrix.backend == 'svm'
-        run: python3 scripts/test-type1-boot.py svm target/type1/aegishv-type1.iso
+        run: |
+          cp target/type1/aegishv-type1.iso target/type1/svm-builtin.iso
+          python3 scripts/test-type1-boot.py svm target/type1/svm-builtin.iso
       - name: Run EL1 guest
         if: matrix.backend == 'el2'
-        run: python3 scripts/test-type1-boot.py el2 target/type1/aegishv-el2.elf
+        run: |
+          cp target/type1/aegishv-el2.elf target/type1/el2-builtin.elf
+          python3 scripts/test-type1-boot.py el2 target/type1/el2-builtin.elf
       - name: Run ELF guests
         env:
           BACKEND: ${{ matrix.backend }}

@@ -54,7 +54,8 @@ jobs:
       - name: Run SVM guests
         if: steps.host.outputs.backend == 'svm'
         run: |
-          python3 scripts/test-type1-boot.py svm target/type1/aegishv-type1.iso --accel kvm
+          cp target/type1/aegishv-type1.iso target/type1/svm-builtin.iso
+          python3 scripts/test-type1-boot.py svm target/type1/svm-builtin.iso --accel kvm
           export PATH="$PWD/target/limine:$PATH"
           export AEGISHV_LIMINE_DIR="$PWD/target/limine"
           for guest in return spin write execute isolation syscall; do
@@ -73,6 +74,6 @@ jobs:
           name: kvm-run
           path: |
             target/type1/*.txt
-            target/type1/*serial.log
+            target/type1/*serial*
             target/type1/*.elf
             target/type1/*.iso
