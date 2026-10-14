@@ -1622,14 +1622,18 @@ unsafe fn run_type1_vmx_toy_guest(
     let host =
         match unsafe { capture_vmx_host_state(capabilities.cr0_fixed, capabilities.cr4_fixed) } {
             Ok(host) => host,
-            Err(_) => vmx_guest_entry_error(),
+            Err(error) => {
+                report_vmx_setup_error("host state", error);
+                vmx_guest_entry_error()
+            }
         };
     let configuration = MinimalVmcsConfiguration {
         execution,
         host,
         guest,
     };
-    if configuration.validate().is_err() {
+    if let Err(error) = configuration.validate() {
+        report_vmx_setup_error("configuration", error);
         vmx_guest_entry_error();
     }
 
@@ -1644,30 +1648,45 @@ unsafe fn run_type1_vmx_toy_guest(
     let mut executor = aegishv_arch_x86::vmx::hardware::HardwareVmxInstructions::new();
     // SAFETY: preflight enabled VMXE and both allocator-owned VMX pages were
     // zeroed, revision-initialized, and validated against IA32_VMX_BASIC.
-    if unsafe { executor.vmxon(vmxon) }.is_err() {
+    if let Err(error) = unsafe { executor.vmxon(vmxon) } {
+        report_vmx_setup_error("VMXON", error);
         vmx_guest_entry_error();
     }
     // SAFETY: this CPU exclusively owns the initialized VMCS page until the
     // terminal VMXOFF path, and no other CPU is started by this BSP prototype.
-    if unsafe { executor.vmclear(vmcs) }.is_err() {
+    if let Err(error) = unsafe { executor.vmclear(vmcs) } {
+        report_vmx_setup_error("VMCLEAR", error);
         // SAFETY: VMXON succeeded and this terminal path abandons all VMX state.
         unsafe { vmx_guest_cleanup_after_error(&mut executor) };
     }
     // SAFETY: VMCLEAR initialized the exclusively owned VMCS and the processor
     // remains in VMX operation on the same bootstrap CPU.
-    if unsafe { executor.vmptrld(vmcs) }.is_err() {
+    if let Err(error) = unsafe { executor.vmptrld(vmcs) } {
+        report_vmx_setup_error("VMPTRLD", error);
         // SAFETY: VMXON succeeded and this terminal path abandons all VMX state.
         unsafe { vmx_guest_cleanup_after_error(&mut executor) };
     }
     // SAFETY: VMPTRLD made the owned VMCS current; configuration validation
     // covered every field and all referenced host/guest pages remain live.
-    if unsafe { configuration.write_to(&mut executor) }.is_err() {
+    if let Err(error) = unsafe { configuration.write_to(&mut executor) } {
+        report_vmx_setup_error("VMCS write", error);
+        core::fmt::Write::write_fmt(
+            &mut Serial,
+            format_args!("aegishv:type1:vmcs-access {:?}\n", executor.last_access()),
+        )
+        .ok();
         // SAFETY: VMXON succeeded and this terminal path abandons all VMX state.
         unsafe { vmx_guest_cleanup_after_error(&mut executor) };
     }
     // SAFETY: the same owned VMCS remains current after configuration writes;
     // exact isolation, PAT, control, and address readback must pass first.
-    if unsafe { configuration.verify_isolation_fields(&mut executor) }.is_err() {
+    if let Err(error) = unsafe { configuration.verify_isolation_fields(&mut executor) } {
+        report_vmx_setup_error("VMCS readback", error);
+        core::fmt::Write::write_fmt(
+            &mut Serial,
+            format_args!("aegishv:type1:vmcs-access {:?}\n", executor.last_access()),
+        )
+        .ok();
         // SAFETY: VMXON succeeded and this terminal path abandons all VMX state.
         unsafe { vmx_guest_cleanup_after_error(&mut executor) };
     }
@@ -1700,6 +1719,15 @@ unsafe fn run_type1_vmx_toy_guest(
     // SAFETY: reaching this point means VMLAUNCH failed while the CPU remains
     // in VMX operation with the same current VMCS; cleanup is terminal.
     unsafe { vmx_guest_cleanup_after_error(&mut executor) }
+}
+
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
+fn report_vmx_setup_error(stage: &str, error: aegishv_arch_x86::vmx::VmxError) {
+    core::fmt::Write::write_fmt(
+        &mut Serial,
+        format_args!("aegishv:type1:vmx-setup-error {stage}: {error:?}\n"),
+    )
+    .ok();
 }
 
 #[cfg(all(target_os = "none", target_arch = "x86_64"))]

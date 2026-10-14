@@ -14,11 +14,17 @@ const RFLAGS_CF: u64 = 1 << 0;
 const RFLAGS_ZF: u64 = 1 << 6;
 
 #[derive(Default)]
-pub struct HardwareVmxInstructions;
+pub struct HardwareVmxInstructions {
+    last_access: Option<(u64, u64)>,
+}
 
 impl HardwareVmxInstructions {
     pub const fn new() -> Self {
-        Self
+        Self { last_access: None }
+    }
+
+    pub const fn last_access(&self) -> Option<(u64, u64)> {
+        self.last_access
     }
 }
 
@@ -128,11 +134,13 @@ impl VmxInstructionExecutor for HardwareVmxInstructions {
             );
             (value, flags)
         };
+        self.last_access = Some((field, value));
         finish_instruction_status(VmxInstruction::Vmread, flags)?;
         Ok(value)
     }
 
     unsafe fn vmwrite(&mut self, field: u64, value: u64) -> Result<(), VmxError> {
+        self.last_access = Some((field, value));
         let flags = unsafe {
             let flags: u64;
             // Intel syntax places the register-only VMCS field encoding first
