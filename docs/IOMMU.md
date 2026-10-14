@@ -30,6 +30,7 @@ the device's completion flag:
 
 Fault records must contain the expected source ID, page address, access type
 and reason. The device is quiesced and the context removed before completion.
+The normal SVM guest then runs with DMA quarantine still enabled.
 The Linux `OS boot` workflow retains serial output, image hashes and the ISO.
 
 ## Scope

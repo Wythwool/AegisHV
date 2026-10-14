@@ -82,7 +82,7 @@ unsafe fn unchanged(page: usize, value: u64) {
     }
 }
 
-pub(super) unsafe fn dma_test(handoff: LimineMinimalHandoff, unit: &mut Unit) -> ! {
+pub(super) unsafe fn dma_test(handoff: LimineMinimalHandoff, unit: &mut Unit) {
     let source = (0..256)
         .find(|device| unsafe { pci_read(*device, 0) } == 0x11e8_1234)
         .unwrap_or_else(|| fail("no EDU device on bus 0"));
@@ -188,8 +188,4 @@ pub(super) unsafe fn dma_test(handoff: LimineMinimalHandoff, unit: &mut Unit) ->
     unit.invalidate().unwrap();
     crate::serial_write_line("aegishv:iommu:revoked-ok");
     crate::serial_write_line("aegishv:iommu:dma-test-ok");
-    unsafe {
-        asm!("out dx, eax", in("dx") 0xf4u16, in("eax") 0x10u32, options(nostack));
-    }
-    crate::halt_loop()
 }

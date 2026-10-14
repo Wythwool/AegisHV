@@ -18,6 +18,8 @@ def check_output(text):
         index = lines.index(line)
         assert index > last, line
         last = index
+    assert lines.count('aegishv:svm:guest-run-ok') == 1
+    assert last < lines.index('aegishv:svm:guest-run-ok')
     assert 'aegishv:iommu:error' not in text and 'panicked at' not in text
     faults = re.findall(r'^aegishv:iommu:fault source=(0x[0-9a-f]+) address=(0x[0-9a-f]+) reason=(\d+) read=(true|false)\r?$', text, re.M)
     assert len(faults) == 5 and len({fault[0] for fault in faults}) == 1, faults
