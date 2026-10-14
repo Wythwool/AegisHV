@@ -19,6 +19,8 @@ including when the guest masks interrupts. These kernels are separate from the L
 The ARM64 Linux mode boots an unmodified Alpine kernel and root filesystem with
 1–4 CPUs, PSCI, virtual interrupts and timers. The guest tests CPU affinity,
 shared-memory atomics and CPU hotplug. See [Linux boot](docs/LINUX_GUEST.md).
+On supported x86 machines, [VT-d](docs/IOMMU.md) starts with all DMA blocked.
+The DMA test exercises page permissions and revocation with a QEMU EDU device.
 
 ## Build and replay
 

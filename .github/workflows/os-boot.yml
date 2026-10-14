@@ -86,3 +86,36 @@ jobs:
           path: |
             target/vmx
             target/type1/aegishv-type1.iso
+  iommu:
+    name: VT-d DMA isolation
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.81.0
+        with:
+          targets: x86_64-unknown-none
+          components: llvm-tools-preview, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install -y qemu-system-x86 xorriso
+      - name: Build DMA test image
+        env:
+          AEGISHV_IOMMU_TEST: '1'
+        run: |
+          cargo clippy --locked -p aegishv-type1-kernel --bin aegishv-type1-kernel --target x86_64-unknown-none -- -D warnings
+          mkdir -p target/limine
+          curl -fL --retry 3 https://github.com/Limine-Bootloader/Limine/releases/download/v12.9.3/limine-binary.tar.xz -o target/limine.tar.xz
+          echo 'e02a473c6dc6df25159697f94930272397f21fd86e5d4eeee61bba72c95ec8d2  target/limine.tar.xz' | sha256sum -c -
+          tar -xf target/limine.tar.xz -C target/limine --strip-components=1
+          make -C target/limine
+          export PATH="$PWD/target/limine:$PATH"
+          export AEGISHV_LIMINE_DIR="$PWD/target/limine"
+          bash scripts/build-type1-limine-iso.sh --build-kernel
+      - run: python3 scripts/test-type1-iommu.py target/type1/aegishv-type1.iso
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: vtd-dma
+          path: |
+            target/iommu
+            target/type1/aegishv-type1.iso

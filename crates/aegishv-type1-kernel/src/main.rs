@@ -2,6 +2,8 @@
 #![cfg_attr(target_os = "none", no_main)]
 
 #[cfg(all(target_os = "none", target_arch = "x86_64"))]
+mod iommu;
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
 mod svm;
 
 #[cfg(all(target_os = "none", target_arch = "x86_64"))]
@@ -315,6 +317,9 @@ pub extern "C" fn aegishv_type1_rust_entry() -> ! {
     let status = aegishv_type1_kernel::limine_minimal_handoff_status(handoff);
     if status.is_ready() {
         serial_write_line(status.serial_marker());
+        unsafe {
+            iommu::discover(handoff);
+        }
         let ext_limit = unsafe { __cpuid_count(0x8000_0000, 0).eax };
         if ext_limit >= 0x8000_000a && unsafe { __cpuid_count(0x8000_0001, 0).ecx } & 4 != 0 {
             unsafe { svm::run(handoff) };
@@ -1609,6 +1614,9 @@ unsafe fn run_type1_vmx_toy_guest(
         host_paging_error();
     }
     serial_write_line(aegishv_type1_kernel::SERIAL_HOST_PAGING_OK_MARKER);
+    unsafe {
+        iommu::activate(handoff);
+    }
     // SAFETY: owned descriptor tables are active and preflight validated the
     // current CR fixed bits; the snapshot now records the owned host CR3.
     let host =

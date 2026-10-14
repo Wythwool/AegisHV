@@ -6,3 +6,4 @@ pub mod paging;
 pub mod serial;
 pub mod svm;
 pub mod vmx;
+pub mod vtd;

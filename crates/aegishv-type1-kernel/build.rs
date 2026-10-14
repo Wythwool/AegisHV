@@ -1,4 +1,9 @@
 fn main() {
+    println!("cargo:rustc-check-cfg=cfg(iommu_test)");
+    println!("cargo:rerun-if-env-changed=AEGISHV_IOMMU_TEST");
+    if std::env::var("AEGISHV_IOMMU_TEST").as_deref() == Ok("1") {
+        println!("cargo:rustc-cfg=iommu_test");
+    }
     println!("cargo:rustc-check-cfg=cfg(linux_guest)");
     println!("cargo:rerun-if-env-changed=AEGISHV_LINUX");
     if std::env::var("AEGISHV_LINUX").as_deref() == Ok("1") {

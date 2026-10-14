@@ -201,6 +201,9 @@ pub unsafe fn run(handoff: LimineMinimalHandoff) -> ! {
         .unwrap_or_else(|_| fail("aegishv:svm:host-paging-error", 0));
     unsafe { crate::activate_owned_host_paging(&tables, inherited) }
         .unwrap_or_else(|_| fail("aegishv:svm:host-paging-error", 1));
+    unsafe {
+        crate::iommu::activate(handoff);
+    }
     serial_write_line("aegishv:svm:guest-enter");
     let mut regs = GeneralRegisters::default();
     let mut events = aegishv_type1_kernel::events::Events::new(

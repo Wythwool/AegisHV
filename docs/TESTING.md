@@ -42,7 +42,8 @@ xorriso. [Kernel notes](TYPE1_BOOT_BOUNDARY.md) cover the full boot command.
 Unit tests and compilation do not execute VMX, SVM, or EL2 instructions.
 `scripts/type1-qemu-smoke.sh` checks serial markers;
 `scripts/type1-qemu-evidence.sh` also records and validates the image digest and
-timer diagnostics for Intel. VMX execution needs nested VMX or bare metal.
+timer diagnostics for Intel. `scripts/test-type1-vmx.py` runs the same guest in
+Bochs and validates the complete exit sequence and timer diagnostics.
 
 `boot.yml` builds and executes seven cases each for SVM and EL2 on Linux QEMU TCG.
 The cases check computed results, preemption with IRQs masked, code write denial,
@@ -52,7 +53,13 @@ and converts the actual boot logs to Prometheus output.
 
 `nested-kvm.yml` is a manual run with hardware acceleration. It selects the strict
 Intel test on a VMX host, or the seven SVM cases on an AMD host. The available
-AMD hosts have passed; Intel and physical Arm remain unverified.
+AMD hosts have passed; physical Intel and Arm remain unverified.
+
+`os-boot.yml` runs an unmodified Alpine ARM64 kernel with 1, 2 and 4 CPUs,
+CPU affinity, shared-memory atomics and CPU hotplug. It also runs the VMX suite
+in Bochs and checks DMA denial, a page round trip, read-only permissions and
+revocation with QEMU VT-d/EDU. Each runner validates serial results and retains
+the tested image hashes. See [Linux](LINUX_GUEST.md) and [DMA](IOMMU.md).
 
 ## Host checks
 

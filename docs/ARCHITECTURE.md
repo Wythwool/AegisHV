@@ -49,6 +49,11 @@ budgets, and emit serial JSON. `tools/type1_events.py` converts that stream to
 Prometheus metrics outside the guest. [Kernel notes](TYPE1_BOOT_BOUNDARY.md)
 describe the memory layouts, Intel's fixed guest and current limits.
 
+ARM64 also has a Linux boot mode with PSCI, up to four pinned vCPUs, virtual
+GICv2 interrupts and timers. The x86 boot path can enable VT-d DMA quarantine
+from ACPI DMAR. [Linux boot](LINUX_GUEST.md) and [IOMMU](IOMMU.md) describe the
+supported machine layouts and device limits.
+
 The core crate holds allocation, ownership, ring, VM, and scheduler models.
 The device crate holds virtio and device-state models. These are library code;
 the kernel does not yet wire them into running guests.

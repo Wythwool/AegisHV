@@ -50,9 +50,10 @@ checks RIP, stack, cookie, and delivery state. Any unexpected exit is terminal.
 
 ## Run evidence
 
-For Intel, TCG has reached descriptor setup and preflight. It did not expose VMX,
-and the available KVM hosts were AMD. VMX guest execution remains unverified.
-Compilation and a bootable ISO alone do not establish guest execution.
+Intel's full guest sequence runs in Bochs 3.1 with VMX enabled. The `OS boot`
+workflow builds the pinned emulator and runs `scripts/test-type1-vmx.py` on
+Linux. This caught a missing CR0.ET bit in the guest configuration. The available
+KVM hosts were AMD; hardware Intel VMX remains unverified.
 
 A strict run needs matching valid SHA-256 image digests before and after QEMU,
 one valid CPU/timer diagnostic set, and these serial markers exactly once in
@@ -83,9 +84,11 @@ timer diagnostics fail validation even if some success markers appeared.
 
 ## Missing pieces
 
-The Intel guest is fixed. General OS loading, SMP/per-CPU state, APIC and guest
+The Intel guest is fixed. x86 OS loading, SMP/per-CPU state, APIC and guest
 timers, an independent watchdog, dynamic map/unmap with
-TLB invalidation, device backends, and IOMMU isolation are unfinished.
+TLB invalidation and device backends are unfinished. [VT-d quarantine](IOMMU.md)
+is active on supported x86 machines; general device assignment is unfinished.
+The separate [ARM64 Linux mode](LINUX_GUEST.md) supports OS boot and SMP.
 
 The Intel path has no XSAVE/FXSAVE context management or general MSR/WRMSR virtualization,
 MTRR/PAT/MMIO policy, or general exception delivery. The fixed #UD test does
