@@ -560,7 +560,7 @@ mod tests {
                 entry_instruction_length: 0,
                 idt_vectoring_info: 0x306,
                 guest_pat: VMX_TOY_GUEST_PAT_RAW,
-                guest_cr0: 0x8000_002b,
+                guest_cr0: 0x8000_003b,
                 guest_cr4: 0x2220,
                 guest_cs: 0x08,
                 guest_ss: 0x10,
@@ -713,7 +713,7 @@ mod tests {
             io_value: b'A',
             preemption_timer_reload: 0x4000,
             guest_pat: VmxPat::toy_guest(),
-            guest_cr0: 0x8000_002b,
+            guest_cr0: 0x8000_003b,
             guest_cr4: 0x2220,
         }
     }

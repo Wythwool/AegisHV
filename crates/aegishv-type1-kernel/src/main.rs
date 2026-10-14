@@ -2047,6 +2047,24 @@ extern "C" fn aegishv_vmx_exit_dispatch(
             1
         }
         Err(error) => {
+            let _ = core::fmt::Write::write_fmt(
+                &mut Serial,
+                format_args!(
+                    "aegishv:type1:exit-detail {error:?} rip={:#x}\n",
+                    registers.rip
+                ),
+            );
+            use aegishv_arch_x86::vmx::{toy_exit::ToyVmcsAccess, vmcs::VmcsField};
+            let _ = core::fmt::Write::write_fmt(
+                &mut Serial,
+                format_args!(
+                    "aegishv:type1:guest-control cr0={:x?}/{:#x} cr4={:x?}/{:#x}\n",
+                    access.read(VmcsField::GUEST_CR0),
+                    contract.guest_cr0,
+                    access.read(VmcsField::GUEST_CR4),
+                    contract.guest_cr4
+                ),
+            );
             VMX_TOY_EXIT_STATE.store(VMX_TOY_FAILED, Ordering::Release);
             serial_write_line(vmx_toy_exit_error_marker(error, sequence));
             1

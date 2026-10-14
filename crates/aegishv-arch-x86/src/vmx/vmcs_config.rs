@@ -18,6 +18,7 @@ pub const VMX_CR0_PROTECTED_MODE_ENABLE: u64 = 1 << 0;
 pub const VMX_CR0_MONITOR_COPROCESSOR: u64 = 1 << 1;
 pub const VMX_CR0_EMULATION: u64 = 1 << 2;
 pub const VMX_CR0_TASK_SWITCHED: u64 = 1 << 3;
+pub const VMX_CR0_EXTENSION_TYPE: u64 = 1 << 4;
 pub const VMX_CR0_NUMERIC_ERROR: u64 = 1 << 5;
 pub const VMX_CR0_PAGING: u64 = 1 << 31;
 pub const VMX_CR4_PAE: u64 = 1 << 5;
@@ -394,6 +395,7 @@ impl VmcsGuestState64 {
             VMX_CR0_PROTECTED_MODE_ENABLE
                 | VMX_CR0_MONITOR_COPROCESSOR
                 | VMX_CR0_TASK_SWITCHED
+                | VMX_CR0_EXTENSION_TYPE
                 | VMX_CR0_NUMERIC_ERROR
                 | VMX_CR0_PAGING
                 | cr0_fixed.fixed0,
@@ -1145,6 +1147,7 @@ mod tests {
         assert_eq!(guest.segments.tr.access_rights, 0x008b);
         assert_eq!(guest.pat, VmxPat::toy_guest());
         assert_ne!(guest.cr0 & VMX_CR0_TASK_SWITCHED, 0);
+        assert_ne!(guest.cr0 & VMX_CR0_EXTENSION_TYPE, 0);
         assert_eq!(guest.cr0 & VMX_CR0_EMULATION, 0);
         assert_ne!(guest.cr4 & VMX_CR4_OSFXSR, 0);
         assert!(guest.validate().is_ok());
