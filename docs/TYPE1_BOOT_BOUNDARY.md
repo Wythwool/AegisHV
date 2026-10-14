@@ -52,8 +52,14 @@ checks RIP, stack, cookie, and delivery state. Any unexpected exit is terminal.
 
 Intel's full guest sequence runs in Bochs 3.1 with VMX enabled. The `OS boot`
 workflow builds the pinned emulator and runs `scripts/test-type1-vmx.py` on
-Linux. This caught a missing CR0.ET bit in the guest configuration. The available
-KVM hosts were AMD; hardware Intel VMX remains unverified.
+Linux. This caught a missing CR0.ET bit in the guest configuration.
+
+The same sequence passed with nested KVM on an
+[Intel Xeon Platinum 8573C](https://github.com/Wythwool/AegisHV/actions/runs/38596593726),
+using Ubuntu 22.04 and QEMU 6.2.0 at commit `ee6c7e0`. KVM rejected an unnecessary
+SMBASE write during setup; the normal guest no longer writes that SMM field.
+The retained artifact includes the CPU report, serial log, ISO and matching
+before/after SHA256 digests. This is nested VMX, not a direct bare-metal boot.
 
 A strict run needs matching valid SHA-256 image digests before and after QEMU,
 one valid CPU/timer diagnostic set, and these serial markers exactly once in

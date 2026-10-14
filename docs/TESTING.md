@@ -53,7 +53,10 @@ and converts the actual boot logs to Prometheus output.
 
 `nested-kvm.yml` is a manual run with hardware acceleration. It selects the strict
 Intel test on a VMX host, or the seven SVM cases on an AMD host. The available
-AMD hosts have passed; physical Intel and Arm remain unverified.
+AMD hosts and an [Intel Xeon Platinum 8573C](https://github.com/Wythwool/AegisHV/actions/runs/38596593726)
+have passed. Set `backend=vmx` or `backend=svm` to require that backend; a runner
+with the other CPU vendor fails preflight. Direct bare-metal and physical Arm
+runs remain unverified.
 
 `os-boot.yml` runs an unmodified Alpine ARM64 kernel with 1, 2 and 4 CPUs,
 CPU affinity, shared-memory atomics and CPU hotplug. It also runs the VMX suite

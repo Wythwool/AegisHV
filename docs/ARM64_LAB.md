@@ -12,8 +12,9 @@ python3 scripts/test-type1-boot.py el2 target/type1/aegishv-el2.elf
 
 The runner uses Cortex-A57, GICv2 and TCG. The `boot` workflow runs the built-in
 probes and six ELF guests, checking actual exits and serial events. Physical
-Arm hardware and nested KVM remain untested. Guest interrupt injection, GICv3
-and SMMU programming are not wired into this kernel.
+Arm hardware and nested KVM remain untested. The separate [Linux mode](LINUX_GUEST.md)
+runs an unmodified kernel with 1–4 CPUs, PSCI hotplug, virtual GICv2 interrupts
+and a PL011 console. GICv3 and SMMU programming are not wired into this kernel.
 
 The older `scripts/arm64-el2-lab-smoke.sh` is a separate host-check helper using
 `AEGISHV_ARM64_BOOT_IMAGE` and GICv3; it does not run this image.

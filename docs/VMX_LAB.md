@@ -11,5 +11,10 @@ That helper is not the Limine kernel runner. Use `scripts/run-type1-lab.sh` for
 the AegisHV image.
 
 Nested VMX requires a KVM host exposing VMX to the nested guest. TCG can exercise
-Limine and preflight but cannot complete the VMX guest run. No successful Intel
-hardware run is currently retained in this tree.
+Limine and preflight but cannot complete the VMX guest run. The full exit suite
+passes in Bochs 3.1 and in nested KVM on
+[Xeon Platinum 8573C](https://github.com/Wythwool/AegisHV/actions/runs/38596593726).
+Direct bare-metal boot remains unverified.
+
+The manual `nested-kvm.yml` workflow accepts `backend=vmx` to reject AMD runners
+before building. Hosted runner labels do not guarantee a CPU vendor.

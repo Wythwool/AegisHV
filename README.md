@@ -11,8 +11,8 @@ The x86_64 kernel boots through Limine. Its AMD SVM path runs a 64-bit guest
 with NPT, register/FPU switching, intercepted syscall MSRs, and read-only code
 plus non-executable data. The ARM64 kernel boots at EL2 on QEMU `virt` and runs
 an EL1 guest with Stage-2 protection and PMU cycle sampling. Both emit JSONL
-events over serial. Intel VMX runs its exit suite in Bochs; physical Intel hardware
-still needs testing. SVM and EL2 load static ELF64 guests and enforce a timer budget,
+events over serial. Intel VMX passes its fixed exit suite in Bochs and nested KVM
+on Xeon Platinum 8573C. SVM and EL2 load static ELF64 guests and enforce a timer budget,
 including when the guest masks interrupts. These kernels are separate from the Linux sensor.
 `tools/type1_events.py` collects their serial JSON and exports Prometheus metrics.
 
@@ -69,7 +69,7 @@ The x86 kernels currently run freestanding guests on one CPU. ARM64 Linux uses
 an initramfs, 256 MiB RAM and up to four CPUs pinned to host CPUs. Disk, network,
 general PCI passthrough and x86 OS loading are unfinished. SVM has passed the
 guest suite with nested KVM on AMD EPYC 7763; EL2 has passed under QEMU TCG and
-VMX under Bochs. Direct bare-metal runs remain unverified.
+VMX under Bochs and nested KVM. Direct bare-metal runs remain unverified.
 See [the kernel notes](docs/TYPE1_BOOT_BOUNDARY.md).
 
 ## Tests
