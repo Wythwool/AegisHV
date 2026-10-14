@@ -35,6 +35,7 @@ impl VmcsField {
     pub const TSC_OFFSET: Self = Self(0x2010);
     pub const EPT_POINTER: Self = Self(0x201a);
     pub const VMCS_LINK_POINTER: Self = Self(0x2800);
+    pub const GUEST_IA32_DEBUGCTL: Self = Self(0x2802);
     pub const GUEST_IA32_PAT: Self = Self(0x2804);
     pub const GUEST_IA32_EFER: Self = Self(0x2806);
     pub const HOST_IA32_PAT: Self = Self(0x2c00);

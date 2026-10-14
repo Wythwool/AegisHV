@@ -375,7 +375,6 @@ pub struct VmcsGuestState64 {
     pub pending_debug_exceptions: u64,
     pub interruptibility: u32,
     pub activity_state: u32,
-    pub smbase: u32,
     pub sysenter_cs: u32,
     pub sysenter_esp: u64,
     pub sysenter_eip: u64,
@@ -421,7 +420,6 @@ impl VmcsGuestState64 {
             pending_debug_exceptions: 0,
             interruptibility: 0,
             activity_state: 0,
-            smbase: 0,
             sysenter_cs: 0,
             sysenter_esp: 0,
             sysenter_eip: 0,
@@ -589,7 +587,7 @@ impl VmcsGuestState64 {
                 VmcsField::GUEST_ACTIVITY_STATE.raw(),
                 self.activity_state.into(),
             )?;
-            executor.vmwrite(VmcsField::GUEST_SMBASE.raw(), self.smbase.into())?;
+            executor.vmwrite(VmcsField::GUEST_IA32_DEBUGCTL.raw(), 0)?;
             executor.vmwrite(
                 VmcsField::GUEST_IA32_SYSENTER_CS.raw(),
                 self.sysenter_cs.into(),
