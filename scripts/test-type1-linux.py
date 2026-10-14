@@ -4,8 +4,10 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import socket
 import struct
 import subprocess
+import time
 
 
 def check_output(text, cpus):
@@ -17,6 +19,8 @@ def check_output(text, cpus):
         assert text.splitlines().count(marker) == 1, marker
     if cpus > 1:
         assert text.splitlines().count('aegishv-linux: cpu-hotplug-ok') == 1
+    for cpu in ([0, cpus - 1] if cpus > 1 else [0]):
+        assert text.splitlines().count(f'aegishv-linux: console-ok cpu={cpu}') == 1
     online = [int(cpu) for cpu in re.findall(r'^aegishv:linux:cpu-online (\d+)\r?$', text, re.M)]
     assert sorted(online) == sorted(list(range(cpus)) + ([1] if cpus > 1 else [])), online
     poweroff = re.findall(r'^aegishv:linux:poweroff ticks=(\d+) exec=(\d+) write=(\d+)\r?$', text, re.M)
@@ -40,20 +44,62 @@ def main():
     assert 1 <= cpus <= 4
     command = [args.qemu, '-machine', 'virt,virtualization=on,gic-version=2', '-cpu', 'cortex-a57',
                '-accel', 'tcg,thread=multi', '-smp', str(cpus), '-m', '512M', '-kernel', str(args.kernel),
-               '-semihosting-config', 'enable=on,target=native', '-display', 'none', '-serial', 'stdio',
+               '-semihosting-config', 'enable=on,target=native', '-display', 'none',
                '-monitor', 'none', '-no-reboot']
     for name, address in [('boot.cfg', 0x50000000), ('Image', entry + 0x10000000),
                           ('guest.dtb', 0x50010000), ('initramfs.gz', 0x58000000)]:
         command += ['-device', f'loader,file={args.guest / name},addr={address:#x},force-raw=on']
     log = args.guest / 'serial.log'
-    with log.open('wb') as stream:
+    with socket.socket() as server, log.open('wb') as stream, (args.guest / 'qemu.log').open('wb') as errors:
+        server.bind(('127.0.0.1', 0))
+        server.listen(1)
+        server.settimeout(0.1)
+        command += ['-serial', f'tcp:127.0.0.1:{server.getsockname()[1]}']
+        process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=errors, stderr=subprocess.STDOUT)
         try:
-            result = subprocess.run(command, stdout=stream, stderr=subprocess.STDOUT, timeout=args.timeout)
+            deadline = time.monotonic() + args.timeout
+            connection = None
+            while process.poll() is None and time.monotonic() < deadline:
+                try:
+                    connection, _ = server.accept()
+                    break
+                except socket.timeout:
+                    pass
+            if connection is None:
+                raise SystemExit(f'QEMU did not connect its UART; see {args.guest / "qemu.log"}')
+            answered = set()
+            output = bytearray()
+            with connection:
+                connection.settimeout(0.1)
+                while time.monotonic() < deadline:
+                    try:
+                        chunk = connection.recv(65536)
+                    except ConnectionResetError:
+                        break
+                    except socket.timeout:
+                        if process.poll() is not None:
+                            break
+                        continue
+                    if not chunk:
+                        break
+                    output.extend(chunk)
+                    stream.write(chunk)
+                    stream.flush()
+                    text = output.decode('utf-8', errors='replace')
+                    for cpu in re.findall(r'^aegishv-linux: console-ready cpu=(\d+)\r?$', text, re.M):
+                        if cpu not in answered:
+                            connection.sendall(f'aegishv-console-{cpu}\n'.encode())
+                            answered.add(cpu)
+            process.wait(timeout=2)
         except subprocess.TimeoutExpired as error:
             raise SystemExit(f'Linux boot timed out; see {log}') from error
+        finally:
+            if process.poll() is None:
+                process.kill()
+            process.wait()
     text = log.read_text(encoding='utf-8')
     print(text, end='')
-    assert result.returncode == 0, result.returncode
+    assert process.returncode == 0, process.returncode
     counters = check_output(text, cpus)
     assert hashes == {str(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in files}, 'input changed'
     log.with_suffix('.json').write_text(json.dumps({'sha256': hashes, 'command': command,

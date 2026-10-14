@@ -18,6 +18,10 @@ root filesystem services, checks all CPUs, runs atomic workers pinned to each
 CPU, takes CPU 1 offline and online, then powers off. The small worker is a test
 program, not part of the hypervisor's operation.
 
+The console test sends input over a TCP serial connection, checks that Linux
+receives it, moves the UART IRQ to the last CPU, and repeats the exchange.
+`/proc/interrupts` must show an increment on the selected CPU each time.
+
 `target/linux-guest/serial.log` contains the Linux console and monitor exits.
 The adjacent JSON file records the command, input digests and fault counters.
 The `OS boot` workflow runs the same test on Linux with 1, 2 and 4 CPUs.
@@ -28,7 +32,10 @@ The current machine has 256 MiB guest RAM at IPA `0x40000000`, backed by a
 separate physical range at `0x50000000`. The host's code, tables and stacks are
 not mapped into the guest. The console is a PL011 UART. GICv2 distributor and
 CPU-interface accesses trap to EL2; IPIs use virtual SGIs and physical SGIs to
-wake the destination CPU. Each vCPU has a dedicated host CPU and guarded stack.
+wake the destination CPU. UART accesses also trap so EL2 can rearm the physical
+interrupt after the guest drains the FIFO. Shared interrupt state and affinity
+are common to all CPUs; SGIs retain each sender's ID. Each vCPU has a dedicated
+host CPU and guarded stack.
 PSCI CPU_ON/OFF and affinity queries support Linux secondary startup and hotplug.
 There is no vCPU oversubscription or CPU migration yet.
 

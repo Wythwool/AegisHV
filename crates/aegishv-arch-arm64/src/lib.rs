@@ -8,6 +8,7 @@ pub mod timer;
 pub mod tlbi;
 pub mod traps;
 pub mod vectors;
+pub mod vgic;
 pub mod vtcr;
 
 pub use features::{Arm64Error, Arm64ErrorKind};

@@ -38,6 +38,7 @@ jobs:
           path: |
             target/type1/aegishv-el2.elf
             target/linux-guest/serial.*
+            target/linux-guest/qemu.log
             target/linux-guest/boot.cfg
             target/linux-guest/guest.dtb
             target/linux-guest/Image

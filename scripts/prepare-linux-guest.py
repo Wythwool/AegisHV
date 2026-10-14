@@ -97,6 +97,18 @@ if [ "$cpus" -gt 1 ]; then
     test "$(cat /sys/devices/system/cpu/cpu1/online)" = 1
     echo 'aegishv-linux: cpu-hotplug-ok'
 fi
+for cpu in 0 {cpus - 1 if cpus > 1 else ''}; do
+    irq=$(awk '/uart-pl011/ {{gsub(":", "", $1); print $1}}' /proc/interrupts)
+    test -n "$irq"
+    printf '%x\\n' $((1 << cpu)) > /proc/irq/$irq/smp_affinity
+    before=$(awk -v n="$((cpu + 2))" '/uart-pl011/ {{print $n}}' /proc/interrupts)
+    echo "aegishv-linux: console-ready cpu=$cpu"
+    IFS= read -r reply < /dev/ttyAMA0
+    test "$reply" = "aegishv-console-$cpu"
+    after=$(awk -v n="$((cpu + 2))" '/uart-pl011/ {{print $n}}' /proc/interrupts)
+    test "$after" -gt "$before"
+    echo "aegishv-linux: console-ok cpu=$cpu"
+done
 sleep 1
 echo 'aegishv-linux: userspace-ok' 
 poweroff -f

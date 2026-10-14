@@ -3,6 +3,8 @@ use core::fmt::Write;
 use core::ptr::{addr_of, addr_of_mut};
 use core::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
+use aegishv_arch_arm64::vgic::{Cpu, Distributor};
+
 use crate::kernel::{aegishv_el2_enter, start_timer, stop, timer_reload, Frame, Serial};
 
 const BASE: u64 = 0x4000_0000;
@@ -13,14 +15,14 @@ const HCR: u64 = (1 << 31) | (1 << 19) | (1 << 14) | (1 << 13) | 0x39;
 
 #[repr(C, align(4096))]
 struct Table([u64; 512]);
-static mut TABLES: [Table; 132] = [const { Table([0; 512]) }; 132];
+static mut TABLES: [Table; 130] = [const { Table([0; 512]) }; 130];
 static mut TICKS: [u64; 4] = [0; 4];
 static CPUS: AtomicUsize = AtomicUsize::new(1);
 static DEADLINE: AtomicU64 = AtomicU64::new(0);
 static STATES: [AtomicU64; 4] = [const { AtomicU64::new(0) }; 4];
 static ENTRIES: [AtomicU64; 4] = [const { AtomicU64::new(0) }; 4];
 static CONTEXTS: [AtomicU64; 4] = [const { AtomicU64::new(0) }; 4];
-static DISTRIBUTOR: AtomicBool = AtomicBool::new(false);
+static mut DISTRIBUTOR: Distributor = Distributor::new(1);
 static LOCK: AtomicBool = AtomicBool::new(false);
 
 struct Guard;
@@ -50,122 +52,7 @@ fn cpu_id() -> usize {
 }
 
 static mut TRANSITIONS: [u64; 2] = [0; 2];
-static mut GICS: [Gic; 4] = [const {
-    Gic {
-        interface: false,
-        mask: 0,
-        enabled: 0,
-        pending: 0,
-        active: 0,
-        priority: [0xa0; 64],
-        targets: [1; 64],
-    }
-}; 4];
-
-struct Gic {
-    interface: bool,
-    mask: u32,
-    enabled: u64,
-    pending: u64,
-    active: u64,
-    priority: [u8; 64],
-    targets: [u8; 64],
-}
-
-impl Gic {
-    fn next(&self) -> u32 {
-        if !DISTRIBUTOR.load(Ordering::Relaxed) || !self.interface {
-            return 1023;
-        }
-        let pending = self.pending & self.enabled & !self.active;
-        (0..64)
-            .find(|id| pending & (1 << id) != 0 && u32::from(self.priority[*id]) < self.mask)
-            .map_or(1023, |id| id as u32)
-    }
-
-    fn access(&mut self, address: u64, value: Option<u32>, bytes: usize) -> u32 {
-        let offset = address & 0xffff;
-        if address & !0xffff == 0x0801_0000 {
-            return match (offset, value) {
-                (0, Some(value)) => {
-                    self.interface = value & 1 != 0;
-                    0
-                }
-                (0, None) => u32::from(self.interface),
-                (4, Some(value)) => {
-                    self.mask = value & 255;
-                    0
-                }
-                (4, None) => self.mask,
-                (0xc, None) => {
-                    let id = self.next();
-                    if id < 64 {
-                        self.pending &= !(1 << id);
-                        self.active |= 1 << id;
-                    }
-                    id
-                }
-                (0x10 | 0x1000, Some(value)) => {
-                    if value & 1023 < 64 {
-                        self.active &= !(1 << (value & 1023));
-                    }
-                    0
-                }
-                (0xfc, None) => 0x0202_043b,
-                _ => 0,
-            };
-        }
-        match (offset, value) {
-            (0, Some(value)) => {
-                DISTRIBUTOR.store(value & 1 != 0, Ordering::Relaxed);
-                0
-            }
-            (0, None) => u32::from(DISTRIBUTOR.load(Ordering::Relaxed)),
-            (4, None) => 1 | ((CPUS.load(Ordering::Relaxed) as u32 - 1) << 5),
-            (8, None) => 0x0102_043b,
-            (0x100..=0x107, Some(value)) => {
-                self.enabled |= u64::from(value) << ((offset & 4) * 8);
-                0
-            }
-            (0x180..=0x187, Some(value)) => {
-                self.enabled &= !(u64::from(value) << ((offset & 4) * 8));
-                0
-            }
-            (0x100..=0x107 | 0x180..=0x187, None) => (self.enabled >> ((offset & 4) * 8)) as u32,
-            (0x200..=0x207, Some(value)) => {
-                self.pending |= u64::from(value) << ((offset & 4) * 8);
-                0
-            }
-            (0x280..=0x287, Some(value)) => {
-                self.pending &= !(u64::from(value) << ((offset & 4) * 8));
-                0
-            }
-            (0x200..=0x207 | 0x280..=0x287, None) => (self.pending >> ((offset & 4) * 8)) as u32,
-            (0x400..=0x43f | 0x800..=0x83f, value) => {
-                let array = if offset < 0x800 {
-                    &mut self.priority
-                } else {
-                    &mut self.targets
-                };
-                let start = (offset & 63) as usize;
-                if start + bytes > 64 {
-                    stop(1);
-                }
-                let mut result = 0;
-                for index in 0..bytes {
-                    if let Some(value) = value {
-                        array[start + index] = (value >> (index * 8)) as u8;
-                    }
-                    result |= u32::from(array[start + index]) << (index * 8);
-                }
-                result
-            }
-
-            (0xfe8, None) => 0x2b,
-            _ => 0,
-        }
-    }
-}
+static mut GICS: [Cpu; 4] = [const { Cpu::new() }; 4];
 
 unsafe fn inject() {
     let ctl: u64;
@@ -173,12 +60,26 @@ unsafe fn inject() {
         asm!("mrs {}, cntv_ctl_el0", out(reg) ctl, options(nomem, nostack));
     }
     let gic = unsafe { &mut (*addr_of_mut!(GICS))[cpu_id()] };
-    if ctl & 7 == 5 {
-        gic.pending |= 1 << 27;
-    } else {
-        gic.pending &= !(1 << 27);
+    gic.level(27, ctl & 7 == 5);
+    let distributor = unsafe { &mut *addr_of_mut!(DISTRIBUTOR) };
+    let uart = unsafe { (0x0900_0040 as *const u32).read_volatile() };
+    distributor.level(33, uart != 0);
+    unsafe {
+        let enable = if uart == 0 { 0x0800_0104 } else { 0x0800_0184 };
+        (enable as *mut u32).write_volatile(2);
+        if uart != 0 {
+            let targets = distributor.targets(33) & !(1 << cpu_id());
+            if targets != 0 {
+                (0x0800_0f00 as *mut u32).write_volatile(u32::from(targets) << 16);
+            }
+        }
+        asm!("dsb sy", options(nostack));
     }
-    let irq = if gic.next() < 64 { 1 << 7 } else { 0 };
+    let irq = if gic.next(distributor, cpu_id()) < 64 {
+        1 << 7
+    } else {
+        0
+    };
     unsafe {
         asm!("msr hcr_el2, {}", "isb", in(reg) HCR | irq, options(nostack));
     }
@@ -193,6 +94,9 @@ pub unsafe fn run() -> ! {
     assert_eq!(config[3], SIZE);
     assert!((1..=4).contains(&config[4]));
     CPUS.store(config[4] as usize, Ordering::Release);
+    unsafe {
+        DISTRIBUTOR = Distributor::new(config[4] as u8);
+    }
     DEADLINE.store(config[7], Ordering::Relaxed);
     STATES[0].store(2, Ordering::Release);
     assert!(config[5] > 0 && config[5] < SIZE / 2);
@@ -216,11 +120,11 @@ pub unsafe fn run() -> ! {
                 | NX;
         }
     }
-    tables[0].0[0] = addr_of!(tables[130]) as u64 | 3;
-    tables[130].0[72] = addr_of!(tables[131]) as u64 | 3;
-    tables[131].0[0] = 0x0900_0000 | 3 | (1 << 10) | (3 << 6) | NX;
     unsafe {
         crate::arm64_paging::enable();
+        (0x0800_0084 as *mut u32).write_volatile(0);
+        (0x0800_0421 as *mut u8).write_volatile(0x80);
+        (0x0800_0821 as *mut u8).write_volatile(1);
         enter(0, entry, BASE + 0x10000)
     }
 }
@@ -244,7 +148,7 @@ unsafe fn enter(cpu: usize, entry: u64, context: u64) -> ! {
     {
         let _guard = Guard::lock();
         unsafe {
-            (*addr_of_mut!(GICS))[cpu].targets.fill(1 << cpu);
+            (*addr_of_mut!(GICS))[cpu] = Cpu::new();
         }
         writeln!(Serial, "aegishv:linux:cpu-online {cpu}").unwrap();
     }
@@ -279,7 +183,13 @@ pub unsafe fn exit(frame: &mut Frame, vector: u64) {
     let cpu = cpu_id();
     if vector == 9 {
         let irq = unsafe { (0x0801_000c as *const u32).read_volatile() };
-        if !matches!(irq & 1023, 0 | 26) {
+        if irq & 1023 == 1023 {
+            unsafe {
+                inject();
+            }
+            return;
+        }
+        if !matches!(irq & 1023, 0 | 26 | 33) {
             writeln!(Serial, "aegishv:linux:irq {irq}").unwrap();
             stop(1);
         }
@@ -397,6 +307,7 @@ pub unsafe fn exit(frame: &mut Frame, vector: u64) {
                         asm!("at s1e1r, {}", "isb", "mrs {}, par_el1", in(reg) frame.pc, out(reg) pc, options(nostack));
                     }
                     if pc & 1 == 0 && pc & 0x000f_ffff_ffff_f000 == address & !4095 {
+                        // Linux alternatives can patch the page executing this store.
                         let count = 1usize << ((esr >> 22) & 3);
                         let rt = ((esr >> 16) & 31) as usize;
                         let value = if rt == 31 { 0 } else { frame.registers[rt] };
@@ -409,7 +320,9 @@ pub unsafe fn exit(frame: &mut Frame, vector: u64) {
                         }
                         unsafe {
                             TRANSITIONS[1] += 1;
-                            asm!("dc civac, {}", "dsb ish", "ic ialluis", "dsb ish", "isb", in(reg) address + BACKING - BASE, options(nostack));
+                            asm!("dc civac, {first}", "dc civac, {last}", "dsb ish", "ic ialluis", "dsb ish", "isb",
+                                first = in(reg) address + BACKING - BASE,
+                                last = in(reg) address + BACKING - BASE + count as u64 - 1, options(nostack));
                         }
                         frame.pc += 4;
                         unsafe {
@@ -426,7 +339,8 @@ pub unsafe fn exit(frame: &mut Frame, vector: u64) {
                 }
             } else if esr >> 26 == 0x24
                 && esr & (1 << 24) != 0
-                && (0x0800_0000..0x0802_0000).contains(&address)
+                && ((0x0800_0000..0x0802_0000).contains(&address)
+                    || (0x0900_0000..0x0900_1000).contains(&address))
             {
                 let rt = ((esr >> 16) & 31) as usize;
                 let bytes = 1usize << ((esr >> 22) & 3);
@@ -442,16 +356,32 @@ pub unsafe fn exit(frame: &mut Frame, vector: u64) {
                 } else {
                     None
                 };
-                let result = if let (0x0800_0f00, Some(value)) = (address, value) {
+                let result = if (0x0900_0000..0x0900_1000).contains(&address) {
+                    unsafe { uart_access(address, value, bytes) }
+                } else if let (0x0800_0f00, Some(value)) = (address, value) {
                     unsafe {
                         send_sgi(value, cpu);
                     }
                     0
                 } else {
-                    unsafe { (*addr_of_mut!(GICS))[cpu].access(address, value, bytes) }
+                    unsafe {
+                        (*addr_of_mut!(GICS))[cpu]
+                            .access(&mut *addr_of_mut!(DISTRIBUTOR), cpu, address, value, bytes)
+                            .unwrap_or_else(|| stop(1))
+                    }
                 };
                 if value.is_none() && rt != 31 {
-                    frame.registers[rt] = u64::from(result);
+                    let shift = 64 - bytes * 8;
+                    let value = if esr & (1 << 21) != 0 {
+                        (((u64::from(result) << shift) as i64) >> shift) as u64
+                    } else {
+                        u64::from(result)
+                    };
+                    frame.registers[rt] = if esr & (1 << 15) == 0 {
+                        u64::from(value as u32)
+                    } else {
+                        value
+                    };
                 }
                 frame.pc += 4;
             } else {
@@ -476,6 +406,28 @@ pub unsafe fn exit(frame: &mut Frame, vector: u64) {
     }
     unsafe {
         inject();
+    }
+}
+
+unsafe fn uart_access(address: u64, value: Option<u32>, bytes: usize) -> u32 {
+    unsafe {
+        if let Some(value) = value {
+            match bytes {
+                1 => (address as *mut u8).write_volatile(value as u8),
+                2 => (address as *mut u16).write_volatile(value as u16),
+                4 => (address as *mut u32).write_volatile(value),
+                _ => stop(1),
+            }
+            asm!("dsb sy", options(nostack));
+            0
+        } else {
+            match bytes {
+                1 => u32::from((address as *const u8).read_volatile()),
+                2 => u32::from((address as *const u16).read_volatile()),
+                4 => (address as *const u32).read_volatile(),
+                _ => stop(1),
+            }
+        }
     }
 }
 
@@ -518,7 +470,7 @@ unsafe fn send_sgi(value: u32, source: usize) {
         };
         if selected && state.load(Ordering::Acquire) == 2 {
             unsafe {
-                (*addr_of_mut!(GICS))[cpu].pending |= 1 << (value & 15);
+                (*addr_of_mut!(GICS))[cpu].sgi(value & 15, source);
             }
             targets |= 1 << (16 + cpu);
         }

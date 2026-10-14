@@ -27,6 +27,8 @@ jobs:
         run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
       - name: Tests
         run: cargo test --locked --all --all-features
+      - name: Boot log validation
+        run: python3 -m unittest discover -s tests -p test_boot_checks.py
       - name: Build
         run: cargo build --locked --release
       - name: Type-1 kernel ELF
