@@ -8,6 +8,12 @@ on:
         required: true
         default: ubuntu-26.04
         type: string
+      backend:
+        description: Required virtualization backend
+        required: true
+        default: auto
+        type: choice
+        options: [auto, vmx, svm]
 
 jobs:
   guest:
@@ -18,18 +24,25 @@ jobs:
       - uses: actions/checkout@v7
       - name: Check virtualization host
         id: host
+        env:
+          REQUIRED_BACKEND: ${{ inputs.backend }}
         run: |
           mkdir -p target/type1
           lscpu > target/type1/host.txt
           cat target/type1/host.txt
           if [ ! -c /dev/kvm ]; then echo 'KVM device unavailable on this runner'; exit 1; fi
           if grep -qw vmx /proc/cpuinfo; then
-            echo 'backend=vmx' >> "$GITHUB_OUTPUT"
+            backend=vmx
           elif grep -qw svm /proc/cpuinfo; then
-            echo 'backend=svm' >> "$GITHUB_OUTPUT"
+            backend=svm
           else
             echo 'Nested VMX/SVM unavailable'; exit 1
           fi
+          if [ "$REQUIRED_BACKEND" != auto ] && [ "$REQUIRED_BACKEND" != "$backend" ]; then
+            echo "Runner exposes $backend; requested $REQUIRED_BACKEND"
+            exit 1
+          fi
+          echo "backend=$backend" >> "$GITHUB_OUTPUT"
           sudo chmod 0666 /dev/kvm
       - uses: dtolnay/rust-toolchain@1.81.0
         with:
