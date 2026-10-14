@@ -2,9 +2,11 @@
 .global aegishv_el2_start
 aegishv_el2_start:
     msr daifset, #15
-    mrs x0, mpidr_el1
-    and x0, x0, #0xff
-    cbnz x0, .Lpark
+    mrs x19, mpidr_el1
+    and x19, x19, #0xff
+    cmp x19, #4
+    b.hs .Lpark
+    cbnz x19, 2f
     ldr x0, =__bss_start
     ldr x1, =__bss_end
 1:  cmp x0, x1
@@ -12,6 +14,9 @@ aegishv_el2_start:
     stp xzr, xzr, [x0], #16
     b 1b
 2:  ldr x0, =__stack_top
+    mov x1, #0x1000
+    movk x1, #1, lsl #16
+    madd x0, x19, x1, x0
     mov sp, x0
     mrs x0, CurrentEL
     cmp x0, #8
@@ -21,7 +26,11 @@ aegishv_el2_start:
     ldr x0, =aegishv_el2_vectors
     msr vbar_el2, x0
     isb
+    cbnz x19, .Lsecondary
     bl aegishv_el2_main
+.Lsecondary:
+    mov x0, x19
+    bl aegishv_el2_secondary
 .Lpark:
     wfe
     b .Lpark

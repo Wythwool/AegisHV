@@ -35,7 +35,6 @@ unsafe fn translate(address: u64, write: bool) -> u64 {
 /// Called once on the boot CPU with IRQs masked and EL2 stage 1 disabled.
 pub unsafe fn enable() {
     let tables = unsafe { &mut *addr_of_mut!(TABLES) };
-    let root = addr_of!(TABLES) as u64;
     let start = addr_of!(__image_start) as u64;
     let end = addr_of!(__image_end) as u64;
     let text_end = addr_of!(__text_end) as u64;
@@ -45,8 +44,13 @@ pub unsafe fn enable() {
     assert!(start < text_end && text_end <= rodata_end && rodata_end < guard && guard < end);
     tables[0].0[1] = addr_of!(tables[1]) as u64 | 3;
     tables[1].0[0] = addr_of!(tables[2]) as u64 | 3;
+    #[cfg(linux_guest)]
+    for index in 0..128 {
+        tables[1].0[128 + index] =
+            (0x5000_0000 + index as u64 * 0x20_0000) | 1 | AF | (3 << 8) | NX;
+    }
     for address in (start..end).step_by(4096) {
-        if address == guard {
+        if address >= guard && (address - guard) % 0x11000 == 0 {
             continue;
         }
         let permissions = if address < text_end {
@@ -67,6 +71,17 @@ pub unsafe fn enable() {
     tables[4].0[0] = 0x0800_0000 | device;
     tables[4].0[16] = 0x0801_0000 | device;
     tables[5].0[0] = 0x0900_0000 | device;
+
+    unsafe {
+        activate();
+    }
+}
+
+pub unsafe fn activate() {
+    let root = addr_of!(TABLES) as u64;
+    let start = addr_of!(__image_start) as u64;
+    let rodata_end = addr_of!(__rodata_end) as u64;
+    let guard = addr_of!(__stack_guard) as u64;
 
     let control: u64;
     // 39-bit VA, 36-bit PA, 4K granule, inner-shareable WB walks, EL2 RES1 bits.

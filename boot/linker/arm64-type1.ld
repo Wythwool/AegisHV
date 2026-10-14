@@ -19,6 +19,7 @@ SECTIONS
     . += 4K;
     . += 64K;
     __stack_top = .;
+    . += 3 * (4K + 64K);
   }
   __image_end = .;
   ASSERT(__image_end <= 0x40200000, "EL2 image exceeds its mapped window")

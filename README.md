@@ -11,10 +11,14 @@ The x86_64 kernel boots through Limine. Its AMD SVM path runs a 64-bit guest
 with NPT, register/FPU switching, intercepted syscall MSRs, and read-only code
 plus non-executable data. The ARM64 kernel boots at EL2 on QEMU `virt` and runs
 an EL1 guest with Stage-2 protection and PMU cycle sampling. Both emit JSONL
-events over serial. Intel VMX has a separate entry path that still needs a
-hardware run. SVM and EL2 load static ELF64 guests and enforce a timer budget,
+events over serial. Intel VMX runs its exit suite in Bochs; physical Intel hardware
+still needs testing. SVM and EL2 load static ELF64 guests and enforce a timer budget,
 including when the guest masks interrupts. These kernels are separate from the Linux sensor.
 `tools/type1_events.py` collects their serial JSON and exports Prometheus metrics.
+
+The ARM64 Linux mode boots an unmodified Alpine kernel and root filesystem with
+1–4 CPUs, PSCI, virtual interrupts and timers. The guest tests CPU affinity,
+shared-memory atomics and CPU hotplug. See [Linux boot](docs/LINUX_GUEST.md).
 
 ## Build and replay
 
@@ -59,10 +63,11 @@ permissions. The VMI and detector libraries work with offline snapshots and
 fixtures. PMU collection currently emits thread heartbeats with unavailable
 counters set to `null`.
 
-The kernels currently run small freestanding guests on one CPU. General OS loading, SMP,
-device backends and IOMMU isolation are unfinished. SVM has passed the guest suite
-with nested KVM on AMD EPYC 7763; EL2 has passed under QEMU TCG. Direct bare-metal
-runs and Intel VMX guest execution remain unverified.
+The x86 kernels currently run freestanding guests on one CPU. ARM64 Linux uses
+an initramfs, 256 MiB RAM and up to four CPUs pinned to host CPUs. Disk, network,
+general PCI passthrough and x86 OS loading are unfinished. SVM has passed the
+guest suite with nested KVM on AMD EPYC 7763; EL2 has passed under QEMU TCG and
+VMX under Bochs. Direct bare-metal runs remain unverified.
 See [the kernel notes](docs/TYPE1_BOOT_BOUNDARY.md).
 
 ## Tests

@@ -1,4 +1,9 @@
 fn main() {
+    println!("cargo:rustc-check-cfg=cfg(linux_guest)");
+    println!("cargo:rerun-if-env-changed=AEGISHV_LINUX");
+    if std::env::var("AEGISHV_LINUX").as_deref() == Ok("1") {
+        println!("cargo:rustc-cfg=linux_guest");
+    }
     println!("cargo:rerun-if-changed=../../boot/linker/x86_64-type1.ld");
     println!("cargo:rerun-if-changed=../../boot/linker/arm64-type1.ld");
     println!("cargo:rerun-if-env-changed=AEGISHV_GUEST_ELF");

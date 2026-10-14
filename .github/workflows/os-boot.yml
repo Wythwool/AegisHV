@@ -1,0 +1,88 @@
+name: OS boot
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  linux:
+    name: Linux EL2 (${{ matrix.cpus }} CPUs)
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        cpus: [1, 2, 4]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.81.0
+        with:
+          targets: aarch64-unknown-none
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install -y qemu-system-arm
+      - name: Build Linux monitor
+        env:
+          AEGISHV_LINUX: '1'
+        run: |
+          cargo clippy --locked -p aegishv-type1-kernel --bin aegishv-el2 --target aarch64-unknown-none -- -D warnings
+          bash scripts/build-type1-arm64.sh
+      - run: python3 scripts/prepare-linux-guest.py --cpus ${{ matrix.cpus }}
+      - run: python3 scripts/test-type1-linux.py target/type1/aegishv-el2.elf
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: linux-el2-${{ matrix.cpus }}
+          path: |
+            target/type1/aegishv-el2.elf
+            target/linux-guest/serial.*
+            target/linux-guest/boot.cfg
+            target/linux-guest/guest.dtb
+            target/linux-guest/Image
+            target/linux-guest/initramfs.gz
+  vmx:
+    name: VMX exits (Bochs)
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.81.0
+        with:
+          targets: x86_64-unknown-none
+          components: llvm-tools-preview, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install -y build-essential xorriso
+      - name: Build Bochs
+        run: |
+          mkdir -p target/bochs
+          curl -fL --retry 3 https://codeload.github.com/bochs-emu/Bochs/tar.gz/refs/tags/REL_3_1_FINAL -o target/bochs.tar.gz
+          echo '0d3766784bbcaa4d6fe57dac50f83c6d7095d0ea212fd7904cbf7a775347159a  target/bochs.tar.gz' | sha256sum -c -
+          tar -xf target/bochs.tar.gz -C target/bochs --strip-components=1
+          cd target/bochs/bochs
+          ./configure --with-nogui --enable-vmx=2 --enable-x86-64 --enable-avx --disable-docbook
+          make -j4
+      - name: Build boot image
+        run: |
+          cargo clippy --locked -p aegishv-type1-kernel --bin aegishv-type1-kernel --target x86_64-unknown-none -- -D warnings
+          mkdir -p target/limine
+          curl -fL --retry 3 https://github.com/Limine-Bootloader/Limine/releases/download/v12.9.3/limine-binary.tar.xz -o target/limine.tar.xz
+          echo 'e02a473c6dc6df25159697f94930272397f21fd86e5d4eeee61bba72c95ec8d2  target/limine.tar.xz' | sha256sum -c -
+          tar -xf target/limine.tar.xz -C target/limine --strip-components=1
+          make -C target/limine
+          export PATH="$PWD/target/limine:$PATH"
+          export AEGISHV_LIMINE_DIR="$PWD/target/limine"
+          bash scripts/build-type1-limine-iso.sh --build-kernel
+      - name: Run VMX
+        run: |
+          python3 scripts/test-type1-vmx.py target/type1/aegishv-type1.iso \
+            --bochs target/bochs/bochs/bochs --bios target/bochs/bochs/bios/BIOS-bochs-latest \
+            --vga-bios target/bochs/bochs/bios/VGABIOS-lgpl/VGABIOS-lgpl-latest.bin
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: vmx-bochs
+          path: |
+            target/vmx
+            target/type1/aegishv-type1.iso
