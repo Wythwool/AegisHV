@@ -1,4 +1,5 @@
 import importlib.util
+import json
 from pathlib import Path
 import unittest
 
@@ -12,6 +13,25 @@ def script(name):
 
 
 class BootChecks(unittest.TestCase):
+    def test_linux_telemetry_rejects_missing_cpus_spoofing_and_false_pmu_values(self):
+        check = script('linux').check_events
+        fields = [dict(kind='pmu_status', available=False),
+                  dict(kind='page_access', rip=4096, gpa=4096, access='execute', action='allow'),
+                  dict(kind='page_access', rip=4100, gpa=4104, access='write', action='emulate'),
+                  dict(kind='vector_sample', rip=4096, target=8192, gpa=12288, valid=True, changed=False)]
+        events = [dict(source='aegishv-type1', backend='el2', sequence=index, vcpu=0, **item)
+                  for index, item in enumerate(fields, 1)]
+        counters = dict(execute_faults=1, write_faults=1)
+        good = '\n'.join(map(json.dumps, events))
+        self.assertIn('pmu_available{backend="el2",vcpu="0"} 0', check(good, 1, counters, False))
+        for bad in (good.replace('"sequence": 2', '"sequence": 999999'),
+                    good.replace('"available": false', '"available": true'),
+                    good.replace('"valid": true', '"valid": false')):
+            with self.assertRaises(AssertionError):
+                check(bad, 1, counters, False)
+        with self.assertRaises(AssertionError):
+            check(good, 2, counters, False)
+
     def test_linux_rejects_poweroff_before_userspace_and_missing_hotplug(self):
         check = script('linux').check_output
         good = '\n'.join(['aegishv:linux:cpu-online 0', 'aegishv:linux:cpu-online 1',

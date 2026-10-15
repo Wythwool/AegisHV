@@ -4,7 +4,9 @@ use core::ptr::{addr_of, addr_of_mut};
 use core::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
 use aegishv_arch_arm64::vgic::{Cpu, Distributor};
+use aegishv_type1_kernel::events::{Access, Action};
 
+use crate::arm64_monitor as monitor;
 use crate::kernel::{aegishv_el2_enter, start_timer, stop, timer_reload, Frame, Serial};
 
 const BASE: u64 = 0x4000_0000;
@@ -122,6 +124,7 @@ pub unsafe fn run() -> ! {
     }
     unsafe {
         crate::arm64_paging::enable();
+        monitor::init(entry, config[6]);
         (0x0800_0084 as *mut u32).write_volatile(0);
         (0x0800_0421 as *mut u8).write_volatile(0x80);
         (0x0800_0821 as *mut u8).write_volatile(1);
@@ -172,6 +175,10 @@ unsafe fn enter(cpu: usize, entry: u64, context: u64) -> ! {
         vectors: [0; 64],
     };
     frame.registers[0] = context;
+    {
+        let _guard = Guard::lock();
+        unsafe { monitor::start(cpu) };
+    }
     unsafe {
         start_timer();
         aegishv_el2_enter(&frame)
@@ -181,6 +188,7 @@ unsafe fn enter(cpu: usize, entry: u64, context: u64) -> ! {
 pub unsafe fn exit(frame: &mut Frame, vector: u64) {
     let guard = Guard::lock();
     let cpu = cpu_id();
+    unsafe { monitor::cpu(cpu) };
     if vector == 9 {
         let irq = unsafe { (0x0801_000c as *const u32).read_volatile() };
         if irq & 1023 == 1023 {
@@ -197,6 +205,9 @@ pub unsafe fn exit(frame: &mut Frame, vector: u64) {
             if irq & 1023 == 26 {
                 TICKS[cpu] += 1;
                 timer_reload();
+                if TICKS[cpu] % 25 == 0 {
+                    monitor::sample(cpu, frame.pc);
+                }
             }
             (0x0801_0010 as *mut u32).write_volatile(irq);
             asm!("dsb sy", options(nostack));
@@ -243,6 +254,7 @@ pub unsafe fn exit(frame: &mut Frame, vector: u64) {
                     _ => u64::MAX,
                 },
                 0x8400_0008 | 0x8400_0009 => {
+                    unsafe { monitor::sample(cpu, frame.pc) };
                     writeln!(
                         Serial,
                         "aegishv:linux:poweroff ticks={} exec={} write={}",
@@ -269,6 +281,7 @@ pub unsafe fn exit(frame: &mut Frame, vector: u64) {
                     }
                 }
                 0x8400_0002 => {
+                    unsafe { monitor::sample(cpu, frame.pc) };
                     STATES[cpu].store(0, Ordering::Release);
                     drop(guard);
                     unsafe {
@@ -279,18 +292,14 @@ pub unsafe fn exit(frame: &mut Frame, vector: u64) {
                 _ => u64::MAX,
             };
         }
+        0x18 if monitor::pmu_access(frame, esr) => {}
         0x20 | 0x24 => {
             let permission = esr & 0x3c == 0xc;
             let address = if permission && esr & (1 << 7) == 0 {
-                let par: u64;
-                unsafe {
-                    asm!("at s1e1r, {}", "isb", "mrs {}, par_el1", in(reg) far, out(reg) par, options(nostack));
-                }
-                if par & 1 != 0 {
+                unsafe { monitor::translate(far) }.unwrap_or_else(|par| {
                     writeln!(Serial, "aegishv:linux:walk-failed {par:#x}").unwrap();
-                    stop(1);
-                }
-                (par & 0x000f_ffff_ffff_f000) | (far & 4095)
+                    stop(1)
+                })
             } else {
                 ((hpfar & 0x0000_0fff_ffff_fff0) << 8) | (far & 4095)
             };
@@ -302,11 +311,8 @@ pub unsafe fn exit(frame: &mut Frame, vector: u64) {
                     stop(1);
                 }
                 if write && esr & (1 << 24) != 0 {
-                    let pc: u64;
-                    unsafe {
-                        asm!("at s1e1r, {}", "isb", "mrs {}, par_el1", in(reg) frame.pc, out(reg) pc, options(nostack));
-                    }
-                    if pc & 1 == 0 && pc & 0x000f_ffff_ffff_f000 == address & !4095 {
+                    let pc = unsafe { monitor::translate(frame.pc) };
+                    if pc.is_ok_and(|pc| pc & !4095 == address & !4095) {
                         // Linux alternatives can patch the page executing this store.
                         let count = 1usize << ((esr >> 22) & 3);
                         let rt = ((esr >> 16) & 31) as usize;
@@ -323,6 +329,7 @@ pub unsafe fn exit(frame: &mut Frame, vector: u64) {
                             asm!("dc civac, {first}", "dc civac, {last}", "dsb ish", "ic ialluis", "dsb ish", "isb",
                                 first = in(reg) address + BACKING - BASE,
                                 last = in(reg) address + BACKING - BASE + count as u64 - 1, options(nostack));
+                            monitor::page(frame.pc, address, Access::Write, Action::Emulate);
                         }
                         frame.pc += 4;
                         unsafe {
@@ -336,6 +343,16 @@ pub unsafe fn exit(frame: &mut Frame, vector: u64) {
                 unsafe {
                     TRANSITIONS[usize::from(!execute)] += 1;
                     asm!("dsb ishst", "tlbi ipas2e1is, {}", "dsb ish", "tlbi vmalle1is", "dsb ish", "isb", in(reg) address >> 12, options(nostack));
+                    monitor::page(
+                        frame.pc,
+                        address,
+                        if execute {
+                            Access::Execute
+                        } else {
+                            Access::Write
+                        },
+                        Action::Allow,
+                    );
                 }
             } else if esr >> 26 == 0x24
                 && esr & (1 << 24) != 0
@@ -385,13 +402,21 @@ pub unsafe fn exit(frame: &mut Frame, vector: u64) {
                 }
                 frame.pc += 4;
             } else {
+                let access = if esr >> 26 == 0x20 {
+                    Access::Execute
+                } else if esr & (1 << 6) != 0 {
+                    Access::Write
+                } else {
+                    Access::Read
+                };
+                unsafe { monitor::page(frame.pc, address, access, Action::Deny) };
                 writeln!(
                     Serial,
                     "aegishv:linux:abort esr={esr:#x} ipa={address:#x} far={far:#x} pc={:#x}",
                     frame.pc
                 )
                 .unwrap();
-                stop(1);
+                stop(3);
             }
         }
         _ => {

@@ -13,6 +13,8 @@ FIELDS = {
     "page_access": {"rip", "gpa", "access", "action"},
     "syscall_entry": {"rip", "register", "target", "action"},
     "pmu_sample": {"counter", "value"},
+    "pmu_status": {"available"},
+    "vector_sample": {"rip", "target", "gpa", "valid", "changed"},
     "guest_halt": {"rip", "result"},
     "vcpu_budget": {"rip", "result"},
     "guest_exception": {"rip", "vector", "address"},
@@ -37,12 +39,15 @@ def decode(line):
     kind = event.get("kind")
     if not isinstance(kind, str) or kind not in FIELDS or event.keys() != COMMON | FIELDS[kind]:
         raise ValueError("unknown event layout")
-    if event["backend"] not in BACKENDS or event["vcpu"] != 0 or event["sequence"] == 0:
+    if event["backend"] not in BACKENDS or not 0 <= event["vcpu"] < 256 or event["sequence"] == 0:
         raise ValueError("invalid event origin")
     for key in NUMBERS & event.keys():
         if type(event[key]) is not int or not 0 <= event[key] < 1 << 64:
             raise ValueError("invalid integer")
-    if kind == "page_access" and (event["access"] not in ("read", "write", "execute") or event["action"] != "deny"):
+    for key in {"available", "valid", "changed"} & event.keys():
+        if type(event[key]) is not bool:
+            raise ValueError("invalid boolean")
+    if kind == "page_access" and (event["access"] not in ("read", "write", "execute") or event["action"] not in ("allow", "deny", "emulate")):
         raise ValueError("invalid access event")
     if kind == "syscall_entry" and event["action"] not in ("allow", "deny"):
         raise ValueError("invalid syscall action")
@@ -56,6 +61,7 @@ class Metrics:
         self.lock = threading.Lock()
         self.counters = Counter()
         self.last = {}
+        self.pmu = {}
         self.stream_up = 1
         self.error = False
 
@@ -70,6 +76,7 @@ class Metrics:
             previous = self.last.get(backend, 0)
             if sequence == 1:
                 self.counters[("boots_total", labels)] += 1
+                self.pmu = {key: value for key, value in self.pmu.items() if key[0] != backend}
                 previous = 0
             elif sequence <= previous:
                 self.counters[("invalid_events_total", ())] += 1
@@ -77,18 +84,29 @@ class Metrics:
             self.counters[("missing_events_total", labels)] += sequence - previous - 1
             self.last[backend] = sequence
             self.counters[("events_total", labels + (("kind", kind),))] += 1
+            cpu_labels = labels + (("vcpu", str(event["vcpu"])),)
+            self.counters[("vcpu_events_total", cpu_labels + (("kind", kind),))] += 1
             if kind == "page_access":
-                self.counters[("denied_accesses_total", labels + (("access", event["access"]),))] += 1
+                self.counters[("page_accesses_total", labels + (("access", event["access"]), ("action", event["action"])))] += 1
+                if event["action"] == "deny":
+                    self.counters[("denied_accesses_total", labels + (("access", event["access"]),))] += 1
             elif kind == "syscall_entry":
                 self.counters[("syscall_checks_total", labels + (("action", event["action"]),))] += 1
             elif kind == "pmu_sample":
                 self.counters[("pmu_cycles_total", labels)] += event["value"]
+                self.counters[("vcpu_pmu_cycles_total", cpu_labels)] += event["value"]
+            elif kind == "vector_sample":
+                status = "invalid" if not event["valid"] else "changed" if event["changed"] else "valid"
+                self.counters[("vector_checks_total", cpu_labels + (("status", status),))] += 1
+            elif kind == "pmu_status":
+                self.pmu[(backend, event["vcpu"])] = int(event["available"])
             return True
 
     def render(self):
         with self.lock:
             counters, sequences = dict(self.counters), dict(self.last)
             stream_up = self.stream_up
+            pmu = dict(self.pmu)
         lines = []
         typed = set()
         for (name, labels), value in sorted(counters.items()):
@@ -101,6 +119,10 @@ class Metrics:
         lines.append("# TYPE aegishv_type1_last_sequence gauge")
         for backend, sequence in sorted(sequences.items()):
             lines.append(f'aegishv_type1_last_sequence{{backend="{backend}"}} {sequence}')
+        if pmu:
+            lines.append("# TYPE aegishv_type1_pmu_available gauge")
+            for (backend, cpu), available in sorted(pmu.items()):
+                lines.append(f'aegishv_type1_pmu_available{{backend="{backend}",vcpu="{cpu}"}} {available}')
         lines += ["# TYPE aegishv_type1_stream_up gauge", f"aegishv_type1_stream_up {stream_up}"]
         return "\n".join(lines) + "\n"
 

@@ -18,7 +18,9 @@ including when the guest masks interrupts. These kernels are separate from the L
 
 The ARM64 Linux mode boots an unmodified Alpine kernel and root filesystem with
 1–4 CPUs, PSCI, virtual interrupts and timers. The guest tests CPU affinity,
-shared-memory atomics and CPU hotplug. See [Linux boot](docs/LINUX_GUEST.md).
+shared-memory atomics and CPU hotplug. EL2 records page permission changes,
+samples per-CPU PMU cycles and checks exception-vector mappings and contents.
+Events use a separate UART outside the guest map. See [Linux boot](docs/LINUX_GUEST.md).
 On supported x86 machines, [VT-d](docs/IOMMU.md) starts with all DMA blocked.
 The DMA test exercises page permissions and revocation with a QEMU EDU device.
 
@@ -62,8 +64,8 @@ The metrics listener serves `/metrics`, `/healthz`, and `/readyz`.
 
 W^X alerts are correlations from trace data; the sensor does not change page
 permissions. The VMI and detector libraries work with offline snapshots and
-fixtures. PMU collection currently emits thread heartbeats with unavailable
-counters set to `null`.
+fixtures. The userspace sensor's PMU collection currently emits thread heartbeats
+with unavailable counters set to `null`; EL2 uses the architectural cycle counter.
 
 The x86 kernels currently run freestanding guests on one CPU. ARM64 Linux uses
 an initramfs, 256 MiB RAM and up to four CPUs pinned to host CPUs. Disk, network,

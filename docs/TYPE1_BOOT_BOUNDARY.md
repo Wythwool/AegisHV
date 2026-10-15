@@ -113,8 +113,8 @@ and data execute denial. Invalid or unexpected exits stop the guest.
 The ARM64 image loads at `0x40080000` on QEMU `virt`. It enters EL1 through
 ERET with Stage-2 enabled, saves GPR/FP/SIMD state on an EL2 exception, checks
 the guest vector address on HVC, and handles actual instruction/data aborts.
-Its PMU sample is elapsed cycle-counter ticks across the run, including the
-EL2 handlers. EL2 installs its own Stage-1 tables with RX text, read-only constants,
+Its PMU sample is the guest cycle-counter delta across the run. EL2 installs
+its own Stage-1 tables with RX text, read-only constants,
 RW/NX data and an unmapped stack guard. Only the linked kernel, PL011 and the two
 GIC interfaces are mapped. Boot checks read/write translations with AT S1E2R/W
 before entering the guest.
@@ -186,6 +186,9 @@ It filters boot messages, validates kernel JSON, tracks missing sequence numbers
 and serves `/metrics`, `/healthz` and `/readyz` on the requested address.
 Sequence 1 begins a new boot. RIP and guest addresses are kept in JSON and never
 used as metric labels. The HTTP listener stays up at EOF; `stream_up` becomes 0.
+SMP shares one sequence and records `vcpu` on every event. Aggregate counters
+remain available alongside per-CPU counters. The Linux mode uses a dedicated
+telemetry UART; its guest console is a separate, untrusted stream.
 
 ```sh
 python3 tools/type1_events.py --input target/type1/el2-serial.log \

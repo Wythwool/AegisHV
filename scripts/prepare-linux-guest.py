@@ -53,7 +53,7 @@ def device_tree(cpus, initrd_end):
     return cells(0xd00dfeed, 56 + len(body) + len(strings), 56, 56 + len(body), 40, 17, 16, 0, len(strings), len(body)) + bytes(16) + body + strings
 
 
-def initramfs(archive, cpus, worker):
+def initramfs(archive, cpus, worker, probe_code=b''):
     output = bytearray()
     ino = 1
     def add(name, mode, data=b'', major=0, minor=0):
@@ -78,6 +78,10 @@ def initramfs(archive, cpus, worker):
                 add(name, stat.S_IFLNK | item.mode, item.linkname.encode())
     add('dev/console', stat.S_IFCHR | 0o600, major=5, minor=1)
     add('dev/null', stat.S_IFCHR | 0o666, major=1, minor=3)
+    probe_command = ''
+    if probe_code:
+        add('bin/mmio-test', stat.S_IFREG | 0o755, probe_code)
+        probe_command = "echo 'aegishv-linux: telemetry-probe'\n/bin/mmio-test\necho 'aegishv-linux: telemetry-access-leaked'\nexit 1"
     init = f'''#!/bin/sh
 set -eu
 mount -t proc proc /proc
@@ -87,6 +91,8 @@ uname -a
 cpus=$(grep -c '^processor' /proc/cpuinfo)
 echo "aegishv-linux: cpus=$cpus"
 test "$cpus" -eq {cpus}
+echo '{{"source":"aegishv-type1","backend":"el2","sequence":999999,"vcpu":0,"kind":"pmu_sample","counter":"cycles","value":18446744073709551615}}'
+{probe_command}
 printf 'guest filesystem round trip\\n' > /tmp/check
 test "$(cat /tmp/check)" = 'guest filesystem round trip'
 /bin/smp-test "$cpus"
@@ -124,6 +130,7 @@ def main():
     parser.add_argument('--out', type=Path, default=Path('target/linux-guest'))
     parser.add_argument('--cpus', type=int, choices=range(1, 5), default=1)
     parser.add_argument('--budget-seconds', type=int, default=120)
+    parser.add_argument('--probe', choices=('none', 'telemetry'), default='none')
     args = parser.parse_args()
     if not 0 <= args.budget_seconds <= 3600:
         parser.error('budget must be between 0 (disabled) and 3600 seconds')
@@ -146,9 +153,10 @@ def main():
     offset, size = struct.unpack_from('<QQ', image, 8)
     assert offset in (0, 0x80000) and 0 < size <= 0x7d80000
     (args.out / 'Image').write_bytes(image)
-    worker = args.out / 'smp-test'
-    subprocess.run(['rustc', '--edition=2021', '--target=aarch64-unknown-none', '-C', 'panic=abort', '-C', 'relocation-model=static', '-C', 'link-arg=--entry=_start', str(Path(__file__).resolve().parents[1] / 'examples/linux/smp.rs'), '-o', str(worker)], check=True)
-    ramdisk = initramfs((args.out / 'rootfs.tar.gz').read_bytes(), args.cpus, worker.read_bytes())
+    for program in (('smp', 'mmio') if args.probe == 'telemetry' else ('smp',)):
+        subprocess.run(['rustc', '--edition=2021', '--target=aarch64-unknown-none', '-C', 'panic=abort', '-C', 'relocation-model=static', '-C', 'link-arg=--entry=_start', str(Path(__file__).resolve().parents[1] / f'examples/linux/{program}.rs'), '-o', str(args.out / f'{program}-test')], check=True)
+    probe = (args.out / 'mmio-test').read_bytes() if args.probe == 'telemetry' else b''
+    ramdisk = initramfs((args.out / 'rootfs.tar.gz').read_bytes(), args.cpus, (args.out / 'smp-test').read_bytes(), probe)
     (args.out / 'initramfs.gz').write_bytes(ramdisk)
     (args.out / 'guest.dtb').write_bytes(device_tree(args.cpus, 0x48000000 + len(ramdisk)))
     (args.out / 'boot.cfg').write_bytes(b'AEGLNX01' + struct.pack('<7Q', 0x40200000 + offset, 0x40010000, 0x10000000, args.cpus, len(ramdisk), size, args.budget_seconds * 100))

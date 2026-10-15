@@ -71,6 +71,10 @@ pub unsafe fn enable() {
     tables[4].0[0] = 0x0800_0000 | device;
     tables[4].0[16] = 0x0801_0000 | device;
     tables[5].0[0] = 0x0900_0000 | device;
+    #[cfg(linux_guest)]
+    {
+        tables[5].0[64] = 0x0904_0000 | device;
+    }
 
     unsafe {
         activate();

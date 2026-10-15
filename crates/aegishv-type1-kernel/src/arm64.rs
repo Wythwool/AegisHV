@@ -7,6 +7,9 @@ mod arm64_paging;
 #[cfg(all(target_os = "none", target_arch = "aarch64", linux_guest))]
 mod arm64_linux;
 
+#[cfg(all(target_os = "none", target_arch = "aarch64", linux_guest))]
+mod arm64_monitor;
+
 #[cfg(all(target_os = "none", target_arch = "aarch64", not(linux_guest)))]
 mod arm64_probe;
 

@@ -3,6 +3,7 @@
 pub mod early_memory;
 pub mod elf;
 pub mod events;
+pub mod inspection;
 
 pub static GUEST_IMAGE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/guest.elf"));
 pub mod host_paging;

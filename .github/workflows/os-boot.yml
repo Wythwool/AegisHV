@@ -8,13 +8,19 @@ on:
 
 jobs:
   linux:
-    name: Linux EL2 (${{ matrix.cpus }} CPUs)
+    name: Linux EL2 (${{ matrix.case }})
     runs-on: ubuntu-26.04
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        cpus: [1, 2, 4]
+        include:
+          - { case: single, cpus: 1, pmu: 'on', probe: none }
+          - { case: dual, cpus: 2, pmu: 'on', probe: none }
+          - { case: smp, cpus: 4, pmu: 'on', probe: none }
+          - { case: no-pmu, cpus: 1, pmu: 'off', probe: none }
+          - { case: telemetry-isolation, cpus: 1, pmu: 'on', probe: telemetry }
+          - { case: vector-change, cpus: 1, pmu: 'on', probe: none, vector: true }
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.81.0
@@ -29,15 +35,16 @@ jobs:
         run: |
           cargo clippy --locked -p aegishv-type1-kernel --bin aegishv-el2 --target aarch64-unknown-none -- -D warnings
           bash scripts/build-type1-arm64.sh
-      - run: python3 scripts/prepare-linux-guest.py --cpus ${{ matrix.cpus }}
-      - run: python3 scripts/test-type1-linux.py target/type1/aegishv-el2.elf
+      - run: python3 scripts/prepare-linux-guest.py --cpus ${{ matrix.cpus }} --probe ${{ matrix.probe }}
+      - run: python3 scripts/test-type1-linux.py target/type1/aegishv-el2.elf --pmu ${{ matrix.pmu }} --probe ${{ matrix.probe }} ${{ matrix.vector && '--vector-change' || '' }}
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: linux-el2-${{ matrix.cpus }}
+          name: linux-el2-${{ matrix.case }}
           path: |
             target/type1/aegishv-el2.elf
             target/linux-guest/serial.*
+            target/linux-guest/edr.*
             target/linux-guest/qemu.log
             target/linux-guest/boot.cfg
             target/linux-guest/guest.dtb

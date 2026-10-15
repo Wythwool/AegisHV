@@ -63,6 +63,9 @@ CPU affinity, shared-memory atomics and CPU hotplug. It also runs the VMX suite
 in Bochs and checks DMA denial, a page round trip, read-only permissions and
 revocation with QEMU VT-d/EDU. Each runner validates serial results and retains
 the tested image hashes. See [Linux](LINUX_GUEST.md) and [DMA](IOMMU.md).
+The Linux cases validate per-CPU JSON and metrics, missing PMU support, a denied
+guest access to the telemetry UART, and actual vector-byte modification and
+restoration through QEMU GDB. Guest console output cannot supply telemetry.
 
 ## Host checks
 

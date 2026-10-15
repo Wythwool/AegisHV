@@ -79,6 +79,38 @@ class SerialEvents(unittest.TestCase):
             server.server_close()
             worker.join()
 
+    def test_smp_keeps_one_sequence_and_distinguishes_allowed_accesses(self):
+        events = [event(1), event(2)]
+        events[1].update(vcpu=3, access="execute", action="allow")
+        common = dict(source="aegishv-type1", backend="svm", vcpu=3)
+        events += [dict(common, sequence=3, kind="pmu_status", available=False),
+                   dict(common, sequence=4, kind="vector_sample", rip=4096, target=8192,
+                        gpa=12288, valid=True, changed=True)]
+        metrics = bridge.Metrics()
+        for item in events:
+            self.assertTrue(metrics.accept(bridge.decode(json.dumps(item))))
+        text = metrics.render()
+        self.assertIn('aegishv_type1_denied_accesses_total{backend="svm",access="write"} 1', text)
+        self.assertNotIn('denied_accesses_total{backend="svm",access="execute"}', text)
+        self.assertIn('aegishv_type1_vcpu_events_total{backend="svm",vcpu="3",kind="page_access"} 1', text)
+        self.assertIn('aegishv_type1_pmu_available{backend="svm",vcpu="3"} 0', text)
+        self.assertIn('aegishv_type1_vector_checks_total{backend="svm",vcpu="3",status="changed"} 1', text)
+        self.assertNotIn('pmu_cycles_total', text)
+        self.assertNotIn('invalid_events_total', text)
+        self.assertTrue(metrics.accept(bridge.decode(json.dumps(event(1)))))
+        self.assertNotIn('pmu_available', metrics.render())
+
+    def test_rejects_cpu_label_growth_and_non_boolean_status(self):
+        for cpu in (True, -1, 256, 1 << 63):
+            item = event()
+            item['vcpu'] = cpu
+            with self.assertRaises(ValueError):
+                bridge.decode(json.dumps(item))
+        item = dict(source="aegishv-type1", backend="el2", vcpu=0, sequence=1,
+                    kind="pmu_status", available=1)
+        with self.assertRaises(ValueError):
+            bridge.decode(json.dumps(item))
+
 
 if __name__ == "__main__":
     unittest.main()
