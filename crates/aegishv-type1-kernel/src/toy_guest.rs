@@ -32,12 +32,13 @@ pub const TYPE1_TOY_IO_RIP: u64 = TYPE1_TOY_CODE_GPA + 28;
 pub const TYPE1_TOY_IO_BITMAP_B_RIP: u64 = TYPE1_TOY_CODE_GPA + 34;
 pub const TYPE1_TOY_CPUID_RIP: u64 = TYPE1_TOY_CODE_GPA + 39;
 pub const TYPE1_TOY_RDMSR_RIP: u64 = TYPE1_TOY_CODE_GPA + 46;
-pub const TYPE1_TOY_PAT_RDMSR_RIP: u64 = TYPE1_TOY_CODE_GPA + 53;
-pub const TYPE1_TOY_X87_GUARD_RIP: u64 = TYPE1_TOY_CODE_GPA + 70;
-pub const TYPE1_TOY_SIMD_GUARD_RIP: u64 = TYPE1_TOY_CODE_GPA + 72;
-pub const TYPE1_TOY_UD2_RIP: u64 = TYPE1_TOY_CODE_GPA + 76;
-pub const TYPE1_TOY_HLT_RIP: u64 = TYPE1_TOY_CODE_GPA + 78;
-pub const TYPE1_TOY_PAT_MISMATCH_HLT_RIP: u64 = TYPE1_TOY_CODE_GPA + 79;
+pub const TYPE1_TOY_PAT_RDMSR_RIP: u64 = TYPE1_TOY_CODE_GPA + 64;
+pub const TYPE1_TOY_X87_GUARD_RIP: u64 = TYPE1_TOY_CODE_GPA + 81;
+pub const TYPE1_TOY_SIMD_GUARD_RIP: u64 = TYPE1_TOY_CODE_GPA + 83;
+pub const TYPE1_TOY_UD2_RIP: u64 = TYPE1_TOY_CODE_GPA + 87;
+pub const TYPE1_TOY_HLT_RIP: u64 = TYPE1_TOY_CODE_GPA + 89;
+pub const TYPE1_TOY_PAT_MISMATCH_HLT_RIP: u64 = TYPE1_TOY_CODE_GPA + 90;
+pub const TYPE1_TOY_EFER_MISMATCH_HLT_RIP: u64 = TYPE1_TOY_CODE_GPA + 91;
 pub const TYPE1_TOY_RDMSR_INDEX: u32 = aegishv_arch_x86::vmx::toy_exit::TOY_RDMSR_IA32_EFER;
 pub const TYPE1_TOY_PAT_INDEX: u32 = 0x0000_0277;
 pub const TYPE1_TOY_GUEST_RSP: u64 = TYPE1_TOY_STACK_GPA + 0xff0;
@@ -53,12 +54,14 @@ pub const TYPE1_TOY_IDT_LIMIT: u32 = TYPE1_TOY_IDT.len() as u32 - 1;
 pub const TYPE1_TOY_UD_HANDLER_COOKIE: u64 = 0x5544_494e_4a45_4354;
 pub const TYPE1_TOY_DEADLINE_FALLBACK_TSC_TICKS: u32 = 1 << 27;
 pub const TYPE1_TOY_DEADLINE_FALLBACK_ITERATIONS: u32 = 1 << 24;
-pub const TYPE1_TOY_CODE: [u8; 80] = [
+pub const TYPE1_TOY_CODE: [u8; 92] = [
     0x0f, 0x31, 0x89, 0xc1, 0x81, 0xc1, 0x00, 0x00, 0x00, 0x08, 0xbb, 0x00, 0x00, 0x00, 0x01, 0x0f,
     0x31, 0x29, 0xc8, 0x79, 0x04, 0xff, 0xcb, 0x75, 0xf6, 0xf4, 0xb0, b'A', 0xe6, 0xe9, 0x66, 0xba,
     0x00, 0x80, 0xee, 0x31, 0xc0, 0x31, 0xc9, 0x0f, 0xa2, 0xb9, 0x80, 0x00, 0x00, 0xc0, 0x0f, 0x32,
-    0xb9, 0x77, 0x02, 0x00, 0x00, 0x0f, 0x32, 0x3d, 0x06, 0x00, 0x01, 0x04, 0x75, 0x11, 0x81, 0xfa,
-    0x05, 0x07, 0x06, 0x00, 0x75, 0x09, 0xd9, 0xd0, 0x66, 0x0f, 0x6f, 0xc0, 0x0f, 0x0b, 0xf4, 0xf4,
+    // EFER must match the long-mode VMCS before the untrapped PAT read.
+    0x3d, 0x00, 0x05, 0x00, 0x00, 0x75, 0x24, 0x85, 0xd2, 0x75, 0x20, 0xb9, 0x77, 0x02, 0x00, 0x00,
+    0x0f, 0x32, 0x3d, 0x06, 0x00, 0x01, 0x04, 0x75, 0x11, 0x81, 0xfa, 0x05, 0x07, 0x06, 0x00, 0x75,
+    0x09, 0xd9, 0xd0, 0x66, 0x0f, 0x6f, 0xc0, 0x0f, 0x0b, 0xf4, 0xf4, 0xf4,
 ];
 
 const TYPE1_TOY_CODE_OFFSET: usize = 0;
@@ -444,18 +447,7 @@ mod tests {
 
     #[test]
     fn toy_guest_payload_matches_the_bounded_exit_contract() {
-        assert_eq!(
-            TYPE1_TOY_CODE,
-            [
-                0x0f, 0x31, 0x89, 0xc1, 0x81, 0xc1, 0x00, 0x00, 0x00, 0x08, 0xbb, 0x00, 0x00, 0x00,
-                0x01, 0x0f, 0x31, 0x29, 0xc8, 0x79, 0x04, 0xff, 0xcb, 0x75, 0xf6, 0xf4, 0xb0, b'A',
-                0xe6, 0xe9, 0x66, 0xba, 0x00, 0x80, 0xee, 0x31, 0xc0, 0x31, 0xc9, 0x0f, 0xa2, 0xb9,
-                0x80, 0x00, 0x00, 0xc0, 0x0f, 0x32, 0xb9, 0x77, 0x02, 0x00, 0x00, 0x0f, 0x32, 0x3d,
-                0x06, 0x00, 0x01, 0x04, 0x75, 0x11, 0x81, 0xfa, 0x05, 0x07, 0x06, 0x00, 0x75, 0x09,
-                0xd9, 0xd0, 0x66, 0x0f, 0x6f, 0xc0, 0x0f, 0x0b, 0xf4, 0xf4
-            ]
-        );
-        assert_eq!(TYPE1_TOY_CODE.len(), 80);
+        assert_eq!(TYPE1_TOY_CODE.len(), 92);
         assert_eq!(TYPE1_TOY_DEADLINE_FALLBACK_TSC_TICKS, 1 << 27);
         let encoded_fallback = u32::from_le_bytes(TYPE1_TOY_CODE[6..10].try_into().unwrap());
         assert_eq!(encoded_fallback, TYPE1_TOY_DEADLINE_FALLBACK_TSC_TICKS);
@@ -478,31 +470,40 @@ mod tests {
         assert_eq!(TYPE1_TOY_IO_BITMAP_B_RIP, TYPE1_TOY_GUEST_RIP + 34);
         assert_eq!(TYPE1_TOY_CPUID_RIP, TYPE1_TOY_GUEST_RIP + 39);
         assert_eq!(TYPE1_TOY_RDMSR_RIP, TYPE1_TOY_GUEST_RIP + 46);
-        assert_eq!(TYPE1_TOY_PAT_RDMSR_RIP, TYPE1_TOY_GUEST_RIP + 53);
-        assert_eq!(TYPE1_TOY_X87_GUARD_RIP, TYPE1_TOY_GUEST_RIP + 70);
-        assert_eq!(TYPE1_TOY_SIMD_GUARD_RIP, TYPE1_TOY_GUEST_RIP + 72);
-        assert_eq!(TYPE1_TOY_UD2_RIP, TYPE1_TOY_GUEST_RIP + 76);
-        assert_eq!(TYPE1_TOY_HLT_RIP, TYPE1_TOY_GUEST_RIP + 78);
-        assert_eq!(TYPE1_TOY_PAT_MISMATCH_HLT_RIP, TYPE1_TOY_GUEST_RIP + 79);
+        assert_eq!(TYPE1_TOY_PAT_RDMSR_RIP, TYPE1_TOY_GUEST_RIP + 64);
+        assert_eq!(TYPE1_TOY_X87_GUARD_RIP, TYPE1_TOY_GUEST_RIP + 81);
+        assert_eq!(TYPE1_TOY_SIMD_GUARD_RIP, TYPE1_TOY_GUEST_RIP + 83);
+        assert_eq!(TYPE1_TOY_UD2_RIP, TYPE1_TOY_GUEST_RIP + 87);
+        assert_eq!(TYPE1_TOY_HLT_RIP, TYPE1_TOY_GUEST_RIP + 89);
+        assert_eq!(TYPE1_TOY_PAT_MISMATCH_HLT_RIP, TYPE1_TOY_GUEST_RIP + 90);
+        assert_eq!(TYPE1_TOY_EFER_MISMATCH_HLT_RIP, TYPE1_TOY_GUEST_RIP + 91);
         assert_eq!(TYPE1_TOY_RDMSR_INDEX, 0xc000_0080);
         assert_eq!(TYPE1_TOY_PAT_INDEX, 0x277);
         assert_eq!(
-            u32::from_le_bytes(TYPE1_TOY_CODE[49..53].try_into().unwrap()),
+            u32::from_le_bytes(TYPE1_TOY_CODE[60..64].try_into().unwrap()),
             TYPE1_TOY_PAT_INDEX
         );
-        let pat_low = u32::from_le_bytes(TYPE1_TOY_CODE[56..60].try_into().unwrap());
-        let pat_high = u32::from_le_bytes(TYPE1_TOY_CODE[64..68].try_into().unwrap());
+        let efer = u32::from_le_bytes(TYPE1_TOY_CODE[49..53].try_into().unwrap());
+        assert_eq!(
+            efer as u64,
+            aegishv_arch_x86::vmx::vmcs_config::VMX_EFER_LME
+                | aegishv_arch_x86::vmx::vmcs_config::VMX_EFER_LMA
+        );
+        assert_eq!(55 + TYPE1_TOY_CODE[54] as usize, 91);
+        assert_eq!(&TYPE1_TOY_CODE[55..57], &[0x85, 0xd2]);
+        assert_eq!(59 + TYPE1_TOY_CODE[58] as usize, 91);
+        let pat_low = u32::from_le_bytes(TYPE1_TOY_CODE[67..71].try_into().unwrap());
+        let pat_high = u32::from_le_bytes(TYPE1_TOY_CODE[75..79].try_into().unwrap());
         assert_eq!(
             u64::from(pat_low) | (u64::from(pat_high) << 32),
             aegishv_arch_x86::vmx::vmcs_config::VMX_TOY_GUEST_PAT_RAW
         );
-        assert_eq!(TYPE1_TOY_CODE[60], 0x75);
-        assert_eq!(60 + 2 + TYPE1_TOY_CODE[61] as usize, 79);
-        assert_eq!(TYPE1_TOY_CODE[68], 0x75);
-        assert_eq!(68 + 2 + TYPE1_TOY_CODE[69] as usize, 79);
-        assert_eq!(&TYPE1_TOY_CODE[76..78], &[0x0f, 0x0b]);
-        assert_eq!(TYPE1_TOY_CODE[78], 0xf4);
-        assert_eq!(TYPE1_TOY_CODE[79], 0xf4);
+        assert_eq!(TYPE1_TOY_CODE[71], 0x75);
+        assert_eq!(71 + 2 + TYPE1_TOY_CODE[72] as usize, 90);
+        assert_eq!(TYPE1_TOY_CODE[79], 0x75);
+        assert_eq!(79 + 2 + TYPE1_TOY_CODE[80] as usize, 90);
+        assert_eq!(&TYPE1_TOY_CODE[87..89], &[0x0f, 0x0b]);
+        assert_eq!(&TYPE1_TOY_CODE[89..92], &[0xf4; 3]);
         // The equal high PAT compare establishes PF and ZF. The fixed IRETQ
         // route reaches HLT, whose configured VM exit saves RF clear.
         assert_eq!(TYPE1_TOY_GUEST_RFLAGS, 0x02);

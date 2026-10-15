@@ -1873,6 +1873,9 @@ fn vmx_toy_exit_error_marker(
         | aegishv_arch_x86::vmx::toy_exit::ToyVmxExitError::InvalidGuestPat => {
             aegishv_type1_kernel::SERIAL_VMX_GUEST_PAT_STATE_ERROR_MARKER
         }
+        aegishv_arch_x86::vmx::toy_exit::ToyVmxExitError::GuestEferMismatch => {
+            aegishv_type1_kernel::SERIAL_VMX_GUEST_EXIT_ERROR_MARKER
+        }
         aegishv_arch_x86::vmx::toy_exit::ToyVmxExitError::VmcsRead { field, .. }
         | aegishv_arch_x86::vmx::toy_exit::ToyVmxExitError::VmcsWrite { field, .. }
             if matches!(
@@ -1977,6 +1980,7 @@ extern "C" fn aegishv_vmx_exit_dispatch(
         ud2_rip: aegishv_type1_kernel::TYPE1_TOY_UD2_RIP,
         hlt_rip: aegishv_type1_kernel::TYPE1_TOY_HLT_RIP,
         pat_mismatch_hlt_rip: aegishv_type1_kernel::TYPE1_TOY_PAT_MISMATCH_HLT_RIP,
+        efer_mismatch_hlt_rip: aegishv_type1_kernel::TYPE1_TOY_EFER_MISMATCH_HLT_RIP,
         hlt_rsp: aegishv_type1_kernel::TYPE1_TOY_GUEST_RSP,
         hlt_cs: aegishv_type1_kernel::TYPE1_TOY_GUEST_CS,
         hlt_ss: aegishv_type1_kernel::TYPE1_TOY_GUEST_SS,

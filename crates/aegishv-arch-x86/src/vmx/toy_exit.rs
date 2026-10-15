@@ -48,6 +48,7 @@ pub struct ToyVmxExitContract {
     pub ud2_rip: u64,
     pub hlt_rip: u64,
     pub pat_mismatch_hlt_rip: u64,
+    pub efer_mismatch_hlt_rip: u64,
     pub hlt_rsp: u64,
     pub hlt_cs: u16,
     pub hlt_ss: u16,
@@ -98,6 +99,7 @@ pub enum ToyVmxExitError {
     InvalidDescriptorTableState,
     InvalidFpuGuardState,
     GuestPatMismatch,
+    GuestEferMismatch,
     InvalidPreemptionReload,
     ExecutionDeadlineExpired,
     RipAdvance(VmxErrorKind),
@@ -299,7 +301,7 @@ pub fn dispatch_toy_vmx_exit(
             }
             let policy = StaticMsrPolicy::new([MsrEntry {
                 index: TOY_RDMSR_IA32_EFER,
-                value: 0,
+                value: read_vmcs(access, VmcsField::GUEST_IA32_EFER)?,
                 writable: false,
             }]);
             match handle_rdmsr_exit(registers, &policy, instruction_length)
@@ -314,6 +316,12 @@ pub fn dispatch_toy_vmx_exit(
             Ok(ToyVmxExitAction::Resume)
         }
         VmxExitReason::Hlt => {
+            if *sequence == ToyVmxExitSequence::AwaitingX87Guard
+                && rip == contract.efer_mismatch_hlt_rip
+                && instruction_length == 1
+            {
+                return Err(ToyVmxExitError::GuestEferMismatch);
+            }
             if matches!(
                 *sequence,
                 ToyVmxExitSequence::AwaitingPreemption | ToyVmxExitSequence::AwaitingDeadlineProbe
@@ -525,6 +533,7 @@ mod tests {
         entry_instruction_length: u64,
         idt_vectoring_info: u64,
         guest_pat: u64,
+        guest_efer: u64,
         guest_cr0: u64,
         guest_cr4: u64,
         guest_cs: u64,
@@ -560,6 +569,7 @@ mod tests {
                 entry_instruction_length: 0,
                 idt_vectoring_info: 0x306,
                 guest_pat: VMX_TOY_GUEST_PAT_RAW,
+                guest_efer: 0x500,
                 guest_cr0: 0x8000_003b,
                 guest_cr4: 0x2220,
                 guest_cs: 0x08,
@@ -618,6 +628,8 @@ mod tests {
                 self.idt_vectoring_info
             } else if field == VmcsField::GUEST_IA32_PAT {
                 self.guest_pat
+            } else if field == VmcsField::GUEST_IA32_EFER {
+                self.guest_efer
             } else if field == VmcsField::GUEST_CR0 {
                 self.guest_cr0
             } else if field == VmcsField::GUEST_CR4 {
@@ -701,6 +713,7 @@ mod tests {
             ud2_rip: 0x104c,
             hlt_rip: 0x104e,
             pat_mismatch_hlt_rip: 0x104f,
+            efer_mismatch_hlt_rip: 0x1050,
             hlt_rsp: 0x2ff0,
             hlt_cs: 0x08,
             hlt_ss: 0x10,
@@ -789,7 +802,7 @@ mod tests {
         );
         assert_eq!(sequence, ToyVmxExitSequence::AwaitingX87Guard);
         assert_eq!(access.rip_write, Some(0x1030));
-        assert_eq!(registers.rax, 0);
+        assert_eq!(registers.rax, access.guest_efer);
         assert_eq!(registers.rdx, 0);
 
         let pat = VmxPat::toy_guest().raw();
@@ -1383,7 +1396,56 @@ mod tests {
     }
 
     #[test]
-    fn rdmsr_contract_accepts_only_synthetic_ia32_efer_read() {
+    fn efer_read_uses_vmcs_state_and_stops_on_failed_readback() {
+        for efer in [0x500, 0xd01] {
+            let mut access = MockAccess::preemption();
+            access.reason = 31;
+            access.rip = contract().rdmsr_rip;
+            access.length = 2;
+            access.guest_efer = efer;
+            let mut registers = GeneralRegisters {
+                rcx: u64::from(TOY_RDMSR_IA32_EFER),
+                rax: u64::MAX,
+                rdx: u64::MAX,
+                ..GeneralRegisters::default()
+            };
+            let mut sequence = ToyVmxExitSequence::AwaitingRdmsr;
+            access.fail_read = Some((VmcsField::GUEST_IA32_EFER, 1));
+            assert_eq!(
+                dispatch_toy_vmx_exit(&mut access, &mut registers, &mut sequence, contract())
+                    .unwrap_err(),
+                ToyVmxExitError::VmcsRead {
+                    field: VmcsField::GUEST_IA32_EFER,
+                    kind: VmxErrorKind::InstructionFailed,
+                }
+            );
+            assert_eq!(access.rip_write, None);
+            assert_eq!(registers.rax, u64::MAX);
+            assert_eq!(sequence, ToyVmxExitSequence::AwaitingRdmsr);
+            access.fail_read = None;
+            dispatch_toy_vmx_exit(&mut access, &mut registers, &mut sequence, contract()).unwrap();
+            assert_eq!(registers.rax, efer);
+            assert_eq!(registers.rdx, 0);
+        }
+        let mut access = MockAccess::preemption();
+        access.reason = 12;
+        access.rip = contract().efer_mismatch_hlt_rip;
+        access.length = 1;
+        let mut sequence = ToyVmxExitSequence::AwaitingX87Guard;
+        assert_eq!(
+            dispatch_toy_vmx_exit(
+                &mut access,
+                &mut GeneralRegisters::default(),
+                &mut sequence,
+                contract()
+            )
+            .unwrap_err(),
+            ToyVmxExitError::GuestEferMismatch
+        );
+    }
+
+    #[test]
+    fn rdmsr_contract_accepts_only_guest_ia32_efer_read() {
         let mut access = MockAccess::preemption();
         access.reason = 31;
         access.rip = 0x102e;

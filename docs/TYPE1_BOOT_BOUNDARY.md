@@ -39,7 +39,8 @@ least two, and `reload << rate` cannot exceed `0x01000000` TSC ticks. Known
 broken CPU signatures are rejected.
 
 The payload writes to ports `0xe9` and `0x8000`, executes CPUID, reads EFER
-(answered with zero), and directly reads PAT. Port requests are not replayed
+from guest VMCS state, and directly reads PAT. The guest checks EFER's long-mode
+bits and zero upper half before continuing. Port requests are not replayed
 on the host. The MSR bitmap traps every write and every read except PAT.
 VMCS PAT load/save controls and host/guest values are checked on every exit.
 
